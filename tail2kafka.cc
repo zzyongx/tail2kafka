@@ -30,7 +30,7 @@ extern "C" {
 
 static const char   NL = '\n';
 static const int    UNSET_INT = INT_MAX;
-static const size_t MAX_LINE_LEN = 10240;
+static const size_t MAX_LINE_LEN = 102400;
 static const size_t MAX_FILES    = 64;
 static const size_t ONE_EVENT_SIZE =
   sizeof(struct inotify_event) + NAME_MAX;
@@ -50,12 +50,11 @@ typedef std::vector<rd_kafka_topic_t *>    TopicList;
 
 struct CnfCtx {
   std::string host;
+  std::string pidfile;
   std::string brokers;
   SSHash      kafkaGlobal;
   SSHash      kafkaTopic;
 
-  rd_kafka_conf_t       *conf;
-  rd_kafka_topic_conf_t *tconf;
   rd_kafka_t            *rk;
   TopicList              rkts;
 
@@ -67,10 +66,10 @@ struct CnfCtx {
   uint64_t               sn;
   
   CnfCtx() {
-    conf  = 0;
-    tconf = 0;
-    rk    = 0;
-    sn    = 0;
+    rk     = 0;
+    accept = -1;
+    server = -1;
+    sn     = 0;
   }
 };
 
@@ -102,6 +101,7 @@ struct LuaCtx {
   
   int           fd;
   ino_t         inode;
+  bool          autocreat;
   std::string   file;
   off_t         size;
   std::string   topic;
@@ -133,6 +133,7 @@ LuaCtx::LuaCtx()
 {
   L  = 0;
   fd = -1;
+  autocreat = false;
 
   autosplit = false;
   withhost  = true;
@@ -157,45 +158,81 @@ struct OneTaskReq {
 
 CnfCtx *loadCnf(const char *dir, char *errbuf);
 void unloadCnfCtx(CnfCtx *ctx);
+bool initSignal(char *errbuf);
+bool initSingleton(CnfCtx *ctx, char *errbuf);
 pid_t spawn(CnfCtx *ctx, char *errbuf);
 
-enum Want {WAIT, START, RELOAD, STOP} want;
+enum Want {WAIT, START1, START2, RELOAD, STOP} want;
 
 #ifndef UNITTEST
 int main(int argc, char *argv[])
 {
   if (argc != 2) {
-    fprintf(stderr, "%s confdir\n", argv[1]);
+    fprintf(stderr, "%s confdir\n", argv[0]);
     return EXIT_FAILURE;
   }
 
   const char *dir = argv[1];
-
-  pid_t pid;
+  pid_t pid = -1;
   char errbuf[MAX_ERR_LEN];
 
   CnfCtx *ctx = loadCnf(dir, errbuf);
   if (!ctx) {
     fprintf(stderr, "load cnf error %s\n", errbuf);
+    return EXIT_FAILURE;
   }
-  want = START;
 
-  while (true) {
-    if (want == START) {
+  daemon(1, 1);  
+  want = START1;
+
+  if (!initSingleton(ctx, errbuf)) {
+    fprintf(stderr, "init singleton %s\n", errbuf);
+    return EXIT_FAILURE;
+  }
+
+  if (!initSignal(errbuf)) {
+    fprintf(stderr, "init signal %s\n", errbuf);
+    return EXIT_FAILURE;
+  }
+
+  sigset_t set;
+  sigemptyset(&set);
+  sigaddset(&set, SIGCHLD);
+  sigaddset(&set, SIGTERM);
+  sigaddset(&set, SIGHUP);
+  if (sigprocmask(SIG_BLOCK, &set, NULL) == -1) {
+    fprintf(stderr, "sigprocmask failed, %s\n", strerror(errno));
+    return EXIT_FAILURE;
+  }
+  
+  sigemptyset(&set);  
+
+  int rc = EXIT_SUCCESS;
+
+  while (want != STOP) {
+    if (want == START2) {
+      pid_t opid;
+      if ((opid = waitpid(-1, NULL, WNOHANG)) > 0) {
+        if (opid != pid) want = WAIT;
+      } else {
+        want = WAIT;
+      }
+    }
+    
+    if (want == START1 || want == START2) {
       pid = spawn(ctx, errbuf);
       if (pid == -1) {
         fprintf(stderr, "spawn failed, exit\n");
+        rc = EXIT_FAILURE;
         break;
       }
-    } else if (want == STOP) {
-      kill(pid, SIGUSR1);
-      break;
     } else if (want == RELOAD) {
       CnfCtx *nctx = loadCnf(dir, errbuf);
       if (nctx) {
         pid_t npid = spawn(nctx, errbuf);
         if (npid != -1) {
-          kill(pid, SIGUSR2);
+          fprintf(stderr, "reload cnf\n");
+          kill(pid, SIGTERM);
           unloadCnfCtx(ctx);
           ctx = nctx;
           pid = npid;
@@ -206,18 +243,13 @@ int main(int argc, char *argv[])
         fprintf(stderr, "load cnf error %s\n", errbuf);
       }
     }
-    want = WAIT;
-
-    int status;
-    if (wait(&status) != -1) {
-      if (WIFSIGNALED(status) && WTERMSIG(status) != SIGUSR2) {
-        want = START;
-      }
-    }
+    sigsuspend(&set);
   }
+
+  if (pid != -1) kill(pid, SIGTERM);
   
   unloadCnfCtx(ctx);
-  return EXIT_SUCCESS;
+  return rc;
 }
 #endif
 
@@ -231,6 +263,7 @@ void unloadLuaCtx(LuaCtx *ctx)
 
 static LuaCtx *loadLuaCtx(const char *file, char *errbuf)
 {
+  int fd;
   int size;
   LuaCtx *ctx = new LuaCtx;
   
@@ -242,6 +275,12 @@ static LuaCtx *loadLuaCtx(const char *file, char *errbuf)
     goto error;
   }
 
+  lua_getglobal(L, "autocreat");
+  if (lua_isboolean(L, 1)) {
+    ctx->autocreat = lua_toboolean(L, 1);
+  }
+  lua_settop(L, 0);
+
   lua_getglobal(L, "file");
   if (!lua_isstring(L, 1)) {
     snprintf(errbuf, MAX_ERR_LEN, "%s file must be string", file);
@@ -251,8 +290,17 @@ static LuaCtx *loadLuaCtx(const char *file, char *errbuf)
   ctx->file = lua_tostring(L, 1);
   struct stat st;
   if (stat(ctx->file.c_str(), &st) == -1) {
-    snprintf(errbuf, MAX_ERR_LEN, "%s file %s stat failed", file, ctx->file.c_str());
-    goto error;
+    if (errno == ENOENT && ctx->autocreat) {
+      fd = creat(ctx->file.c_str(), 0644);
+      if (fd == -1) {
+        snprintf(errbuf, MAX_ERR_LEN, "%s file %s autocreat failed", file, ctx->file.c_str());
+        goto error;
+      }
+      close(fd);
+    } else {
+      snprintf(errbuf, MAX_ERR_LEN, "%s file %s stat failed", file, ctx->file.c_str());
+      goto error;
+    }
   }
   lua_settop(L, 0);
 
@@ -370,6 +418,7 @@ static LuaCtx *loadLuaCtx(const char *file, char *errbuf)
   return 0;
 }
 
+bool initKafka(CnfCtx *ctx, char *errbuf);
 void uninitKafka(CnfCtx *ctx);
 
 void unloadCnfCtx(CnfCtx *ctx)
@@ -379,6 +428,8 @@ void unloadCnfCtx(CnfCtx *ctx)
     unloadLuaCtx(*ite);
   }
   uninitKafka(ctx);
+  if (ctx->accept != -1) close(ctx->accept);
+  if (ctx->server != -1) close(ctx->server);
   delete ctx;
 }
 
@@ -424,6 +475,14 @@ CnfCtx *loadCnfCtx(const char *file, char *errbuf)
   if (!shell(lua_tostring(L, 1), &ctx->host, errbuf)) {
     goto error;
   }
+  lua_settop(L, 0);
+
+  lua_getglobal(L, "pidfile");
+  if (!lua_isstring(L, 1)) {
+    snprintf(errbuf, MAX_ERR_LEN, "%s pidfile must be string", file);
+    goto error;
+  }
+  ctx->pidfile = lua_tostring(L, 1);
   lua_settop(L, 0);
 
   lua_getglobal(L, "brokers");
@@ -672,6 +731,7 @@ void flushCache(CnfCtx *ctx, bool timeout)
       OneTaskReq req = {(*ite)->idx, datas};
       ssize_t nn = write(ctx->server, &req, sizeof(OneTaskReq));
       assert(nn != -1 && nn == sizeof(OneTaskReq));
+      (*ite)->cache.clear();
     }
   }
 }  
@@ -756,6 +816,91 @@ bool filter(LuaCtx *ctx, const StringList &fields, std::string *result)
   return true;
 }
 
+struct Signal {
+  int signo;
+  Want want;
+};
+
+static const Signal signals[] = {
+  {SIGTERM, STOP},
+  {SIGHUP,  RELOAD},
+  {SIGCHLD, START2},
+};
+
+void sigHandle(int signo)
+{
+  if (signo == SIGTERM) want = STOP;
+  else if (signo == SIGHUP) want = RELOAD;
+  else if (signo == SIGCHLD) want = START2;
+}
+
+bool initSignal(char *errbuf)
+{
+  struct sigaction sa;
+  for (size_t i = 0; i < sizeof(signals)/sizeof(signals[0]); ++i) {
+    memset(&sa, 0x00, sizeof(sa));
+    sa.sa_handler = sigHandle;
+    sigemptyset(&sa.sa_mask);
+    if (sigaction(signals[i].signo, &sa, NULL) == -1) {
+      snprintf(errbuf, MAX_ERR_LEN, "sigaction error %d:%s", errno, strerror(errno));
+      return false;
+    }
+  }
+  return true;
+}
+
+bool processLine(LuaCtx *ctx, char *line, size_t nline);
+
+bool tail2kafka(LuaCtx *ctx)
+{
+  struct stat st;
+  if (fstat(ctx->fd, &st) != 0) {
+    fprintf(stderr, "%s stat error\n", ctx->file.c_str());
+    return false;
+  }
+  ctx->size = st.st_size;
+
+  off_t off = lseek(ctx->fd, 0, SEEK_CUR);
+  if (off == (off_t) -1) {
+    fprintf(stderr, "%s seek cur error\n", ctx->file.c_str());
+    return false;
+  }
+  
+  while (off < ctx->size) {
+    size_t min = std::min(ctx->size - off, (off_t) (MAX_LINE_LEN - ctx->npos));
+    assert(min > 0);
+    ssize_t nn = read(ctx->fd, ctx->buffer + ctx->npos, min);
+    if (nn == -1) {
+      fprintf(stderr, "%s read error\n", ctx->file.c_str());
+      return false;
+    }
+
+    off += nn;
+    ctx->npos += nn;
+
+    size_t n = 0;
+    char *pos;
+    while ((pos = (char *) memchr(ctx->buffer + n, NL, ctx->npos - n))) {
+      processLine(ctx, ctx->buffer + n, pos - (ctx->buffer + n));
+      n = (pos+1) - ctx->buffer;
+      if (n == ctx->npos) break;
+    }
+
+    if (n == 0) {
+      if (ctx->npos == MAX_LINE_LEN) {
+        fprintf(stderr, "%s line length exceed, truncate", ctx->file.c_str());
+        ctx->npos = 0;
+      }
+    } else if (ctx->npos > n) {
+      ctx->npos -= n;
+      memmove(ctx->buffer, ctx->buffer + n, ctx->npos);
+    } else {
+      ctx->npos = 0;
+    }
+  }
+  return true;
+}
+
 bool lineAlign(LuaCtx *ctx)
 {
   if (ctx->size == 0) return true;
@@ -822,8 +967,6 @@ void tryReWatch(CnfCtx *ctx)
       struct stat st;
       fstat(lctx->fd, &st);
 
-      fprintf(stderr, "may rewatch %d %d\n", st.st_size, lctx->size);
-
       // if file unlinked or truncated
       if (st.st_ino != lctx->inode || st.st_size < lctx->size) {
         fprintf(stderr, "rewatch %s\n", lctx->file.c_str());
@@ -850,9 +993,10 @@ void tryRmWatch(CnfCtx *ctx)
     struct stat st;
     fstat(lctx->fd, &st);
     if (st.st_nlink == 0) {
-      printf("remove %s\n", ctx->file.c_str());
-      inotify_rm_watch(ctx->main->wfd, ite->first);
-      ctx->main->wch.erase(ite++);
+      printf("remove %s\n", lctx->file.c_str());
+      
+      inotify_rm_watch(lctx->main->wfd, ite->first);
+      lctx->main->wch.erase(ite++);
       close(lctx->fd);
       lctx->fd = -1;
     } else {
@@ -879,52 +1023,6 @@ bool watchInit(CnfCtx *ctx, char *errbuf)
   return addWatch(ctx, errbuf);
 }
 
-bool processLine(LuaCtx *ctx, char *line, size_t nline);
-
-bool tail2kafka(LuaCtx *ctx)
-{
-  struct stat st;
-  if (fstat(ctx->fd, &st) != 0) {
-    fprintf(stderr, "%s stat error\n", ctx->file.c_str());
-    return false;
-  }
-  ctx->size = st.st_size;
-
-  off_t off = lseek(ctx->fd, 0, SEEK_CUR);
-  if (off == (off_t) -1) {
-    fprintf(stderr, "%s seek cur error\n", ctx->file.c_str());
-    return false;
-  }
-  
-  while (off < ctx->size) {
-    size_t min = std::min(ctx->size - off, (off_t) (MAX_LINE_LEN - ctx->npos));
-    ssize_t nn = read(ctx->fd, ctx->buffer + ctx->npos, min);
-    if (nn == -1) {
-      fprintf(stderr, "%s read error\n", ctx->file.c_str());
-      return false;
-    }
-
-    off += nn;
-    ctx->npos += nn;
-
-    size_t n = 0;
-    char *pos;
-    while ((pos = (char *) memchr(ctx->buffer + n, NL, ctx->npos - n))) {
-      processLine(ctx, ctx->buffer + n, (pos+1) - (ctx->buffer + n));
-      n = (pos+1) - ctx->buffer;
-      if (n == ctx->npos) break;
-    }
-
-    if (ctx->npos > n) {
-      ctx->npos -= n;
-      memmove(ctx->buffer, ctx->buffer + n, ctx->npos);
-    } else {
-      ctx->npos = 0;
-    }
-  }
-  return true;
-}
-
 bool watchLoop(CnfCtx *ctx)
 {
   const size_t eventBufferSize = ctx->luaCtxs.size() * ONE_EVENT_SIZE * 2;
@@ -934,11 +1032,13 @@ bool watchLoop(CnfCtx *ctx)
     {ctx->wfd, POLLIN, 0 }
   };
 
-  while (want != STOP) {
+  while (want == WAIT) {
     int nfd = poll(fds, 1, 500);
-    if (nfd == -1 && errno != EINTR) break;
-    else if (nfd == 0) flushCache(ctx, true);
-    else {
+    if (nfd == -1) {
+      if (errno != EINTR) return false;
+    } else if (nfd == 0) {
+      flushCache(ctx, true);
+    } else {
       ctx->sn++;    
 
       ssize_t nn = read(ctx->wfd, eventBuffer, eventBufferSize);
@@ -947,11 +1047,11 @@ bool watchLoop(CnfCtx *ctx)
       char *p = eventBuffer;
       while (p < eventBuffer + nn) {
         struct inotify_event *event = (struct inotify_event *) p;
-        if (event->mask == IN_IGNORED) continue;
-        printf("## %d %d##\n", event->mask, IN_IGNORED);
-        LuaCtx *lctx = wd2ctx(ctx, event->wd);
-        lctx->sn = ctx->sn;
-        tail2kafka(lctx);
+        if (event->mask != IN_IGNORED) {
+          LuaCtx *lctx = wd2ctx(ctx, event->wd);
+          lctx->sn = ctx->sn;
+          tail2kafka(lctx);
+        }
         p += sizeof(struct inotify_event) + event->len;
       }
       flushCache(ctx, false);
@@ -959,22 +1059,12 @@ bool watchLoop(CnfCtx *ctx)
     tryRmWatch(ctx);
     tryReWatch(ctx);
   }
+
+  /* in case routine is not interrupted by signal */
+  want = STOP;
+  close(ctx->server);
+  ctx->server = -1;
   return true;
-}
-
-pid_t spawn(CnfCtx *ctx, char *errbuf)
-{
-  if (!watchInit(ctx, errbuf)) {
-    fprintf(stderr, "watch init error %s\n", errbuf);
-    return -1;
-  }
-
-  int pid = fork();
-  if (pid > 0) {
-    bool rc = watchLoop(ctx);
-    exit(rc ? EXIT_SUCCESS : EXIT_FAILURE);
-  }
-  return pid;
 }
 
 void split(const char *line, size_t nline, StringList *items)
@@ -1013,7 +1103,7 @@ void split(const char *line, size_t nline, StringList *items)
       }
     }
   }
-  if (pos != nline) items->push_back(std::string(line + pos));
+  if (pos != nline) items->push_back(std::string(line + pos, nline - pos));
 }
 
 static const char *MonthAlpha[12] = {
@@ -1049,22 +1139,26 @@ bool iso8601(const std::string &t, std::string *iso)
     } else if (status == WaitMonth) {
       size_t i;
       for (i = 0; i < 12; ++i) {
-        if (strcmp(p, MonthAlpha[i]) == 0) {
-          mon = i;
+        if (strncmp(p, MonthAlpha[i], 3) == 0) {
+          mon = i+1;
           break;
         }
       }
     } else {
       return false;
     }
+    p++;
   }
 
-  iso->resize(sizeof("yyyy-mm-ddThh:mm:ss"));
+  iso->reserve(sizeof("yyyy-mm-ddThh:mm:ss"));
+  iso->resize(sizeof("yyyy-mm-ddThh:mm:ss")-1);
   sprintf((char *) iso->data(), "%04d-%02d-%02dT%02d:%02d:%02d",
           year, mon, day, hour, min, sec);
+
   return true;
 }
 
+/* line without NL */
 bool processLine(LuaCtx *ctx, char *line, size_t nline)
 {
   std::string *data = 0;
@@ -1076,7 +1170,7 @@ bool processLine(LuaCtx *ctx, char *line, size_t nline)
     rc = ctx->transform(ctx, line, nline-1, data);
   } else if (ctx->aggregate || ctx->filter) {
     StringList fields;
-    split(line, nline-1, &fields);
+    split(line, nline, &fields);
     
     if (ctx->timeidx != UNSET_INT) {
       int idx = absidx(ctx->timeidx, fields.size());
@@ -1116,52 +1210,58 @@ void dr_cb(rd_kafka_t *, void *, size_t, rd_kafka_resp_err_t, void *, void *data
   delete p;
 }
 
-bool initKafka(CnfCtx *ctx)
+bool initKafka(CnfCtx *ctx, char *errbuf)
 {
   char errstr[512];
   
-  ctx->conf = rd_kafka_conf_new();
+  rd_kafka_conf_t *conf = rd_kafka_conf_new();
   for (SSHash::iterator ite = ctx->kafkaGlobal.begin();
        ite != ctx->kafkaGlobal.end(); ++ite) {
     rd_kafka_conf_res_t res;
-    res = rd_kafka_conf_set(ctx->conf, ite->first.c_str(), ite->second.c_str(),
+    res = rd_kafka_conf_set(conf, ite->first.c_str(), ite->second.c_str(),
                             errstr, sizeof(errstr));
     if (res != RD_KAFKA_CONF_OK) {
-      fprintf(stderr, "kafka conf %s=%s %s",
-              ite->first.c_str(), ite->second.c_str(), errstr);
+      snprintf(errbuf, MAX_ERR_LEN, "kafka conf %s=%s %s",
+               ite->first.c_str(), ite->second.c_str(), errstr);
+      rd_kafka_conf_destroy(conf);
       return false;
     }
   }
-  rd_kafka_conf_set_dr_cb(ctx->conf, dr_cb);
+  rd_kafka_conf_set_dr_cb(conf, dr_cb);
 
-  ctx->tconf = rd_kafka_topic_conf_new();
-  for (SSHash::iterator ite = ctx->kafkaTopic.begin();
-       ite != ctx->kafkaTopic.end(); ++ite) {
-    rd_kafka_conf_res_t res;    
-    res = rd_kafka_topic_conf_set(ctx->tconf, ite->first.c_str(), ite->second.c_str(),
-                                  errstr, sizeof(errstr));
-    if (res != RD_KAFKA_CONF_OK) {
-      fprintf(stderr, "kafka topic conf %s=%s %s\n",
-              ite->first.c_str(), ite->second.c_str(), errstr);
-      return false;
-    }
-  }
-
-  ctx->rk = rd_kafka_new(RD_KAFKA_PRODUCER, ctx->conf, errstr, sizeof(errstr));
+  /* rd_kafka_t will own conf */
+  ctx->rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr, sizeof(errstr));
   if (!ctx->rk) {
-    fprintf(stderr, "new kafka produce error %s\n", errstr);
+    snprintf(errbuf, MAX_ERR_LEN, "new kafka produce error %s\n", errstr);
     return false;
   }
 
   if (rd_kafka_brokers_add(ctx->rk, ctx->brokers.c_str()) < 1) {
-    fprintf(stderr, "kafka invalid brokers %s\n", ctx->brokers.c_str());
+    snprintf(errbuf, MAX_ERR_LEN, "kafka invalid brokers %s\n", ctx->brokers.c_str());
     return false;
   }
 
-  for (LuaCtxPtrList::iterator ite = ctx->luaCtxs.begin(); ite != ctx->luaCtxs.end(); ++ite) {
+  for (LuaCtxPtrList::iterator ite = ctx->luaCtxs.begin(); ite != ctx->luaCtxs.end(); ++ite) {  
+    rd_kafka_topic_conf_t *tconf = rd_kafka_topic_conf_new();
+    for (SSHash::iterator jte = ctx->kafkaTopic.begin(); jte != ctx->kafkaTopic.end(); ++jte) {
+      rd_kafka_conf_res_t res;
+      res = rd_kafka_topic_conf_set(tconf, jte->first.c_str(), jte->second.c_str(),
+                                    errstr, sizeof(errstr));
+      if (res != RD_KAFKA_CONF_OK) {
+        snprintf(errbuf, MAX_ERR_LEN, "kafka topic conf %s=%s %s\n",
+                 jte->first.c_str(), jte->second.c_str(), errstr);
+        rd_kafka_topic_conf_destroy(tconf);
+        return false;
+      }
+    }
+
     rd_kafka_topic_t *rkt;
-    rkt = rd_kafka_topic_new(ctx->rk, (*ite)->topic.c_str(), ctx->tconf);
-    if (!rkt) return false;
+    /* rd_kafka_topic_t will own tconf */
+    rkt = rd_kafka_topic_new(ctx->rk, (*ite)->topic.c_str(), tconf);
+    if (!rkt) {
+      snprintf(errbuf, MAX_ERR_LEN, "kafka_topic_new error");
+      return false;
+    }
     ctx->rkts.push_back(rkt);
   }
 
@@ -1174,20 +1274,24 @@ void uninitKafka(CnfCtx *ctx)
     rd_kafka_topic_destroy(*ite);
   }
   if (ctx->rk) rd_kafka_destroy(ctx->rk);
-  if (ctx->tconf) rd_kafka_topic_conf_destroy(ctx->tconf);
-  if (ctx->conf) rd_kafka_conf_destroy(ctx->conf);
 }
     
 void *routine(void *data)
 {
   CnfCtx *ctx = (CnfCtx *) data;
   OneTaskReq req;
-
-  while (true) {
+  
+  std::vector<rd_kafka_message_t> rkmsgs;
+  
+  while (want == WAIT) {
     ssize_t nn = read(ctx->accept, &req, sizeof(OneTaskReq));
-    if (nn == -1 && errno != EINTR) {
+    if (nn == -1) {
+      if (errno != EINTR) break;
+      else continue;
+    } else if (nn == 0) {
       break;
     }
+
     if (nn != sizeof(OneTaskReq)) {
       fprintf(stderr, "invalid req size %d\n", (int) nn);
       break;
@@ -1195,31 +1299,80 @@ void *routine(void *data)
 
     rd_kafka_topic_t *rkt = ctx->rkts[req.idx];
 
-    int eno;
-    if (req.datas->size() == 1) {
-      eno = rd_kafka_produce(rkt, RD_KAFKA_PARTITION_UA, 0,
-                             (void *) req.datas->at(0)->c_str(), req.datas->at(0)->size(),
-                             0, 0, req.datas->at(0));
-    } else {
-      size_t n = req.datas->size();
-      rd_kafka_message_t *rkmsgs = new rd_kafka_message_t[n];
-      for (size_t i = 0; i < n; ++i) {
-        rkmsgs[i].payload = (void *) req.datas->at(i)->c_str();
-        rkmsgs[i].len     = req.datas->at(i)->size();
-        rkmsgs[i].key     = 0;
-        rkmsgs[i].key_len = 0;
-        rkmsgs[i]._private = req.datas->at(i);
-      }
-      rd_kafka_produce_batch(rkt, RD_KAFKA_PARTITION_UA, 0,
-                             rkmsgs, n);
-      delete[] rkmsgs;
+    rkmsgs.resize(req.datas->size());
+    for (size_t i = 0; i < req.datas->size(); ++i) {
+      rkmsgs[i].payload = (void *) req.datas->at(i)->c_str();
+      rkmsgs[i].len     = req.datas->at(i)->size();
+      rkmsgs[i].key     = 0;
+      rkmsgs[i].key_len = 0;
+      rkmsgs[i]._private = req.datas->at(i);
+      printf("%s kafka produce '%s'\n", rd_kafka_topic_name(rkt), req.datas->at(i)->c_str());
     }
+    
+    rd_kafka_produce_batch(rkt, 0, 0,
+                           &rkmsgs[0], rkmsgs.size());
+
+    for (size_t i = 0; i < req.datas->size(); ++i) {
+      if (rkmsgs[i].err) {
+        fprintf(stderr, "%s kafka produce error %s\n", rd_kafka_topic_name(rkt),
+                rd_kafka_message_errstr(&rkmsgs[i]));
+      }
+    }
+    
     delete req.datas;
     
     rd_kafka_poll(ctx->rk, 0);
   }
-
+  
+  want = STOP;
+  fprintf(stderr, "routine exit\n");
   return NULL;
+}
+
+/* pidfile may stale, this's not a perfect method */
+bool initSingleton(CnfCtx *ctx, char *errbuf)
+{
+  int fd = open(ctx->pidfile.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0644);
+  if (lockf(fd, F_TLOCK, 0) == 0) {
+    std::string pid = to_string(getpid());
+    
+    write(fd, pid.c_str(), pid.size());
+    return true;
+  } else {
+    snprintf(errbuf, MAX_ERR_LEN, "lock %s failed", ctx->pidfile.c_str());
+    return false;
+  }
+}
+
+pid_t spawn(CnfCtx *ctx, char *errbuf)
+{
+  if (!watchInit(ctx, errbuf)) {
+    fprintf(stderr, "watch init error %s\n", errbuf);
+    return -1;
+  }
+
+  int pid = fork();
+  if (pid == 0) {
+    want = WAIT;
+    
+    sigset_t set;
+    sigemptyset(&set);
+    sigprocmask(SIG_SETMASK, &set, NULL);
+    
+    /* initKafka startup librdkafka thread */
+    if (!initKafka(ctx, errbuf)) {
+      fprintf(stderr, "init kafka error %s\n", errbuf);
+      exit(EXIT_FAILURE);
+    }
+    
+    pthread_t tid;
+    pthread_create(&tid, NULL, routine, ctx);
+    watchLoop(ctx);
+    pthread_join(tid, NULL);
+    unloadCnfCtx(ctx);
+    exit(EXIT_SUCCESS);
+  }
+  return pid;
 }
 
 #ifdef UNITTEST
@@ -1241,6 +1394,23 @@ void TEST(split)()
   assert(list[3] == "");
   check(list[4] == "\"\"", "%s", list[4].c_str());
   assert(list[5] == "bj");
+}
+
+void TEST(iso8601)()
+{
+  std::string iso;
+  bool rc;
+
+  rc = iso8601("28/Feb/2015:12:30:23", &iso);
+  check(rc, "%s", "28/Feb/2015:12:30:23");
+  check(iso == "2015-02-28T12:30:23", "%s", iso.c_str());
+
+  rc = iso8601("28/Feb:12:30:23", &iso);
+  check(rc == false, "%s", "28/Feb:12:30:23");
+
+  rc = iso8601("28/Feb/2015:12:30", &iso);
+  check(rc, "%s", "28/Feb/2015:12:30");
+  check(iso == "2015-02-28T12:30:00", "%s", iso.c_str());
 }
 
 void TEST(loadLuaCtx)()
@@ -1288,8 +1458,6 @@ void TEST(loadCnf)()
   ctx = loadCnf(".", errbuf);
   check(ctx != 0, "loadCnf . %s", errbuf);
   
-  assert(ctx->conf == 0);
-  assert(ctx->tconf == 0);
   assert(ctx->rk == 0);
 
   check(ctx->host == "zzyong.paas.user.vm", "%s", ctx->host.c_str());
@@ -1467,8 +1635,6 @@ void TEST(watchInit)()
 
   write(fd, "\n789\n", 5);
   close(fd);
-
-  sleep(100);
   unlink("./basic.log");
 
   OneTaskReq req;
@@ -1502,11 +1668,25 @@ void TEST(watchInit)()
   pthread_join(tid, 0);
 }
 
+void TEST(initKafka)()
+{
+  bool rc;
+  char errbuf[MAX_ERR_LEN];
+  CnfCtx *ctx;
+
+  ctx = loadCnf(".", errbuf);
+  rc = initKafka(ctx, errbuf);
+  check(rc == true, "%s", errbuf);
+
+  unloadCnfCtx(ctx);
+}  
+
 static const char *files[] = {
   "./basic.log",
-  "./access_log",
-  "./nginx.log",
-  "./error.log",
+  "./filter.log",
+  "./aggregate.log",
+  "./grep.log",
+  "./transform.log",
   0
 };
 
@@ -1530,6 +1710,8 @@ int main(int argc, char *argv[])
   TEST(prepare)();
     
   TEST(split)();
+  TEST(iso8601)();
+  
   TEST(loadLuaCtx)();
   TEST(loadCnf)();
   
@@ -1539,6 +1721,7 @@ int main(int argc, char *argv[])
   TEST(filter)();
 
   TEST(watchInit)();
+  TEST(initKafka)();
 
   TEST(clean)();
   printf("OK\n");

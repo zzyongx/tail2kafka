@@ -1,9 +1,10 @@
-file      = "./nginx.log"
-topic     = "nginx"
+file      = "./aggregate.log"
+topic     = "nginx_access_log"
 autosplit = true
 timeidx   = 4
 withhost  = true
 withtime  = true
+autocreat = true
 
 aggregate = function(fields)
   local n = table.getn(fields)

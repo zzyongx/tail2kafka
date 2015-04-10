@@ -7,9 +7,11 @@
 #include <vector>
 #include <string>
 #include <pthread.h>
+#include <unistd.h>
 #include <librdkafka/rdkafka.h>
 
 typedef std::vector<std::string> StringList;
+static const char *hostname = "zzyong.paas.user.vm";
 
 void start_producer();
 void start_consumer();
@@ -17,6 +19,7 @@ void start_consumer();
 int main(int argc, char *argv[])
 {
   start_producer();
+	sleep(1);
   start_consumer();
   return EXIT_SUCCESS;
 }
@@ -33,8 +36,7 @@ void sleep_ms(int ms)
 class BasicProducer {
 public:
   BasicProducer()
-    : i(0), j(0) {
-  }
+    : i(0), j(0) {}
   void reset() {
     i = j = 0;
   }
@@ -51,7 +53,6 @@ private:
   int j;
   char buffer[256];
 };
-
 BasicProducer basicPro;
 
 void *basic_routine(void *)
@@ -75,27 +76,68 @@ void *basic_routine(void *)
   return NULL;
 }
 
+class FilterProducer {
+public:
+  FilterProducer() : i(0) {}
+  void reset() { i = 0; }
+  char *operator()(bool filter = false) {
+    if (filter) {
+      snprintf(buffer, 256, "%s 2015-04-02T12:05:%02d /%d 200 %d",
+               hostname, i/2, i%2, i%10);
+    } else {
+      snprintf(buffer, 256, "filter - - [02/Apr/2015:12:05:%02d +0800] \"/%d\" 200 - - %d",
+               i/2, i%2, i%10);
+    }
+    i++;
+    return buffer;
+  }
+private:
+  int i;
+  char buffer[256];
+};
+FilterProducer filterPro;
+
 void *filter_routine(void *)
 {
   FILE *fp = fopen("./filter.log", "a");
   assert(fp);
   
   for (int i = 0; i < 100; ++i) {
-    fprintf(fp, "filter - - [02/Apr/2015:12:05:%02d] \"/1\" 200 - - %d\n",
-            i/2, i % 10);
+    fprintf(fp, "%s\n", filterPro());
   }
   
   fflush(fp);
   sleep_ms(1000);
   
   for (int i = 0; i < 100; ++i) {
-    fprintf(fp, "filter - - [02/Apr/2015:12:06:%02d] \"/2\" 200 - - %d\n",
-            i/2, i % 10);
+    fprintf(fp, "%s\n", filterPro());
   }
   fclose(fp);
 
+  filterPro.reset();
   return NULL;
 }
+
+class GrepProducer {
+public:
+	GrepProducer() : i(0) {}
+	void reset() { i = 0; }
+	char *operator()(bool grep = false) {
+		if (grep) {
+			snprintf(buffer, 256, "%s [02/Apr/2015:12:05:%02d] \"GET /%d HTTP/1.0\" 200 %d\n",
+							 hostname, i/2, i%2, i%10);
+		} else {
+			snprintf(buffer, 256, "grep - - [02/Apr/2015:12:05:%02d] \"GET /%d HTTP/1.0\" 200 - - %d\n",
+							 i/2, i%2, i%10);
+		}
+		i++;
+		return buffer;
+	}
+private:
+	int i;
+	char buffer[256];
+};
+GrepProducer grepPro;
 
 void *grep_routine(void *)
 {
@@ -103,37 +145,74 @@ void *grep_routine(void *)
   assert(fp);
   
   for (int i = 0; i < 100; ++i) {
-    fprintf(fp, "grep - - [02/Apr/2015:12:05:%02d] \"GET /1 HTTP/1.0\" 200 - - %d\n",
-            i/2, i % 10);
-  }
+		fprintf(fp, "%s\n", grepPro());
+	}
   
   fflush(fp);
   sleep_ms(1000);
   
   for (int i = 0; i < 100; ++i) {
-    fprintf(fp, "grep - - [02/Apr/2015:12:06:%02d] \"GET /2 HTTP/1.0\" 200 - - %d\n",
-            i/2, i % 10);
+		fprintf(fp, "%s\n", grepPro());
   }
   fclose(fp);
 
+	grepPro.reset();
   return NULL;
 }
+
+class AggregateProducer {
+public:
+	AggregateProducer() : i(0) {}
+	char *operator()(bool t = false) {
+		if (t) {
+			snprintf(buffer, 256, "%s 2015-04-02T12:05:%02d %d reqt<0.1=20 size=4600 status_200=20",
+							 hostname, i, i);
+		} else {
+			assert(i < 100);
+			snprintf(buffer, 256,
+							 "aggregate - - [02/Apr/2015:12:05:%02d +0800] - - - - \"200\" 230 0.1 - - - - %d\n",
+							 i/20, i%5);
+		}
+		i++;
+		return buffer;
+	}
+private:
+	int i;
+	char buffer[256];
+};
+AggregateProducer aggregatePro;
 
 void *aggregate_routine(void *)
 {
   FILE *fp = fopen("./aggregate.log", "a");
   assert(fp);
 
-  for (int i = 0; i < 5; ++i) {
-    for (int j = 0; j < 20; ++j) {
-      fprintf(fp, "aggregate - - [02/Apr/2015:12:05:%02d] - - - - \"200\" 230 0.1 - - - - %d\n",
-              i, i);
-    }
+	for (int i = 0; i < 100; ++i) {
+		fprintf(fp, "%s\n", aggregatePro());
   }
   fclose(fp);
   
   return NULL;
 }
+
+class TransformProducer {
+public:
+	TransformProducer() : i(0) {}
+	void reset() { i = 0; }
+	char *operator()(bool t = false) {
+		if (t) {
+			snprintf(buffer, 256, "%s [error] message", hostname);
+		} else {
+			snprintf(buffer, 256, "[%s] message", (i % 2 == 0 ? "info" : "error"));
+		}
+		i++;
+		return buffer;
+	}
+private:
+	int i;
+	char buffer[256];
+};
+TransformProducer transformPro;
 
 void *transform_routine(void *)
 {
@@ -141,10 +220,11 @@ void *transform_routine(void *)
   assert(fp);
 
   for (int i = 0; i < 99; ++i) {
-    fprintf(fp, "[%s] message\n", (i % 2 == 0 ? "info" : "error"));
+    fprintf(fp, "%s\n", transformPro());
   }
   fclose(fp);
 
+	transformPro.reset();
   return NULL;
 }
     
@@ -223,12 +303,18 @@ void basic_consumer(rd_kafka_message_t *rkm)
 
 void filter_consumer(rd_kafka_message_t *rkm)
 {
-  printf("%.*s\n", (int) rkm->len, (char *) rkm->payload);
+  // printf("%.*s\n", (int) rkm->len, (char *) rkm->payload);
+  const char *ptr = filterPro(true);
+  check(memcmp(rkm->payload, ptr, rkm->len) == 0,
+        "%.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
 }
 
 void grep_consumer(rd_kafka_message_t *rkm)
 {
-  printf("%.*s\n", (int) rkm->len, (char *) rkm->payload);  
+  // printf("%.*s\n", (int) rkm->len, (char *) rkm->payload);
+	const char *ptr = grepPro(true);
+	check(memcmp(rkm->payload, ptr, rkm->len) == 0,
+				"%.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
 }
 
 void aggregate_consumer(rd_kafka_message_t *rkm)
@@ -238,7 +324,10 @@ void aggregate_consumer(rd_kafka_message_t *rkm)
 
 void transform_consumer(rd_kafka_message_t *rkm)
 {
-  printf("%.*s\n", (int) rkm->len, (char *) rkm->payload);  
+  // printf("%.*s\n", (int) rkm->len, (char *) rkm->payload);
+	const char *ptr = transformPro(true);
+	check(memcmp(rkm->payload, ptr, rkm->len) == 0,
+				"%.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
 }
   
 void start_consumer()

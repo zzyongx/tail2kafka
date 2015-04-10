@@ -1,7 +1,6 @@
 file     = "./grep.log"
-topic    = "httpd2"
-timeidx  = 4
+topic    = "grep"
 autocreat = true
 grep     = function(fields)
-  return {fields[4], '"' .. fields[5] .. '"', fields[6], fields[table.maxn(fields)]}
+  return {'[' .. fields[4] .. '] "' .. fields[5] .. '"', fields[6], fields[table.maxn(fields)]}
 end

@@ -1,5 +1,5 @@
 file      = "./aggregate.log"
-topic     = "nginx_access_log"
+topic     = "aggregate"
 autosplit = true
 timeidx   = 4
 withhost  = true

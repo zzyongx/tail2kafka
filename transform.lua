@@ -1,5 +1,5 @@
 file     = "transform.log"
-topic    = "http.error"
+topic    = "transform"
 autocreat = true
 transform = function(line)
   local s = string.sub(line, 1, 7);

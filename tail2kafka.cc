@@ -1110,7 +1110,7 @@ static const char *MonthAlpha[12] = {
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
 
-// 28/Feb/2015:12:30:23 -> 2015-03-30T16:31:53
+// 28/Feb/2015:12:30:23 +0800 -> 2015-03-30T16:31:53
 bool iso8601(const std::string &t, std::string *iso)
 {
   enum { WaitYear, WaitMonth, WaitDay, WaitHour, WaitMin, WaitSec } status = WaitDay;
@@ -1118,7 +1118,7 @@ bool iso8601(const std::string &t, std::string *iso)
   year = mon = day = hour = min = sec = 0;
   
   const char *p = t.c_str();
-  while (*p) {
+  while (*p && *p != ' ') {
     if (*p == '/') {
       if (status == WaitDay) status = WaitMonth;
       else if (status == WaitMonth) status = WaitYear;
@@ -1168,21 +1168,22 @@ bool processLine(LuaCtx *ctx, char *line, size_t nline)
   if (ctx->transform) {
     data = new std::string;
     rc = ctx->transform(ctx, line, nline-1, data);
-  } else if (ctx->aggregate || ctx->filter) {
+  } else if (ctx->aggregate || ctx->filter || ctx->grep) {
     StringList fields;
     split(line, nline, &fields);
-    
-    if (ctx->timeidx != UNSET_INT) {
-      int idx = absidx(ctx->timeidx, fields.size());
-      if (idx < 0 || (size_t) idx >= fields.size()) return false;
-      iso8601(fields[idx], &fields[idx]);
-    }
-
+		
+		if (ctx->timeidx != UNSET_INT) {
+			int idx = absidx(ctx->timeidx, fields.size());
+			if (idx < 0 || (size_t) idx >= fields.size()) return false;
+			iso8601(fields[idx], &fields[idx]);
+		}
+		
     if (ctx->aggregate) {
       rc = ctx->aggregate(ctx, fields, datas);
     } else {
       data = new std::string;
-      rc = ctx->filter(ctx, fields, data);
+      rc = ctx->grep ? ctx->grep(ctx, fields, data) :
+				ctx->filter(ctx, fields, data);
     }
   } else {
     data = new std::string(line, nline);
@@ -1565,7 +1566,7 @@ void TEST(grep)()
     "200", "-", "-", "95555"};
   
   ctx->grep(ctx, StringList(fields1, fields1+9), &data);
-  check(data == main->host + " 2015-04-02T12:05:05 \"GET / HTTP/1.0\" 200 95555",
+  check(data == main->host + " [2015-04-02T12:05:05] \"GET / HTTP/1.0\" 200 95555",
         "%s", data.c_str());
 
   unloadLuaCtx(ctx);
@@ -1642,10 +1643,10 @@ void TEST(watchInit)()
 
   /* test wath */
   check(req.idx == lctx->idx, "%d = %d", req.idx, lctx->idx);
-  check(*(req.datas->at(0)) == "456\n", "%s", req.datas->at(0)->c_str());
+  check(*(req.datas->at(0)) == "456", "%s", req.datas->at(0)->c_str());
 
   read(ctx->accept, &req, sizeof(OneTaskReq));
-  check(*(req.datas->at(0)) == "789\n", "%s", req.datas->at(0)->c_str());
+  check(*(req.datas->at(0)) == "789", "%s", req.datas->at(0)->c_str());
 
   check(lctx->size == 11, "%d", (int) lctx->size);
 
@@ -1662,7 +1663,7 @@ void TEST(watchInit)()
   close(fd);
 
   read(ctx->accept, &req, sizeof(OneTaskReq));
-  check(*(req.datas->at(0)) == "abcd\n", "%s", req.datas->at(0)->c_str());
+  check(*(req.datas->at(0)) == "abcd", "%s", req.datas->at(0)->c_str());
 
   want = STOP;
   pthread_join(tid, 0);

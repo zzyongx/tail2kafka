@@ -762,6 +762,11 @@ bool aggregate(LuaCtx *ctx, const StringList &fields, StringPtrList *results)
     return false;
   }
 
+  if (lua_isnil(ctx->L, 1)) {
+    lua_settop(ctx->L, 0);
+    return false;
+  }
+
   if (!lua_isstring(ctx->L, 1)) {
     fprintf(stderr, "%s aggregate return #1 must be string\n", ctx->file.c_str());
     lua_settop(ctx->L, 0);
@@ -920,11 +925,11 @@ bool lineAlign(LuaCtx *ctx)
   return true;
 }
 
-/* watch IN_DELETE_SELF | IN_MOVE_SELF does not work
+/* watch IN_DELETE_SELF does not work
  * luactx hold fd to the deleted file, the file will never be real deleted
  * so DELETE will be inotified
  */
-static const uint32_t WATCH_EVENT = IN_MODIFY;
+static const uint32_t WATCH_EVENT = IN_MODIFY | IN_MOVE_SELF;
 
 bool addWatch(CnfCtx *ctx, char *errbuf)
 {
@@ -967,7 +972,7 @@ void tryReWatch(CnfCtx *ctx)
       struct stat st;
       fstat(lctx->fd, &st);
 
-      // if file unlinked or truncated
+      // if file was unlinked, moved or truncated
       if (st.st_ino != lctx->inode || st.st_size < lctx->size) {
         fprintf(stderr, "rewatch %s\n", lctx->file.c_str());
         
@@ -985,6 +990,18 @@ void tryReWatch(CnfCtx *ctx)
   }
 }
 
+/* moved */
+void tryRmWatch(LuaCtx *ctx, int wd)
+{
+  printf("remove %s\n", ctx->file.c_str());
+  
+  inotify_rm_watch(ctx->main->wfd, wd);
+  ctx->main->wch.erase(wd);
+  close(ctx->fd);
+  ctx->fd = -1;
+}
+
+/* unlink or truncate */
 void tryRmWatch(CnfCtx *ctx)
 {
   for (WatchCtxHash::iterator ite = ctx->wch.begin(); ite != ctx->wch.end(); ) {
@@ -992,7 +1009,7 @@ void tryRmWatch(CnfCtx *ctx)
     
     struct stat st;
     fstat(lctx->fd, &st);
-    if (st.st_nlink == 0) {
+    if (st.st_nlink == 0 || st.st_size < lctx->size) {
       printf("remove %s\n", lctx->file.c_str());
       
       inotify_rm_watch(lctx->main->wfd, ite->first);
@@ -1046,12 +1063,17 @@ bool watchLoop(CnfCtx *ctx)
 
       char *p = eventBuffer;
       while (p < eventBuffer + nn) {
+        /* IN_IGNORED when watch was removed */
         struct inotify_event *event = (struct inotify_event *) p;
-        if (event->mask != IN_IGNORED) {
+        if (event->mask & IN_MODIFY) {
           LuaCtx *lctx = wd2ctx(ctx, event->wd);
           lctx->sn = ctx->sn;
           tail2kafka(lctx);
+        } else if (event->mask & IN_MOVE_SELF) {
+          LuaCtx *lctx = wd2ctx(ctx, event->wd);
+          tryRmWatch(lctx, event->wd);
         }
+          
         p += sizeof(struct inotify_event) + event->len;
       }
       flushCache(ctx, false);
@@ -1161,6 +1183,9 @@ bool iso8601(const std::string &t, std::string *iso)
 /* line without NL */
 bool processLine(LuaCtx *ctx, char *line, size_t nline)
 {
+  /* ignore empty line */
+  if (nline == 0) return true;
+  
   std::string *data = 0;
   StringPtrList *datas = new StringPtrList;
   bool rc;
@@ -1307,7 +1332,7 @@ void *routine(void *data)
       rkmsgs[i].key     = 0;
       rkmsgs[i].key_len = 0;
       rkmsgs[i]._private = req.datas->at(i);
-      printf("%s kafka produce '%s'\n", rd_kafka_topic_name(rkt), req.datas->at(i)->c_str());
+      // printf("%s kafka produce '%s'\n", rd_kafka_topic_name(rkt), req.datas->at(i)->c_str());
     }
     
     rd_kafka_produce_batch(rkt, 0, 0,
@@ -1378,7 +1403,7 @@ pid_t spawn(CnfCtx *ctx, char *errbuf)
 
 #ifdef UNITTEST
 #define check(r, fmt, arg...) \
-  do { if (!(r)) { fprintf(stderr, "%04d %s -> "fmt"\n", __LINE__, #r, ##arg); abort(); } } while(0)
+  do { if (!(r)) { fprintf(stderr, "%04d %s -> "fmt"\n", __LINE__, #r, ##arg); exit(1); } } while(0)
 
 #define TEST(x) test_##x
 
@@ -1636,7 +1661,9 @@ void TEST(watchInit)()
 
   write(fd, "\n789\n", 5);
   close(fd);
-  unlink("./basic.log");
+  // unlink("./basic.log");
+  rename("./basic.log", "./basic.log.old");
+  
 
   OneTaskReq req;
   read(ctx->accept, &req, sizeof(OneTaskReq));
@@ -1704,6 +1731,7 @@ void TEST(clean)()
   for (int i = 0; files[i]; ++i) {
     unlink(files[i]);
   }
+  unlink("./basic.log.old");
 }
   
 int main(int argc, char *argv[])

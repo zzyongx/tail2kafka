@@ -17,16 +17,17 @@
 #include <librdkafka/rdkafka.h>
 
 // -lpthread -lcassandra -lrdkafka
+// perl -n -e 'print unpack("Q", $_)'
 
 /* CREATE KEYSPACE de WITH REPLICATION = { 'class' : 'SimpleStrategy', 'replication_factor' : 3 };
- * CREATE TABLE realdata (topic TEXT, timestamp TEXT, id TEXT, node TEXT, data TEXT, PRIMARY_KEY((topic, timestamp), id, node));
+ * CREATE TABLE de.realdata (topic TEXT, id TEXT, timestamp TEXT, datas list<text>, PRIMARY KEY(topic, id, timestamp));
  */
 
 #define THREAD_SUCCESS ((void *) 0)
 #define THREAD_FAILURE ((void *) 1)
 static const char   SP       = ' ';
 static const size_t MAX_QLEN = 1024;
-static const size_t MAX_CNP  = 10240;
+static const size_t MAX_CNP  = 1024;
 static const char *OFFDIR    = "/tmp/aggregate2cassandra";
 
 typedef std::list<CassFuture *> CfList;
@@ -98,10 +99,14 @@ bool getKafkaOffset(ConsumerCtx *ctx, uint64_t *offset)
 
   struct stat st;
   if (stat(path, &st) == 0) {
-    ctx->offsetfd = open(path, O_WRONLY, 0644);
-    if (pread(ctx->offsetfd, offset, sizeof(*offset), 0) == 0) {
-      fprintf(stderr, "%s empty offset file, use default\n", ctx->topic);
+    ctx->offsetfd = open(path, O_RDWR, 0644);
+    ssize_t nn = pread(ctx->offsetfd, offset, sizeof(*offset), 0);
+    if (nn == 0) {
+      fprintf(stdout, "%s empty offset file, use default\n", ctx->topic);
       *offset = RD_KAFKA_OFFSET_END;
+    } else if (nn < 0) {
+      fprintf(stderr, "%s pread() error %s\n", ctx->topic, strerror(errno));
+      return false;
     }
   } else if (errno == ENOENT) {
     ctx->offsetfd = open(path, O_CREAT | O_WRONLY, 0644);
@@ -124,8 +129,6 @@ inline bool setKafkaOffset(ConsumerCtx *ctx, uint64_t offset)
   return true;
 }
 
-// yuntu01.picupload.djt 2015-04-13T17:59:41 10160008 reqt<0.1=43 reqt<0.3=2 size=147666 status_200=39 status_404=6
-
 void taskFinish(OneTaskReq *req)
 {
   if (req->node) delete req->node;
@@ -137,6 +140,7 @@ void taskFinish(OneTaskReq *req)
 bool sendToStoreAgent(ConsumerCtx *ctx, rd_kafka_message_t *rkm)
 {
   OneTaskReq req;
+  req.topic = ctx->topic;
   
   char *ptr = (char *) rkm->payload;
   char *end = ptr + rkm->len;
@@ -147,13 +151,13 @@ bool sendToStoreAgent(ConsumerCtx *ctx, rd_kafka_message_t *rkm)
   ptr = pos + 1;
 
   pos = (char *) memchr(ptr, SP, end - ptr);
-  if (!pos) goto error;
-  req.id = new std::string(ptr, pos - ptr);
+  if (!pos || pos - ptr != sizeof("YYYY-MM-DDTHH:MM:SS")-1) goto error;
+  req.time = new std::string(ptr, pos - ptr);
   ptr = pos + 1;
 
   pos = (char *) memchr(ptr, SP, end - ptr);
   if (!pos) goto error;
-  req.time = new std::string(ptr, pos - ptr);
+  req.id = new std::string(ptr, pos - ptr);
   ptr = pos + 1;
 
   req.data = new std::string(ptr, end - ptr);
@@ -178,9 +182,12 @@ void *consume_routine(void *data)
     if (!rkm) continue;  // timeout
 
     if (rkm->err) {
-      // if (rkm->err == RD_KAFKA_RESP_ERR__PARTITION_EOF) continue;
+      if (rkm->err == RD_KAFKA_RESP_ERR__PARTITION_EOF) continue;
       fprintf(stderr, "%s error %s\n", ctx->topic, rd_kafka_message_errstr(rkm));
+      continue;
     }
+
+    printf("data %.*s\n", (int) rkm->len, (char *) rkm->payload);
 
     if (!sendToStoreAgent(ctx, rkm)) {
       fprintf(stderr, "Bad data, skip %.*s\n", (int) rkm->len, (char *) rkm->payload);
@@ -218,7 +225,7 @@ bool startConsumers(int fd, const char *brokers, int argc, char *argv[], Consume
 
   for (size_t i = 0; i < consumers->size(); ++i) {
     ConsumerCtx *ctx = &(consumers->at(i));
-    int rc = pthread_create(&(ctx->tid), NULL, consume_routine, &ctx);
+    int rc = pthread_create(&(ctx->tid), NULL, consume_routine, ctx);
     if (rc != 0) {
       fprintf(stderr, "pthread_create error %s\n", strerror(rc));
       return false;
@@ -257,13 +264,21 @@ void *store_routine(void *data)
       CassStatement *statm = cass_prepared_bind(ctx->prepared);
       // cass_statement_set_consistency(statm, CASS_CONSISTENCY_TWO);
 
-      cass_statement_bind_string(statm, 0, cass_string_init(req.topic));
-      cass_statement_bind_string(statm, 0, cass_string_init(req.time->c_str()));
-      cass_statement_bind_string(statm, 0, cass_string_init(req.id->c_str()));
-      cass_statement_bind_string(statm, 0, cass_string_init(req.node->c_str()));
+      char timestamp[sizeof("YYYY-MM-DDTHH:MM")] = {0};
+      char sec[sizeof("SS")] = {0};
+      req.time->copy(timestamp, sizeof(timestamp)-1);
+      req.time->copy(sec, sizeof(sec)-1, req.time->size()-2);
+
+      cass_statement_bind_string(statm, 0, cass_string_init(req.data->c_str()));
+      cass_statement_bind_string(statm, 1, cass_string_init(req.topic));
+      cass_statement_bind_string(statm, 2, cass_string_init(timestamp));
+      cass_statement_bind_string(statm, 3, cass_string_init(req.id->c_str()));
+      cass_statement_bind_string(statm, 4, cass_string_init(req.node->c_str()));
+      cass_statement_bind_string(statm, 5, cass_string_init(sec));
 
       cfwaits.push_back(cass_session_execute(ctx->session, statm));
       cass_statement_free(statm);
+      taskFinish(&req);
     }
     
     for (CfList::iterator ite = cfwaits.begin(); ite != cfwaits.end();) {
@@ -306,9 +321,9 @@ bool startAgent(int rfd, const char *db, CassandraCtx *ctx)
     return false;
   }
 
-  CassString query = cass_string_init("UPDATE de.realdata SET data = ? "
-                                      "WHERE topic = ? AND timestamp = ? "  /* partition key */
-                                      "AND id = ? AND node = ?");        /* cluster key */
+  CassString query = cass_string_init("UPDATE de.realdata SET data = ?"
+                                      "WHERE topic = ? AND timestamp = ? "    /* partition key */
+                                      "AND id = ? AND node = ? AND sec = ?"); /* cluster key */
   CassFuture *prepareFuture = cass_session_prepare(ctx->session, query);
   if (cass_future_error_code(prepareFuture) != CASS_OK) {
     CassString msg = cass_future_error_message(prepareFuture);

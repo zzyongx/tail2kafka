@@ -114,6 +114,7 @@ struct LuaCtx {
   transform_pt  transform;
   grep_pt       grep;
 
+  std::string   pkey;
   std::string   lasttime;
   SSIHash       cache;
   aggregate_pt  aggregate;
@@ -349,6 +350,12 @@ static LuaCtx *loadLuaCtx(const char *file, char *errbuf)
       goto error;
     }
     ctx->withhost = lua_toboolean(L, 1);
+  }
+  lua_settop(L, 0);
+
+  lua_getglobal(L, "pkey");
+  if (lua_isstring(L, 1) || lua_isnumber(L, 1)) {
+    ctx->pkey = lua_tostring(L, 1);
   }
   lua_settop(L, 0);
   
@@ -796,6 +803,7 @@ bool aggregate(LuaCtx *ctx, const StringList &fields, StringPtrList *results)
     int value = lua_tonumber(ctx->L, -1);
 
     ctx->cache[pkey][key] += value;
+    if (!ctx->pkey.empty()) ctx->cache[ctx->pkey][key] += value;
     lua_pop(ctx->L, 1);
   }
 
@@ -1565,9 +1573,11 @@ void TEST(aggregate)()
     "0.2", "-", "-", "-", "-",
     "95555"};
   ctx->aggregate(ctx, StringList(fields3, fields3 + 16), &datas);
-  check(datas.size() == 1, "%d", (int) datas.size());
+  check(datas.size() == 2, "%d", (int) datas.size());
   const char *msg = "2015-04-02T12:05:04 10086 reqt<0.1=1 reqt<0.3=1 size=500 status_200=2";
   check((*datas[0]) == main->host + " " + msg, "%s", datas[0]->c_str());
+  msg = "2015-04-02T12:05:04 yuntu reqt<0.1=1 reqt<0.3=1 size=500 status_200=2";
+  check((*datas[1]) == main->host + " " + msg, "%s", datas[0]->c_str());  
   
   unloadLuaCtx(ctx);  
 }

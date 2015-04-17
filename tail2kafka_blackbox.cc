@@ -162,23 +162,33 @@ void *grep_routine(void *)
 
 class AggregateProducer {
 public:
-  AggregateProducer() : i(0) {}
-  void reset() { i = 0; }
+  AggregateProducer() : i(0), pkey(false) {}
+  void reset() { i = 0; pkey = false; }
   char *operator()(bool t = false) {
     assert(i < 100);
     if (t) {
-      snprintf(buffer, 256, "%s 2015-04-02T12:05:%02d %d reqt<0.1=4 size=920 status_200=4",
-               hostname, i/5, i%5);
+      if (pkey) {
+        snprintf(buffer, 256, "%s 2015-04-02T12:05:%02d yuntu reqt<0.1=20 size=4600 status_200=20",
+                 hostname, i/5-1);
+        pkey = false;
+      } else {
+        snprintf(buffer, 256, "%s 2015-04-02T12:05:%02d %d reqt<0.1=4 size=920 status_200=4",
+                 hostname, i/5, i%5);
+        i++;
+        if (i % 5 == 0) pkey = true;
+      }
+      
     } else {
       snprintf(buffer, 256,
                "aggregate - - [02/Apr/2015:12:05:%02d +0800] - - - - \"200\" 230 0.1 - - - - %d\n",
                i/20, i%5);
+      i++;
     }
-    i++;
     return buffer;
   }
 private:
   int i;
+  bool pkey;
   char buffer[256];
 };
 AggregateProducer aggregatePro;
@@ -279,23 +289,22 @@ void *consumer_routine(void *data)
   void *rc = THREAD_FAILURE;
   while (true) {
     rd_kafka_message_t *rkm;
-    rkm = rd_kafka_consume(rkt, 0, 1000);
+    rkm = rd_kafka_consume(rkt, 0, 5000);
     if (!rkm) {
-      fprintf(stderr, "%s timeout\n", ctx->topic);
-      continue;
+      fprintf(stderr, "%s timeout, exit\n", ctx->topic);
+      break;
     }
 
     if (rkm->err) {
       if (rkm->err == RD_KAFKA_RESP_ERR__PARTITION_EOF) {
-        fprintf(stderr, "%s eof, exit\n", ctx->topic);
-        return rc;
+        fprintf(stderr, "%s eof, continue\n", ctx->topic);
+      } else {
+        fprintf(stderr, "%s error, %s\n", ctx->topic, rd_kafka_message_errstr(rkm));
       }
-
-      fprintf(stderr, "%s error, %s\n", ctx->topic, rd_kafka_message_errstr(rkm));
-      continue;
+    } else {
+      ctx->fun(rkm);
+      rc = THREAD_SUCCESS;
     }
-    ctx->fun(rkm);
-    rc = THREAD_SUCCESS;
   }
   return rc;
 }

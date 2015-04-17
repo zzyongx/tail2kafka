@@ -20,7 +20,7 @@
 // perl -n -e 'print unpack("Q", $_)'
 
 /* CREATE KEYSPACE de WITH REPLICATION = { 'class' : 'SimpleStrategy', 'replication_factor' : 3 };
- * CREATE TABLE de.realdata (topic TEXT, id TEXT, timestamp TEXT, datas list<text>, PRIMARY KEY(topic, id, timestamp));
+ * CREATE TABLE de.realdata (topic TEXT, id TEXT, timestamp TEXT, datas map<text, text>, PRIMARY KEY(topic, id, timestamp));
  */
 
 #define THREAD_SUCCESS ((void *) 0)
@@ -137,6 +137,7 @@ void taskFinish(OneTaskReq *req)
   if (req->data) delete req->data;
 }
 
+/* node time id data */
 bool sendToStoreAgent(ConsumerCtx *ctx, rd_kafka_message_t *rkm)
 {
   OneTaskReq req;
@@ -240,6 +241,10 @@ bool startConsumers(int fd, const char *brokers, int argc, char *argv[], Consume
  * use cache and preread to accelerate read
  * so we store the raw data
  * dashboard data is write once, so cache will be persist
+ *
+ * we have second precision, but when display on dashboard, fetch all seconds is not neccessary.
+ * we could read two random seconds in one minute and display it,
+ * and load more seconds in one minute if necessary.
  */
 void *store_routine(void *data)
 {
@@ -264,17 +269,16 @@ void *store_routine(void *data)
       CassStatement *statm = cass_prepared_bind(ctx->prepared);
       // cass_statement_set_consistency(statm, CASS_CONSISTENCY_TWO);
 
-      char timestamp[sizeof("YYYY-MM-DDTHH:MM")] = {0};
-      char sec[sizeof("SS")] = {0};
-      req.time->copy(timestamp, sizeof(timestamp)-1);
-      req.time->copy(sec, sizeof(sec)-1, req.time->size()-2);
+      CassCollection *collection = cass_collection_new(CASS_COLLECTION_TYPE_MAP, 1);
+      cass_collection_append_string(collection, cass_string_init(req.node->c_str()));
+      cass_collection_append_string(collection, cass_string_init(req.data->c_str()));
 
-      cass_statement_bind_string(statm, 0, cass_string_init(req.data->c_str()));
+      cass_statement_bind_collection(statm, 0, collection);
       cass_statement_bind_string(statm, 1, cass_string_init(req.topic));
-      cass_statement_bind_string(statm, 2, cass_string_init(timestamp));
-      cass_statement_bind_string(statm, 3, cass_string_init(req.id->c_str()));
-      cass_statement_bind_string(statm, 4, cass_string_init(req.node->c_str()));
-      cass_statement_bind_string(statm, 5, cass_string_init(sec));
+      cass_statement_bind_string(statm, 2, cass_string_init(req.id->c_str()));
+      cass_statement_bind_string(statm, 3, cass_string_init(req.time->c_str()));
+
+      cass_collection_free(collection);
 
       cfwaits.push_back(cass_session_execute(ctx->session, statm));
       cass_statement_free(statm);
@@ -314,6 +318,9 @@ bool startAgent(int rfd, const char *db, CassandraCtx *ctx)
   ctx->session = cass_session_new();
 
   cass_cluster_set_contact_points(ctx->cluster, db);
+  cass_cluster_set_max_connections_per_host(ctx->cluster, MAX_CNP);
+  cass_cluster_set_max_concurrent_creation(ctx->cluster, 100);
+  
   ctx->connect = cass_session_connect(ctx->session, ctx->cluster);
   if (cass_future_error_code(ctx->connect) != CASS_OK) {
     CassString msg = cass_future_error_message(ctx->connect);
@@ -321,9 +328,8 @@ bool startAgent(int rfd, const char *db, CassandraCtx *ctx)
     return false;
   }
 
-  CassString query = cass_string_init("UPDATE de.realdata SET data = ?"
-                                      "WHERE topic = ? AND timestamp = ? "    /* partition key */
-                                      "AND id = ? AND node = ? AND sec = ?"); /* cluster key */
+  CassString query = cass_string_init("UPDATE de.realdata SET datas = datas + ?"
+                                      "WHERE topic = ? AND id = ? AND timestamp = ?");
   CassFuture *prepareFuture = cass_session_prepare(ctx->session, query);
   if (cass_future_error_code(prepareFuture) != CASS_OK) {
     CassString msg = cass_future_error_message(prepareFuture);

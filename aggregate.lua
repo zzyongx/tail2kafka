@@ -5,6 +5,7 @@ timeidx   = 4
 withhost  = true
 withtime  = true
 autocreat = true
+pkey      = "yuntu"
 
 aggregate = function(fields)
   local n = table.getn(fields)

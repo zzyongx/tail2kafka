@@ -21,6 +21,7 @@
 
 /* CREATE KEYSPACE de WITH REPLICATION = { 'class' : 'SimpleStrategy', 'replication_factor' : 3 };
  * CREATE TABLE de.realdata (topic TEXT, id TEXT, timestamp TEXT, datas map<text, text>, PRIMARY KEY(topic, id, timestamp));
+ * CREATE TABLE de.cachedata (topic TEXT, id TEXT, timestamp TEXT, datas text, PRIMARY KEY(topic, id, timestamp));
  */
 
 #define THREAD_SUCCESS ((void *) 0)
@@ -369,14 +370,14 @@ bool waitFinish(CassandraCtx *ctx, ConsumerList *consumers)
     if (status == THREAD_FAILURE) rc = status;
   }
 
-  if (ctx->prepared) cass_prepared_free(ctx->prepared);
-
   if (ctx->connect) {
     CassFuture *closeFuture = cass_session_close(ctx->session);
     cass_future_wait(closeFuture);
     cass_future_free(closeFuture);
     cass_future_free(ctx->connect);
   }
+  
+  if (ctx->prepared) cass_prepared_free(ctx->prepared);
 
   if (ctx->session) cass_session_free(ctx->session);
   if (ctx->cluster) cass_cluster_free(ctx->cluster);

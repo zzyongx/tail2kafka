@@ -126,6 +126,7 @@ struct LuaCtx {
   size_t        npos;
 
   uint64_t      sn;
+  bool          moved;
 
   LuaCtx();
 };
@@ -954,6 +955,7 @@ bool addWatch(CnfCtx *ctx, char *errbuf)
     fstat(lctx->fd, &st);
     lctx->size = st.st_size;
     lctx->inode = st.st_ino;
+    lctx->moved = false;
 
     if (!lineAlign(lctx)) {
       snprintf(errbuf, MAX_ERR_LEN, "%s align new line error", lctx->file.c_str());
@@ -987,6 +989,7 @@ void tryReWatch(CnfCtx *ctx)
         int wd = inotify_add_watch(ctx->wfd, lctx->file.c_str(), WATCH_EVENT);
         ctx->wch.insert(std::make_pair(wd, lctx));
         lctx->inode = st.st_ino;
+        lctx->moved = false;
 
         lctx->sn = ctx->sn;
         tail2kafka(lctx);
@@ -999,14 +1002,10 @@ void tryReWatch(CnfCtx *ctx)
 }
 
 /* moved */
-void tryRmWatch(LuaCtx *ctx, int wd)
+inline void tryRmWatch(LuaCtx *ctx, int wd)
 {
   printf("remove %s\n", ctx->file.c_str());
-  
-  inotify_rm_watch(ctx->main->wfd, wd);
-  ctx->main->wch.erase(wd);
-  close(ctx->fd);
-  ctx->fd = -1;
+  ctx->moved = true;
 }
 
 /* unlink or truncate */
@@ -1017,7 +1016,7 @@ void tryRmWatch(CnfCtx *ctx)
     
     struct stat st;
     fstat(lctx->fd, &st);
-    if (st.st_nlink == 0 || st.st_size < lctx->size) {
+    if (lctx->moved || st.st_nlink == 0 || st.st_size < lctx->size) {
       printf("remove %s\n", lctx->file.c_str());
       
       inotify_rm_watch(lctx->main->wfd, ite->first);

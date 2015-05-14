@@ -3,13 +3,75 @@
   <meta charset="utf-8">
   <title>Dashboard Everything</title>
   <link href="//cdn.bootcss.com/bootstrap/3.3.0/css/bootstrap.min.css" rel="stylesheet">
-  <link href="//code.jquery.com/ui/1.11.2/themes/smoothness/jquery-ui.min.css" rel="stylesheet">
-  <script src="//code.jquery.com/jquery-2.1.1.min.js"></script>
-  <script src="//code.jquery.com/ui/1.11.2/jquery-ui.min.js"></script>
+  <link href="/js/themes/smoothness/jquery-ui.min.css" rel="stylesheet">
+  <script src="/js/lib/jquery-2.1.1.min.js"></script>
+  <script src="/js/lib/jquery-ui.min.js"></script>
+  <style type="text/css">
+  </style>
 </head>
 <body>
-  <div id="main" style="height:400px"></div>
- 
-  <script src="/js/echarts-all.js"></script>
+  <div class="container-fluid">
+    <div id="main" style="height:400px"></div>
+    
+    <div id="selcenter" class="row">
+      <div class="col-md-6">
+        <input class="form-control" id="topic-input" placeholder="topic" />
+        <select class="form-control" id="topic-select"></select>
+      </div>
+      <div class="col-md-6">
+        <input class="form-control" id="id-input" placeholder="topic id" />
+        <select class="form-control" id="id-select"></select>
+      </div>
+    </div>
+  
+    <div id="opcenter" class="row">
+      <div class="col-md-4">
+        <div class="row">
+          <div class="col-md-5">
+            <input class="form-control" id="host-search" placeholder="host" />
+            <select multiple class="form-control" id="host-select-pre"></select>
+          </div>
+          <div class="col-md-2">
+            <button type="button" class="btn btn-primary btn-block" id="host-input-add">ADD &gt;&gt;</button>
+            <button type="button" class="btn btn-primary btn-block" id="host-input-del">&lt;&lt; DEL</button>
+            <button type="button" class="btn btn-primary btn-block" id="host-input-cln">CLEAN</button>
+          </div>
+          <div class="col-md-5">
+            <select multiple class="form-control" id="host-select"></select>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-md-8">
+        <div class="row">
+          <div class="col-md-6">
+            <p> system attr </p>
+            <div id="attr-select"></div>
+            <hr class="divider" />
+            <p> custom attr </p>
+            <div id="func-select"></div>
+          </div>
+          <div class="col-md-6">
+            <p> You can Edit exists attr, get New attr </p>
+            <input class="form-control" id="custom-attr-name" placeholder="attr name">
+            <textarea class="form-control" id="custom-attr-func" rows="3">function(attrObj) {}
+            </textarea>
+            <div class="row">
+              <div class="col-md-6">
+                <button type="button" id="custom-attr-define" class="btn btn-primary btn-block">DEFINE</button>
+              </div>
+              <div class="col-md-6">
+                <button type="button" id="custom-attr-undef" class="btn btn-primary btn-block">UNDEF</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <button type="button" class="btn btn-primary btn-lg btn-block" id="show-me">Show Me</button>
+  </div>
+  
+   <script src="/js/lib/echarts-all.js"></script>
   <script src="/js/de.js"></script>
 </body>

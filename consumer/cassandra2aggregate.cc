@@ -220,7 +220,9 @@ void pollRealWaitFuture(CassFutureList *cflist, StringPairList *results, bool wa
         results->push_back(std::make_pair(ite->second, json));
       } else {
         // json end with \n
-        printf("id: %s\ndata: %s\n", ite->second.c_str(), json.c_str());
+        if (!json.empty()) {
+          printf("id: %s\ndata: %s\n", ite->second.c_str(), json.c_str());
+        }
       }
 
       cass_future_free(ite->first);
@@ -551,7 +553,7 @@ bool consTimeSeq(const char *startStr, const char *endStr, bool asc,
       if (t <= end) ts->push_back(timeToStr(t, SECOND));
     }
   } else {
-    for (time_t i = start; i < end; i += step) {
+    for (time_t i = start; i <= end; i += step) {
       ts->push_back(timeToStr(i, *unit));
     }
   }

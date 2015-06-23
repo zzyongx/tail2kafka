@@ -10,7 +10,17 @@
   </style>
 </head>
 <body>
-  <div class="container-fluid">
+  <div class="container" id="init-window">
+    <p><B> If you first use this app, input all; If not, input you user name is enough,
+      If this does not work, try to input all.
+    </B></p>
+    <input class="form-control" id="init-user" placeholder="input you user name" />
+    <input class="form-control" id="init-topic" placeholder="input topic" />
+    <input class="form-control" id="init-id" placeholder="input id" />
+    <input class="form-control" id="init-attr" placeholder="input attr" />
+    <button type="button" id="init-profile" class="btn btn-primary btn-lg btn-block"> INIT </button>
+  </div>
+  <div class="container-fluid" id="work-window">
     <div id="main" style="height:400px"></div>
     
     <div id="selcenter" class="row">
@@ -29,7 +39,11 @@
         <div class="row">
           <div class="col-md-5">
             <input class="form-control" id="host-search" placeholder="host" />
-            <select multiple class="form-control" id="host-select-pre"></select>
+          </div>
+        </div>
+        <div class="row">
+          <div class="col-md-5">
+            <select multiple class="form-control" id="host-select-pre" size="12"></select>
           </div>
           <div class="col-md-2">
             <button type="button" class="btn btn-primary btn-block" id="host-input-add">ADD &gt;&gt;</button>
@@ -37,7 +51,7 @@
             <button type="button" class="btn btn-primary btn-block" id="host-input-cln">CLEAN</button>
           </div>
           <div class="col-md-5">
-            <select multiple class="form-control" id="host-select"></select>
+            <select multiple class="form-control" id="host-select" size="12"></select>
           </div>
         </div>
       </div>

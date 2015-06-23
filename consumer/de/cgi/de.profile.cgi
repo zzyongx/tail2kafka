@@ -52,7 +52,7 @@ sub process_get {
       $result = encode_json({
         topic => $param{'topic'}, id => $param{'id'},
         attr => [split /,/, $param{'attr'}], host => [split /,/, ($param{'host'} || "cluster")],
-        attrs => []
+        attrs => {},
       });
       wfile($file, $result);
     } elsif (-f $file) {
@@ -63,8 +63,9 @@ sub process_get {
   }
 
   if ($result) {
+    my $gmt = gmt(time() + 86400 * 30);
     print "Content-Type: text/javascript\n";
-    print "Set-Cookie: user=$user Secure; HttpOnly\n";
+    print "Set-Cookie: user=$user Expires=$gmt Secure; HttpOnly\n";
     print "\n";
     print $result;
   } else {
@@ -80,4 +81,13 @@ sub wfile {
   open(my $fh, ">$f");
   print $fh $c;
   close($fh);
+}
+
+sub gmt {
+  my $t = shift || time();
+  my ($sec, $min, $hour, $mday, $mon, $year, $wday) = gmtime($t);
+  $wday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]->[$wday];
+  $mon  = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct",  "Nov", "Dec"]->[$mon];
+  $year += 1900;
+  return "$wday, $mday $mon $year $hour:$min:$sec GMT";
 }

@@ -85,12 +85,8 @@ function ecfresh(cf, ec, id, data, asc, force)
     var len = cf.host.length;
     for (var i = 0; i < cf.host.length; i++) {
       for (var j = 0; j < cf.attr.length; j++) {
-        var name;
-        if (cf.host[i] == "cluster" || len == 0) {
-          name = cf.attr[j];
-        } else {
-          name = cf.host[i] + "/" + cf.attr[j];
-        }
+        var attr = (typeof(cf.attr[j]) == "object") ? cf.attr[j].name : cf.attr[j];
+        var name = (cf.host[i] == "cluster" || len == 0) ? attr : cf.host[i] + "/" + attr;
         ec.option.series.push({
           name: name, type: 'line', data: []
         });
@@ -102,25 +98,31 @@ function ecfresh(cf, ec, id, data, asc, force)
   if (asc) ec.option.xAxis[0].data.push(id);
   else ec.option.xAxis[0].data.unshift(id);
 
-  data.cluster = [];
+  var cluster = {};
   for (host in data) {
     for (attr in data[host]) {
-      if (data.cluster[attr] == undefined) {
-        data.cluster[attr] = data[host][attr];
+      if (cluster[attr] == undefined) {
+        cluster[attr] = data[host][attr];
       } else {
-        data.cluster[attr] += data[host][attr];
+        cluster[attr] += data[host][attr];
       }
     }
   }
+  data.cluster = cluster;
 
   var idx = 0;
   for (var i = 0; i < cf.host.length; i++) {
     for (var j = 0; j < cf.attr.length; j++) {
       var val;
-      if (typeof(x) == "function") {
-        val = cf.attr[i](data[cf.host[i]]);
+      if (typeof(cf.attr[j]) == "object") {
+        val = cf.attr[j].ptr(data[cf.host[i]]);
       } else {
-        val = data[cf.host[i]][cf.attr[j]];
+        if (data[cf.host[i]] != undefined) {
+          val = data[cf.host[i]][cf.attr[j]];
+          if (val == undefined) val = 0;
+        } else {
+          val = 0;
+        }
       }
       if (asc) ec.option.series[idx].data.push(val);
       else ec.option.series[idx].data.unshift(val);
@@ -133,8 +135,60 @@ function ecfresh(cf, ec, id, data, asc, force)
   if (force) ec.handle.setOption(ec.option, true);
 }
 
+function init_profile()
+{
+  $('#work-window').hide();
+  $('#init-window').show();
+      
+  $("#init-profile").keyup(function(event){
+    if(event.keyCode == 13){
+      $("#init-profile").click();
+    }
+  });
+
+  $('#init-profile').click(function() {
+    var user  = $.trim($('#init-user').val());
+    if (user == "") {
+      alert("user is required");
+      return;
+    }
+
+    var query = {user: user};
+
+    var topic = $.trim($('#init-topic').val());
+    if (topic != "") query.topic = topic;
+    
+    var id    = $.trim($('#init-id').val());
+    if (id != "") query.id = id;
+    
+    var attr  = $.trim($('#init-attr').val());
+    if (attr != "") query.attr = attr;
+
+    $.ajax({
+      method: "GET",
+      url: "/cgi-bin/de.profile.cgi",
+      async: false,
+      data: query,
+      dataType: "json",
+    }).done(function() {
+      $(location).attr("search", "");
+      $(location).reload();
+    }).fail(function(xhr, textStatus) {
+      alert("init profile error:" + textStatus);
+    });
+  });
+}
+
 function load_profile()
 {
+  $('#init-window').hide();
+
+  if ($(location).attr('search') == "?forceinit") {
+    init_profile();
+    return null;
+  }
+  
+  var error = false;
   var cf;
   $.ajax({
     url: "/cgi-bin/de.profile.cgi",
@@ -145,11 +199,65 @@ function load_profile()
     console.log(cf);
   }).fail(function(xhr, textStatus) {
     alert("get profile error:" + textStatus);
+    error = true;
   });
 
-  cf.cache = [];
-  cf.last = [];
+  if (error) {
+    init_profile();
+    return null;
+  }
+
+  // eval the custom attr
+  for (key in cf.attrs) {
+    for (fname in cf.attrs[key].func) {
+      eval('funcPtr = ' + cf.attrs[key].func[fname].def);
+      cf.attrs[key].func[fname].ptr = funcPtr;
+    }
+  }
+
+  console.log("load profile ", cf);
+  for (var i = 0; i < cf.attr.length; i++) {
+    if (typeof(cf.attr[i]) == "object") {
+      cf.attr[i].ptr = cf.attrs[cf.topic].func[cf.attr[i].name].ptr;
+    }
+  }
+
+  cf.cache = {};
+  cf.last = {};
+  cf.idset = {};
   return cf;
+}
+
+function load_topic(cf)
+{
+  $.ajax({
+    url: "/cgi-bin/de.topic.cgi",
+    dataType: "json",
+  }).done(function(data) {
+    console.log("load_topic", data);
+    cf.topics = data;
+    init_topic_wind(cf);
+  }).fail(function(xhr, textStatus) {
+    alert("get topic error:" + textStatus);
+  });
+}
+
+function load_idset(cf)
+{
+  if (cf.idset[cf.topic]) {
+    fresh_id_wind(cf);
+  } else {
+    $.ajax({
+      url: "/cgi-bin/de.id.cgi",
+      data: {topic: cf.topic},
+      dataType: "json",
+    }).done(function(data) {
+      cf.idset[cf.topic] = data;
+      fresh_id_wind(cf);
+    }).fail(function(xhr, textStatus) {
+      alert("get idset error:" + textStatus);
+    });
+  }
 }
 
 // 2015-04-21T16:30:00
@@ -219,6 +327,51 @@ function auto_fresh(cf, ec)
   }
 }
 
+function init_topic_wind(cf)
+{
+  var html = '';
+  var topics = Object.keys(cf.topics);
+  for (var i = 0; i < topics.length; ++i) {
+    if (topics[i] == cf.topic) {
+      html += '<option value="' + topics[i] + '" selected>' + topics[i] + '</option>';
+    } else {
+      html += '<option value="' + topics[i] + '">' + topics[i] + '</option>';
+    }
+  }
+  $('#topic-select').html(html);
+}
+
+function init_topic_select(cf)
+{
+  $('#topic-select').change(function() {
+    var topic = $('#topic-select').val();
+    cf.topic = topic;
+    cf.id    = cf.topics[topic].id;
+    cf.host  = cf.topics[topic].host;
+    cf.attr  = cf.topics[topic].attr;
+
+    load_idset(cf);
+    fresh_host_wind(cf);
+    $('#host-select').html("");
+    fresh_attr_wind(cf);
+  });
+}
+
+function fresh_id_wind(cf)
+{
+  var html = '';
+  var ids = cf.idset[cf.topic];
+  
+  for (var i = 0; i < ids.length; ++i) {
+    if (cf.id == ids[i]) {
+      html += '<option value="' + ids[i] + '" selected>' + ids[i] + '</option>';
+    } else {
+      html += '<option value="' + ids[i] + '">' + ids[i] + '</option>';
+    }
+  }
+  $('#id-select').html(html);
+}
+
 function fresh_host_wind(cf, search)
 {
   var key = cf.topic;
@@ -236,7 +389,11 @@ function fresh_host_wind(cf, search)
   }
   
   for (var i = 0; i < hosts.length; i++) {
-    html += '<option value="' + hosts[i] + '">' + hosts[i] + '</option>';
+    if (hosts[i] == cf.host) {
+      html += '<option value="' + hosts[i] + '" selected>' + hosts[i] + '</option>';
+    } else {
+      html += '<option value="' + hosts[i] + '">' + hosts[i] + '</option>';
+    }
   }
   $('#host-select-pre').html(html);
 }
@@ -247,10 +404,23 @@ function fresh_attr_wind(cf)
   var html = '';
   var attrs = Object.keys(cf.attrs[key].attr).sort();
   for (var i = 0; i < attrs.length; i++) {
-    html += '<label class="checkbox-inline"><input type="checkbox" value="'
-      + attrs[i] + '">' + attrs[i] + "</label>";
+    if (attrs[i] == cf.attr) {
+      html += '<label class="checkbox-inline"><input type="checkbox" value="'
+        + attrs[i] + '" checked>' + attrs[i] + "</label>";
+    } else {
+      html += '<label class="checkbox-inline"><input type="checkbox" value="'
+        + attrs[i] + '">' + attrs[i] + "</label>";
+    }
   }
   $('#attr-select').html(html);
+
+  html = '';
+  var funcs = Object.keys(cf.attrs[key].func).sort();
+  for (var i = 0; i < funcs.length; i++) {
+    html += '<label class="checkbox-inline"><input type="checkbox" value="'
+      + funcs[i] + '">' + funcs[i] + '</label>';
+  }
+  $('#func-select').html(html);
 }
 
 function fresh_host_attr_wind(cf)
@@ -275,10 +445,10 @@ function fetch_host_attr(cf)
     }
     
     for (host in cf.last[key]) {
-      if (cf.attrs[key] == undefined) cf.attrs[key] = {host: [], attr: []};
-      cf.attrs[key].host[host] = 1;
+      if (cf.attrs[key] == undefined) cf.attrs[key] = {host: {}, attr: {}, func:{}};
+      cf.attrs[key].host[host] = true;
       for (attr in cf.last[key][host]) {
-        cf.attrs[key].attr[attr] = 1;
+        cf.attrs[key].attr[attr] = true;
       }
     }
 
@@ -330,10 +500,25 @@ function init_host_del(cf)
   });
 }
 
-function init_host_cln(cf)
+function init_host_cln(cf, hosts)
 {
   $('#host-input-cln').click(function() {
     $('#host-select').html("");
+  });
+}
+
+function init_attr_name_search(cf)
+{
+  $('#custom-attr-name').keyup(function() {
+    var fname = $.trim($('#custom-attr-name').val());
+    
+    var funcs = $('#func-select input');
+    for (var i = 0; i < funcs.length; i++) {
+      if ($(funcs[i]).val() == fname) {
+        $('#custom-attr-func').val(cf.attrs[cf.topic].func[fname].def)
+        break;
+      }
+    }
   });
 }
 
@@ -351,14 +536,6 @@ function init_attr_define(cf)
       return;
     }
 
-    var funcs = $('#func-select input');
-    for (var i = 0; i < funcs.length; i++) {
-      if ($(funcs[i]).val() == fname) {
-        alert("custom attr name duplicate");
-        return;
-      }
-    }
-
     var fbody = $('#custom-attr-func').val();
     if (!eval('funcPtr = ' + fbody)) {
       alert("custom attr " + fbody + " eval failed");
@@ -366,12 +543,18 @@ function init_attr_define(cf)
     }
 
     var key = cf.topic;
-    if (!cf.attrs[key].func) cf.attrs[key].func = [];
     cf.attrs[key].func[fname] = {ptr: funcPtr, def: fbody};
 
-    $('#func-select').append(
-      $('<label class="checkbox-inline"><input type="checkbox" value="'
-        + fname + '">' + fname + '</label>'));
+    var i;
+    var funcs = $('#func-select input');
+    for (i = 0; i < funcs.length; i++) {
+      if ($(funcs[i]).val() == fname) break;
+    }
+    if ( i == funcs.length) {
+      $('#func-select').append(
+        $('<label class="checkbox-inline"><input type="checkbox" value="'
+          + fname + '">' + fname + '</label>'));
+    }
   });
 }
 
@@ -393,8 +576,19 @@ function init_attr_undef(cf)
 function init_show_me(cf, ec)
 {
   $('#show-me').click(function() {
-    var hosts = $('#host-select').val();
-    if (!host) cf.host = hosts;
+    var topic = $.trim($('#topic-input').val());
+    if (topic == "") topic = $('#topic-select').val();
+    if (topic) cf.topic = topic;
+
+    var id = $.trim($('#id-input').val());
+    if (id == "") id = $('#id-select').val();
+    if (id) cf.id = id;
+    
+    var hosts = [];
+    $('#host-select option').each(function(i, o) {
+      hosts.push($(o).val());
+    });
+    if (hosts.length > 0) cf.host = hosts;
 
     var attrs = [];
     var chks = $('#attr-select input');
@@ -406,7 +600,7 @@ function init_show_me(cf, ec)
     for (var i = 0; i < chks.length; ++i) {
       if ($(chks[i]).prop("checked")) {
         var fname = $(chks[i]).val();
-        attrs.push(cf.attrs[cf.topic].func[fname].ptr);
+        attrs.push({name:fname, ptr: cf.attrs[cf.topic].func[fname].ptr});
       }
     }
     
@@ -435,7 +629,8 @@ function show_data(cf, ec)
 	var es = new EventSource(url);
 
 	es.onmessage = function(event) {
-		eval('var obj=' + event.data);
+    console.log(event.lastEventId, event.data);
+    var obj = JSON.parse(event.data);
     ecfresh(cf, ec, event.lastEventId, obj, false);
     cacheit(cf, event.lastEventId, obj);
 	};
@@ -449,13 +644,15 @@ function show_data(cf, ec)
 function init_save_profile(cf)
 {
   var savef = function(async) {
+    var sf = {topic: cf.topic, id: cf.id, attr: cf.attr, host: cf.host,
+              attrs: cf.attrs};
     async = async == undefined ? true : false;
     $.ajax({
       method: "PUT",
       url: "/cgi-bin/de.profile.cgi",
       async: async,
       dataType: "text",
-      data: JSON.stringify(cf),
+      data: JSON.stringify(sf),
     });
   };
   setInterval(savef, 30 * 1000);
@@ -465,6 +662,7 @@ function init_save_profile(cf)
       $(window).unbind('beforeunload');
   });
   $(window).bind('beforeunload', function(event) {
+    console.log("HERE");
     savef(false);
   });
 }
@@ -475,7 +673,11 @@ $(function() {
   
   ec = ecInit();
 
+  load_topic(cf);
+  load_idset(cf);
   show_data(cf, ec);
+
+  init_topic_select(cf);
 
   fetch_host_attr(cf);
   fresh_host_attr_wind(cf);
@@ -485,6 +687,7 @@ $(function() {
   init_host_add(cf);
   init_host_del(cf);
   init_host_cln(cf);
+  init_attr_name_search(cf);
   init_attr_define(cf);
   init_attr_undef(cf);
   init_show_me(cf, ec);

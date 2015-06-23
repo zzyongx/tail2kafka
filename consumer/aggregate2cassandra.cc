@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <list>
+#include <set>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -19,9 +20,15 @@
 // -lpthread -lcassandra -lrdkafka
 // perl -n -e 'print unpack("Q", $_)'
 
+/* why de.realdata datas's type is not map<text, text> ?
+ * because timestamp is not steadily increment,
+ * change host:value to host value, append to list
+ */
+
 /* CREATE KEYSPACE de WITH REPLICATION = { 'class' : 'SimpleStrategy', 'replication_factor' : 3 };
- * CREATE TABLE de.realdata (topic TEXT, id TEXT, timestamp TEXT, datas map<text, text>, PRIMARY KEY(topic, id, timestamp));
+ * CREATE TABLE de.realdata (topic TEXT, id TEXT, timestamp TEXT, datas list<text>, PRIMARY KEY(topic, id, timestamp));
  * CREATE TABLE de.cachedata (topic TEXT, id TEXT, timestamp TEXT, datas text, PRIMARY KEY(topic, id, timestamp));
+ * CREATE TABLE de.idset (topic TEXT, datas set<text>, PRIMARY KEY(topic)); 
  */
 
 #define THREAD_SUCCESS ((void *) 0)
@@ -32,14 +39,16 @@ static const size_t MAX_CNP  = 1024;
 static const char *OFFDIR    = "/tmp/aggregate2cassandra";
 
 typedef std::list<CassFuture *> CfList;
+typedef std::set<std::string>   StringSet;
 
 struct OneTaskReq {
   const char *topic;
-  std::string *node;
   std::string *id; 
   std::string *time;
   std::string *data;
-  OneTaskReq() : node(0), id(0), time(0), data(0) {}
+  
+  StringSet   *idset;
+  OneTaskReq() : id(0), time(0), data(0), idset(0) {}
 };
 
 struct ConsumerCtx {
@@ -47,6 +56,7 @@ struct ConsumerCtx {
   int         server;
   int         offsetfd;
   const char *topic;
+  StringSet   idset;
 
   rd_kafka_t       *rk;
   rd_kafka_topic_t *rkt;
@@ -63,6 +73,7 @@ struct CassandraCtx {
   CassSession        *session;
   CassFuture         *connect;
   const CassPrepared *prepared;
+  const CassPrepared *idsetPrep;
   CassandraCtx() : tid(0), cluster(0), session(0), connect(0) {}
 };
 
@@ -132,16 +143,18 @@ inline bool setKafkaOffset(ConsumerCtx *ctx, uint64_t offset)
 
 void taskFinish(OneTaskReq *req)
 {
-  if (req->node) delete req->node;
-  if (req->id)   delete req->id;
-  if (req->time) delete req->time;
-  if (req->data) delete req->data;
+  if (req->id)    delete req->id;
+  if (req->time)  delete req->time;
+  if (req->data)  delete req->data;
+  if (req->idset) delete req->idset;
 }
 
 /* node time id data */
 bool sendToStoreAgent(ConsumerCtx *ctx, rd_kafka_message_t *rkm)
 {
-  OneTaskReq req;
+  OneTaskReq req, req2;
+  std::string node, data;
+  std::pair<StringSet::iterator, bool> ir;  
   req.topic = ctx->topic;
   
   char *ptr = (char *) rkm->payload;
@@ -149,7 +162,7 @@ bool sendToStoreAgent(ConsumerCtx *ctx, rd_kafka_message_t *rkm)
   
   char *pos = (char *) memchr(ptr, SP, end - ptr);
   if (!pos) goto error;
-  req.node = new std::string(ptr, pos - ptr);
+  node.assign(ptr, pos - ptr);
   ptr = pos + 1;
 
   pos = (char *) memchr(ptr, SP, end - ptr);
@@ -162,10 +175,20 @@ bool sendToStoreAgent(ConsumerCtx *ctx, rd_kafka_message_t *rkm)
   req.id = new std::string(ptr, pos - ptr);
   ptr = pos + 1;
 
-  req.data = new std::string(ptr, end - ptr);
+  data.assign(ptr, end - ptr);
+  req.data = new std::string(node + " " + data);
 
+  // before req write req.id is valid
+  ir = ctx->idset.insert(*(req.id));
+  if (ir.second) {
+    req2.topic = ctx->topic;
+    req2.idset = new StringSet(ctx->idset);
+    write(ctx->server, &req2, sizeof(req2));
+  }
+  
   write(ctx->server, &req, sizeof(req));
   setKafkaOffset(ctx, rkm->offset);
+
   return true;
 
   error:
@@ -194,6 +217,7 @@ void *consume_routine(void *data)
     if (!sendToStoreAgent(ctx, rkm)) {
       fprintf(stderr, "Bad data, skip %.*s\n", (int) rkm->len, (char *) rkm->payload);
     }
+    rd_kafka_message_destroy(rkm);
   }
   return rc;
 }
@@ -267,18 +291,32 @@ void *store_routine(void *data)
 
       assert(nn == sizeof(req));
 
-      CassStatement *statm = cass_prepared_bind(ctx->prepared);
+      CassStatement *statm;
+      CassCollection *collection;
+
+      if (req.idset) {
+        statm = cass_prepared_bind(ctx->idsetPrep);
+
+        collection = cass_collection_new(CASS_COLLECTION_TYPE_SET, 1);
+        for (StringSet::iterator ite = req.idset->begin(); ite != req.idset->end(); ++ite) {
+          cass_collection_append_string(collection, cass_string_init(ite->c_str()));
+        }
+        
+        cass_statement_bind_collection(statm, 0, collection);
+        cass_statement_bind_string(statm, 1, cass_string_init(req.topic));
+      } else {
+        statm = cass_prepared_bind(ctx->prepared);
+
+        collection = cass_collection_new(CASS_COLLECTION_TYPE_LIST, 1);
+        cass_collection_append_string(collection, cass_string_init(req.data->c_str()));
+
+        cass_statement_bind_collection(statm, 0, collection);
+        cass_statement_bind_string(statm, 1, cass_string_init(req.topic));
+        cass_statement_bind_string(statm, 2, cass_string_init(req.id->c_str()));
+        cass_statement_bind_string(statm, 3, cass_string_init(req.time->c_str()));
+      }
+      
       // cass_statement_set_consistency(statm, CASS_CONSISTENCY_TWO);
-
-      CassCollection *collection = cass_collection_new(CASS_COLLECTION_TYPE_MAP, 1);
-      cass_collection_append_string(collection, cass_string_init(req.node->c_str()));
-      cass_collection_append_string(collection, cass_string_init(req.data->c_str()));
-
-      cass_statement_bind_collection(statm, 0, collection);
-      cass_statement_bind_string(statm, 1, cass_string_init(req.topic));
-      cass_statement_bind_string(statm, 2, cass_string_init(req.id->c_str()));
-      cass_statement_bind_string(statm, 3, cass_string_init(req.time->c_str()));
-
       cass_collection_free(collection);
 
       cfwaits.push_back(cass_session_execute(ctx->session, statm));
@@ -317,6 +355,8 @@ bool startAgent(int rfd, const char *db, CassandraCtx *ctx)
   ctx->accept = rfd;
   ctx->cluster = cass_cluster_new();
   ctx->session = cass_session_new();
+  ctx->prepared = 0;
+  ctx->idsetPrep = 0;
 
   cass_cluster_set_contact_points(ctx->cluster, db);
   cass_cluster_set_max_connections_per_host(ctx->cluster, MAX_CNP);
@@ -329,7 +369,7 @@ bool startAgent(int rfd, const char *db, CassandraCtx *ctx)
     return false;
   }
 
-  CassString query = cass_string_init("UPDATE de.realdata SET datas = datas + ?"
+  CassString query = cass_string_init("UPDATE de.realdata SET datas = datas + ? "
                                       "WHERE topic = ? AND id = ? AND timestamp = ?");
   CassFuture *prepareFuture = cass_session_prepare(ctx->session, query);
   if (cass_future_error_code(prepareFuture) != CASS_OK) {
@@ -339,6 +379,18 @@ bool startAgent(int rfd, const char *db, CassandraCtx *ctx)
     return false;
   }
   ctx->prepared = cass_future_get_prepared(prepareFuture);
+  cass_future_free(prepareFuture);
+
+  query = cass_string_init("UPDATE de.idset SET datas = datas + ? "
+                           "WHERE topic = ?");
+  prepareFuture = cass_session_prepare(ctx->session, query);
+  if (cass_future_error_code(prepareFuture) != CASS_OK) {
+    CassString msg = cass_future_error_message(prepareFuture);
+    fprintf(stderr, "prepare %.*s error %.*s\n", (int) query.length, query.data,
+            (int) msg.length, msg.data);
+    return false;
+  }
+  ctx->idsetPrep = cass_future_get_prepared(prepareFuture);
   cass_future_free(prepareFuture);
 
   int rc = pthread_create(&ctx->tid, NULL, store_routine, ctx);
@@ -378,6 +430,7 @@ bool waitFinish(CassandraCtx *ctx, ConsumerList *consumers)
   }
   
   if (ctx->prepared) cass_prepared_free(ctx->prepared);
+  if (ctx->idsetPrep) cass_prepared_free(ctx->idsetPrep);
 
   if (ctx->session) cass_session_free(ctx->session);
   if (ctx->cluster) cass_cluster_free(ctx->cluster);

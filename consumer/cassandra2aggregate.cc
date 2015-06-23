@@ -141,21 +141,31 @@ void destroyCaCtx(CaCtx *ctx)
 
 bool raw2json(const char *data, size_t size, Json::Value &root)
 {
+  std::string host;
   std::string key;
   int value = 0;
-  enum {WaitKey, WaitValue} status = WaitKey;
+  enum {WaitHost, WaitKey, WaitValue} status = WaitHost;
 
   for (size_t i = 0; i < size; ++i) {
     if (data[i] == '=') {
       if (status == WaitKey) status = WaitValue;
       else return false;
     } else if (data[i] == ' ') {
-      if (status == WaitValue) {
+      if (status == WaitHost) {
         status = WaitKey;
-        root[key] = value;
+        if (!root.isMember(host)) {
+          root[host] = Json::Value(Json::objectValue);
+        }
+      } else if (status == WaitValue) {
+        status = WaitKey;
+        int oval = root[host].isMember(key) ? root[host][key].asInt() : 0;
+        root[host][key] = oval + value;
+        
         key.clear();
         value = 0;
       } else return false;
+    } else if (status == WaitHost) {
+      host.append(1, data[i]);
     } else if (status == WaitKey) {
       key.append(1, data[i]);
     } else if (status == WaitValue) {
@@ -166,8 +176,12 @@ bool raw2json(const char *data, size_t size, Json::Value &root)
       }
     }
   }
-  if (status == WaitValue) root[key] = value;
-  else return false;
+  if (status == WaitValue) {
+    int oval = root[host].isMember(key) ? root[host][key].asInt() : 0;
+    root[host][key] = oval + value;
+  } else {
+    return false;
+  }
 
   // fprintf(stderr, "%.*s\n%s", (int) size, data, Json::FastWriter().write(root).c_str());
 
@@ -196,17 +210,15 @@ void pollRealWaitFuture(CassFutureList *cflist, StringPairList *results, bool wa
         const CassResult *result = cass_future_get_result(ite->first);
         // fprintf(stderr, "timestamp %s\n", ite->second.c_str());
         if (cass_result_row_count(result) != 0) {
-          CassIterator *ite = cass_iterator_from_map(
+          CassIterator *ite = cass_iterator_from_collection(
             cass_row_get_column(cass_result_first_row(result), 0));
           Json::Value root(Json::objectValue);
 
           while (cass_iterator_next(ite)) {
-            CassString key, value;
-            cass_value_get_string(cass_iterator_get_map_key(ite), &key);
-            cass_value_get_string(cass_iterator_get_map_value(ite), &value);
-            std::string skey(key.data, key.length);
-            root[skey] = Json::Value(Json::objectValue);
-            if (!raw2json(value.data, value.length, root[skey])) {
+            CassString value;
+            cass_value_get_string(cass_iterator_get_value(ite), &value);
+
+            if (!raw2json(value.data, value.length, root)) {
               fprintf(stderr, "invalid data %.*s\n", (int) value.length, value.data);
             }
           }
@@ -546,6 +558,8 @@ bool consTimeSeq(const char *startStr, const char *endStr, bool asc,
     fprintf(stderr, "%s step %d to %s, too many items\n", startStr, step, endStr);
     return false;
   }
+
+  srand(time(0));
 
   if (step == 6) {
     for (time_t i = start; i <= end; i += step) {

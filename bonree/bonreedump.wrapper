@@ -1,0 +1,67 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use Time::Local;
+use FindBin qw($Bin);
+
+my $SERVER = "zzyong.paas.user.vm.sogou-op.org:2345";
+my $USER   = "sogou.com";
+my $PASSWD = "Sogou-RD\@2012";
+my $TASKID = 9830074;
+my $CMD    = "$Bin/bonreedump";
+my $DIR    = "/data/bonree";
+my $ES     = "http://127.0.0.1:9200/bonree/external";
+
+my $start = shift or usage();
+my $interval = shift or usage();
+
+$start = strToTime($start);
+my ($startDate, $endDate);
+while (($start, $startDate, $endDate) = nextDateRange($start, $interval)) {
+	if ($start > time()) {
+		sleep($interval * 60);
+	}
+
+  $startDate =~ /(\d{4})(\d{2})(\d{2})/;
+  my $dir = "$DIR/$1$2$3";
+  mkdir($dir) unless (-d $dir);
+
+  foreach my $i (1 .. 10) {
+    my $url = "http://$SERVER/BigDataCenter?".
+      "userCode=$USER&password=$PASSWD&taskId=$TASKID&startDate=$startDate&&endDate=$endDate&".
+      "type=4&returnType=json&monitorType=2&version=1.0&dateFM=yyyy-MM-dd%20HH:mm:ss";
+    my $cmd = "$CMD $dir/$startDate '$url' $ES";
+    print scalar localtime, " $i ", $cmd, "\n";
+    system($cmd);
+    if ($? == 0) {
+      last;
+    } else {
+      sleep(180);
+    }
+  }
+}
+
+sub strToTime {
+  my $s = shift;
+  $s =~ /(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})/ or die "invalid time format $s";
+  return timelocal(0, $5, $4, $3, $2-1, $1-1900);
+}
+
+sub nextDateRange {
+  my ($start, $interval) = @_;
+  my $format = "%04d%02d%02d%02d%02d00";
+
+  my @v = localtime($start);
+  my $startDate = sprintf($format, $v[5]+1900, $v[4]+1, $v[3], $v[2], $v[1], $v[0]);
+
+  $start += $interval * 60;
+  @v = localtime($start);
+  my $endDate = sprintf($format, $v[5]+1900, $v[4]+1, $v[3], $v[2], $v[1], $v[0]);
+  return ($start, $startDate, $endDate);
+}
+
+sub usage {
+  print "$0 starttime interval\n";
+  exit(-1);
+}

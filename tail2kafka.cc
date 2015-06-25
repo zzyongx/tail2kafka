@@ -1504,10 +1504,10 @@ void *routine(void *data)
 /* pidfile may stale, this's not a perfect method */
 bool initSingleton(CnfCtx *ctx, char *errbuf)
 {
-  int fd = open(ctx->pidfile.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0644);
+  int fd = open(ctx->pidfile.c_str(), O_CREAT | O_WRONLY, 0644);
   if (lockf(fd, F_TLOCK, 0) == 0) {
+    ftruncate(fd, 0);
     std::string pid = to_string(getpid());
-    
     write(fd, pid.c_str(), pid.size());
     return true;
   } else {

@@ -6,8 +6,6 @@ use Time::Local;
 use FindBin qw($Bin);
 
 my $SERVER = "zzyong.paas.user.vm.sogou-op.org:2345";
-my $USER   = "sogou.com";
-my $PASSWD = "Sogou-RD\@2012";
 my $TASKID = 9830074;
 my $CMD    = "$Bin/bonreedump";
 my $DIR    = "/data/bonree";

@@ -17,7 +17,7 @@ typedef std::vector<std::string>                           StringList;
 typedef std::vector< std::pair<std::string, std::string> > StringPairList; 
 typedef std::list< std::pair<CassFuture *, std::string> >  CassFutureList;
 
-enum TimeUnit { DAY, HOUR, SECOND };
+enum TimeUnit { DAY, HOUR, MIN, SECOND };
 struct CaCtx {
   const char         *topic;
   const char         *id;
@@ -67,7 +67,7 @@ int main(int argc, char *argv[])
 
   if (!initCaCtx(db, topic, id, &ctx)) return EXIT_FAILURE;
 
-  if (unit == DAY || unit == HOUR) {
+  if (unit == DAY || unit == HOUR || unit == MIN) {
     getCacheData(&ctx, ts, unit);
   } else {
     getRealData(&ctx, ts);
@@ -98,6 +98,7 @@ bool initCaCtx(const char *db, const char *topic, const char *id, CaCtx *ctx)
   cass_cluster_set_contact_points(ctx->cluster, db);
   cass_cluster_set_max_connections_per_host(ctx->cluster, 1024);
   cass_cluster_set_max_concurrent_creation(ctx->cluster, 100);
+  cass_cluster_set_request_timeout(ctx->cluster, 30000);  
 
   ctx->connect = cass_session_connect(ctx->session, ctx->cluster);
   if (cass_future_error_code(ctx->connect) != CASS_OK) {
@@ -116,7 +117,7 @@ bool initCaCtx(const char *db, const char *topic, const char *id, CaCtx *ctx)
   query = "SELECT datas FROM de.realdata WHERE topic = ? AND id = ? AND timestamp = ?";
   if (!(ctx->realPrep = caPrepare(ctx, query))) return false;
 
-  query = "UPDATE de.cachedata SET datas = ? WHERE topic = ? AND id = ? AND timestamp = ?";
+  query = "UPDATE de.cachedata USING TTL ? SET datas = ? WHERE topic = ? AND id = ? AND timestamp = ?";
   if (!(ctx->updateCachePrep = caPrepare(ctx, query))) return false;
  
   return true;
@@ -192,7 +193,7 @@ void pollRealWaitFuture(CassFutureList *cflist, StringPairList *results, bool wa
 {
   for (CassFutureList::iterator ite = cflist->begin(); ite != cflist->end();) {
     bool ready;
-    if (wait) {
+    if (wait || cflist->size() > 128) {
       cass_future_wait(ite->first);
       ready = true;
     } else {
@@ -259,13 +260,7 @@ void getRealData(CaCtx *ctx, const StringList &ts, StringPairList *results)
     cass_statement_bind_string(statm, 2, cass_string_init(ite->c_str()));
 
     CassFuture *resultFuture = cass_session_execute(ctx->session, statm);
-    if (cass_future_error_code(resultFuture) != CASS_OK) {
-      CassString msg = cass_future_error_message(resultFuture);
-      fprintf(stderr, "cass_session_execute error %.*s\n", (int) msg.length, msg.data);
-      cass_future_free(resultFuture);
-    } else {
-      cflist.push_back(std::make_pair(resultFuture, *ite));
-    }
+    cflist.push_back(std::make_pair(resultFuture, *ite));
   }
   pollRealWaitFuture(&cflist, results, true);
 }
@@ -299,24 +294,31 @@ void cacheSum(const StringPairList &results, std::string *json)
     }
   }
 
-  *json = Json::FastWriter().write(obj);
+  if (!obj.empty()) *json = Json::FastWriter().write(obj);
 }
 
 std::string timeToStr(time_t time, TimeUnit unit);
 
 void cacheIt(CaCtx *ctx, const char *time, TimeUnit unit, const std::string &data)
 {
-  /* this HOUR, this DAY will not be cached */
+  /* this MIN, this HOUR, this DAY will not be cached */
   std::string now = timeToStr(ctx->now, unit);
   if (now.compare(time) == 0) return;
+
+  if (data.empty()) return;
+
+  int ttl;
+  if (unit == MIN) ttl = 86400 * 90;
+  else ttl = 86400 * 365 * 10;
   
   CassStatement *statm = cass_prepared_bind(ctx->updateCachePrep);
   // cass_statement_set_consistency(statm, CASS_CONSISTENCY_TWO);
 
-  cass_statement_bind_string(statm, 0, cass_string_init(data.c_str()));
-  cass_statement_bind_string(statm, 1, cass_string_init(ctx->topic));
-  cass_statement_bind_string(statm, 2, cass_string_init(ctx->id));
-  cass_statement_bind_string(statm, 3, cass_string_init(time));
+  cass_statement_bind_int32(statm, 0, ttl);
+  cass_statement_bind_string(statm, 1, cass_string_init(data.c_str()));
+  cass_statement_bind_string(statm, 2, cass_string_init(ctx->topic));
+  cass_statement_bind_string(statm, 3, cass_string_init(ctx->id));
+  cass_statement_bind_string(statm, 4, cass_string_init(time));
 
   CassFuture *resultFuture = cass_session_execute(ctx->session, statm);
   cass_future_wait(resultFuture);
@@ -348,17 +350,30 @@ void getHourCacheData(CaCtx *ctx, const char *timeHour, std::string *json)
   char tbuf[64];
   StringList ts;
   for (int i = 0; i < 60; ++i) {
-    for (int j = 0; j < 60; ++j) {
-      snprintf(tbuf, 64, "%s:%02d:%02d", timeHour, i, j);
-      ts.push_back(tbuf);
-    }
+    snprintf(tbuf, 64, "%s:%02d", timeHour, i);
+    ts.push_back(tbuf);
+  }
+
+  StringPairList results;
+  getCacheData(ctx, ts, MIN, &results);
+  cacheSum(results, json);
+  cacheIt(ctx, timeHour, HOUR, *json);
+}
+
+void getMinCacheData(CaCtx *ctx, const char *timeMin, std::string *json)
+{
+  char tbuf[64];
+  StringList ts;
+  for (int i = 0; i < 60; ++i) {
+    snprintf(tbuf, 64, "%s:%02d", timeMin, i);
+    ts.push_back(tbuf);
   }
 
   StringPairList results;
   getRealData(ctx, ts, &results);
   cacheSum(results, json);
-  cacheIt(ctx, timeHour, HOUR, *json);
-}
+  cacheIt(ctx, timeMin, MIN, *json);
+}  
 
 void pollCacheWaitFuture(CaCtx *ctx, CassFutureList *cflist, TimeUnit unit,
                          StringPairList *results, bool wait)
@@ -384,6 +399,7 @@ void pollCacheWaitFuture(CaCtx *ctx, CassFutureList *cflist, TimeUnit unit,
         if (cass_result_row_count(result) == 0) {
           if (unit == DAY) getDayCacheData(ctx, ite->second.c_str(), &json);
           else if (unit == HOUR) getHourCacheData(ctx, ite->second.c_str(), &json);
+          else if (unit == MIN) getMinCacheData(ctx, ite->second.c_str(), &json);
           else assert(0);
         } else {
           CassString value;
@@ -397,6 +413,7 @@ void pollCacheWaitFuture(CaCtx *ctx, CassFutureList *cflist, TimeUnit unit,
       if (results) {
         results->push_back(std::make_pair(ite->second, json));
       } else {
+        if (json.empty()) json = "{}\n";
         // json end with \n
         printf("id: %s\ndata: %s\n", ite->second.c_str(), json.c_str());
       }
@@ -423,13 +440,7 @@ void getCacheData(CaCtx *ctx, const StringList &ts, TimeUnit unit, StringPairLis
     cass_statement_bind_string(statm, 2, cass_string_init(ite->c_str()));
     
     CassFuture *resultFuture = cass_session_execute(ctx->session, statm);
-    if (cass_future_error_code(resultFuture) != CASS_OK) {
-      CassString msg = cass_future_error_message(resultFuture);
-      fprintf(stderr, "cass_session_execute error %.*s\n", (int) msg.length, msg.data);
-      cass_future_free(resultFuture);
-    } else {
-      cflist.push_back(std::make_pair(resultFuture, *ite));
-    }
+    cflist.push_back(std::make_pair(resultFuture, *ite));    
   }
   pollCacheWaitFuture(ctx, &cflist, unit, results, true);
 }
@@ -474,6 +485,7 @@ bool strToTime(const char *str, time_t *time, TimeUnit *unit)
 
   if (status == WaitDay) *unit = DAY;
   else if (status == WaitHour) *unit = HOUR;
+  else if (status == WaitMin) *unit = MIN;
   else if (status == WaitSec) *unit = SECOND;
   else return false;
   
@@ -521,6 +533,8 @@ std::string timeToStr(time_t time, TimeUnit unit)
   s.append(1, tm.tm_min / 10 + '0');
   s.append(1, tm.tm_min % 10 + '0');
 
+  if (unit == MIN) return s;
+
   s.append(1, ':');
   s.append(1, tm.tm_sec / 10 + '0');
   s.append(1, tm.tm_sec % 10 + '0');
@@ -545,11 +559,17 @@ bool consTimeSeq(const char *startStr, const char *endStr, bool asc,
     return false;
   }
 
+  time_t now = time(0);
+  if (end > now) end = now;
+  if (start > end) start = end;
+
   int step = 0;
   if (*unit == DAY) {
     step = 86400;
   } else if (*unit == HOUR) {
     step = 3600;
+  } else if (*unit == MIN) {
+    step = 60;
   } else if (*unit == SECOND) {
     step = detail ? 1 : 6;
   }

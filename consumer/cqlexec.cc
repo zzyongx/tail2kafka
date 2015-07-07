@@ -11,7 +11,7 @@
 #include <jsoncpp/json/json.h>
 #include <cassandra.h>
 
-// -lcassandra
+// -lcassandra -ljsoncpp
 
 struct CaCtx {
   CassCluster        *cluster;
@@ -139,8 +139,8 @@ bool execCql(CaCtx *ctx, const char *query, std::string *json)
   bool read = false;
   if (strncasecmp(query, "select", 6) == 0) {
     read = true;
-  } else if (strncasecmp(query, "update", 6) != 0 ||
-             strncasecmp(query, "insert", 6) != 0 ||
+  } else if (strncasecmp(query, "update", 6) != 0 &&
+             strncasecmp(query, "insert", 6) != 0 &&
              strncasecmp(query, "delete", 6) != 0) {
     fprintf(stderr, "unsupport cql %s\n", query);
     return false;

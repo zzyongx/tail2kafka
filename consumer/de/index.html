@@ -21,16 +21,36 @@
     <button type="button" id="init-profile" class="btn btn-primary btn-lg btn-block"> INIT </button>
   </div>
   <div class="container-fluid" id="work-window">
-    <div id="main" style="height:400px"></div>
+    <div class="row">
+      <div class="col-md-5" id="unit">
+        <button class="btn btn-sm" id="unit-day"> DAY </button>
+        <button class="btn btn-sm" id="unit-hour" > HOUR </button>
+        <button class="btn btn-sm" id="unit-minute"> MINUTE </button>
+        <button class="btn btn-sm" id="unit-second"> SECOND </button>
+        <button class="btn btn-sm" id="unit-seconds"> SECONDS </button>
+      </div>
+      <div class="col-md-6"></div>
+      <div class="col-md-1">
+        <button class="btn btn-sm" id="auto-fresh"> Auto Fresh </button>
+      </div>
+    </div>
+
+    <div class="row">
+      <div id="main" style="height:400px"></div>
+    </div>
     
     <div id="selcenter" class="row">
-      <div class="col-md-6">
+      <div class="col-md-5">
         <input class="form-control" id="topic-input" placeholder="topic" />
         <select class="form-control" id="topic-select"></select>
       </div>
-      <div class="col-md-6">
+      <div class="col-md-5">
         <input class="form-control" id="id-input" placeholder="topic id" />
         <select class="form-control" id="id-select"></select>
+      </div>
+      <div class="col-md-2">
+        <input class="form-control" id="start-time" placeholder="Start Time ([2015-][06-]27[T12][:30][:35])">
+        <input class="form-control" id="end-time" placeholder="End Time ([2015-][06-]28[T12][:30][:35])">
       </div>
     </div>
   
@@ -46,9 +66,9 @@
             <select multiple class="form-control" id="host-select-pre" size="12"></select>
           </div>
           <div class="col-md-2">
-            <button type="button" class="btn btn-primary btn-block" id="host-input-add">ADD &gt;&gt;</button>
-            <button type="button" class="btn btn-primary btn-block" id="host-input-del">&lt;&lt; DEL</button>
-            <button type="button" class="btn btn-primary btn-block" id="host-input-cln">CLEAN</button>
+            <button type="button" class="btn btn-primary btn-block" id="host-input-add">ADD &gt;</button>
+            <button type="button" class="btn btn-primary btn-block" id="host-input-del">&lt; DEL</button>
+            <button type="button" class="btn btn-primary btn-block" id="host-input-cln">CLN</button>
           </div>
           <div class="col-md-5">
             <select multiple class="form-control" id="host-select" size="12"></select>
@@ -66,7 +86,7 @@
             <div id="func-select"></div>
           </div>
           <div class="col-md-6">
-            <p> You can Edit exists attr, get New attr </p>
+            <p> You can Edit exists attr, get New attr, OR just define one </p>
             <input class="form-control" id="custom-attr-name" placeholder="attr name">
             <textarea class="form-control" id="custom-attr-func" rows="3">function(attrObj) {}
             </textarea>

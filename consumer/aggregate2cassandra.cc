@@ -26,8 +26,8 @@
  */
 
 /* CREATE KEYSPACE de WITH REPLICATION = { 'class' : 'SimpleStrategy', 'replication_factor' : 3 };
- * CREATE TABLE de.realdata (topic TEXT, id TEXT, timestamp TEXT, datas list<text>, PRIMARY KEY(topic, id, timestamp));
- * CREATE TABLE de.cachedata (topic TEXT, id TEXT, timestamp TEXT, datas text, PRIMARY KEY(topic, id, timestamp));
+ * CREATE TABLE de.realdata (topic TEXT, id TEXT, timestamp TEXT, datas list<text>, PRIMARY KEY((topic, id, timestamp)));
+ * CREATE TABLE de.cachedata (topic TEXT, id TEXT, timestamp TEXT, datas text, PRIMARY KEY((topic, id, timestamp)));
  * CREATE TABLE de.idset (topic TEXT, datas set<text>, PRIMARY KEY(topic)); 
  */
 
@@ -36,6 +36,7 @@
 static const char   SP       = ' ';
 static const size_t MAX_QLEN = 1024;
 static const size_t MAX_CNP  = 1024;
+static const size_t MAX_WAIT = 1024;
 static const char *OFFDIR    = "/tmp/aggregate2cassandra";
 
 typedef std::list<CassFuture *> CfList;
@@ -261,6 +262,34 @@ bool startConsumers(int fd, const char *brokers, int argc, char *argv[], Consume
   return true;
 }
 
+void pollWaitFuture(CfList *cfwaits, bool wait = false)
+{
+  for (CfList::iterator ite = cfwaits->begin(); ite != cfwaits->end(); /* */) {
+    bool ready;
+    if (wait) {
+      cass_future_wait(*ite);
+      ready = true;
+    } else if (cfwaits->size() >= MAX_WAIT) {
+      fprintf(stderr, "too many wait, force wait\n");
+      cass_future_wait(*ite);
+      ready = true;
+    } else {
+      ready = cass_future_ready(*ite);
+    }
+
+    if (ready) {
+      if (cass_future_error_code(*ite) != CASS_OK) {
+        CassString msg = cass_future_error_message(*ite);
+        fprintf(stderr, "Bad query %.*s\n", (int) msg.length, msg.data);
+      }
+      cass_future_free(*ite);
+      ite = cfwaits->erase(ite);
+    } else {
+      ++ite;
+    }
+  }
+}
+
 /* dashboard data's write is very heavy than read
  * advanced aggregate should be done when read
  * use cache and preread to accelerate read
@@ -323,32 +352,14 @@ void *store_routine(void *data)
       cass_statement_free(statm);
       taskFinish(&req);
     }
-    
-    for (CfList::iterator ite = cfwaits.begin(); ite != cfwaits.end();) {
-      if (cass_future_ready(*ite)) {
-        if (cass_future_error_code(*ite) != CASS_OK) {
-          CassString msg = cass_future_error_message(*ite);
-          fprintf(stderr, "Bad query %.*s\n", (int) msg.length, msg.data);
-        }
-        cass_future_free(*ite);
-        ite = cfwaits.erase(ite);
-      } else {
-        ++ite;
-      }
-    }
+
+    pollWaitFuture(&cfwaits, false);
   }
 
-  for (CfList::iterator ite = cfwaits.begin(); ite != cfwaits.end(); ++ite) {
-    cass_future_wait(*ite);
-    if (cass_future_error_code(*ite) != CASS_OK) {
-      CassString msg = cass_future_error_message(*ite);
-      fprintf(stderr, "Bad query %.*s\n", (int) msg.length, msg.data);
-    }
-    cass_future_free(*ite);
-  }
-
+  pollWaitFuture(&cfwaits, true);
   return THREAD_SUCCESS;
 }
+
 
 bool startAgent(int rfd, const char *db, CassandraCtx *ctx)
 {
@@ -361,6 +372,7 @@ bool startAgent(int rfd, const char *db, CassandraCtx *ctx)
   cass_cluster_set_contact_points(ctx->cluster, db);
   cass_cluster_set_max_connections_per_host(ctx->cluster, MAX_CNP);
   cass_cluster_set_max_concurrent_creation(ctx->cluster, 100);
+  cass_cluster_set_request_timeout(ctx->cluster, 30000);
   
   ctx->connect = cass_session_connect(ctx->session, ctx->cluster);
   if (cass_future_error_code(ctx->connect) != CASS_OK) {
@@ -369,7 +381,8 @@ bool startAgent(int rfd, const char *db, CassandraCtx *ctx)
     return false;
   }
 
-  CassString query = cass_string_init("UPDATE de.realdata SET datas = datas + ? "
+  /* 30 days ttl */
+  CassString query = cass_string_init("UPDATE de.realdata USING TTL 2592000 SET datas = datas + ? "
                                       "WHERE topic = ? AND id = ? AND timestamp = ?");
   CassFuture *prepareFuture = cass_session_prepare(ctx->session, query);
   if (cass_future_error_code(prepareFuture) != CASS_OK) {

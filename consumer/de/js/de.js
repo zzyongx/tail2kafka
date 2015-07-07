@@ -1,16 +1,35 @@
-function zoomIn(param) {
-  console.log("dbclick", param);
+function init_zoom(cf, ec)
+{
+  cf.zoomlen = ec.option.dataZoom.end - ec.option.dataZoom.start;
+  
+  ec.handle.on(echarts.config.EVENT.DATA_ZOOM, function(param) {
+    var zoom = param.zoom;
+    var zoomlen = zoom.end - zoom.start;
+    
+    var bef, start, end;
+    if (zoom.start == 0 && zoom.end != 100 && zoomlen == cf.zoomlen) {
+      bef = get_bef(cf.unit);
+      end = cf.start;
+      start = cf.start = iso8601(ago(bef, cf.unit, get_millisecond(cf.start)), cf.unit);
+      console.log("get more old data", cf.start, " ", cf.end);
+    } else if (zoom.end == 100 && zoom.start != 0 && zoomlen == cf.zoomlen) {
+      bef = get_bef(cf.unit);
+      start = cf.end;
+      var t = ago(bef * -1, cf.unit, get_millisecond(cf.end));
+      if (t > (new Date()).getTime()) t = 0;
+      end = cf.end = iso8601(t, cf.unit);
+      console.log("get more new data", cf.start, " ", cf.end);
+    } else {
+      cf.zoomlen = zoom.end - zoom.start;
+    }
+    if (bef != undefined) {
+      disable_auto_fresh(cf);
+      show_data(cf, ec, start, end);
+    }
+  });
 }
 
-function zoomOut(param) {
-  console.log("click", param);
-}
-
-function moreData(param) {
-  // console.log(param);
-}
-
-function ecInit() {
+function ecInit(cf) {
   var ec = echarts.init(document.getElementById('main')); 
   
   var option = {
@@ -37,16 +56,14 @@ function ecInit() {
     series : [],
   };
 
-  ec.on(echarts.config.EVENT.CLICK, zoomOut);
-  ec.on(echarts.config.EVENT.DBLCLICK, zoomIn);
-  ec.on(echarts.config.EVENT.DATA_ZOOM, moreData);
-  
-	return {handle: ec, option: option, unit: "s"};  // d(day) h(hour) m(min) s(sec)
+  var ret = {handle: ec, option: option};
+  init_zoom(cf, ret);
+  return ret;
 }
 
 function gskey(id)
 {
-  var re = /(T\d{2}:)(\d{2})(:\d{2})/;
+  var re = /(T\d{2}:)(\d{2})(:\d{2})?/;
   var min = id.match(re);
   if (min[2] < 30) min[2] = "00";
   else min[2] = "30";
@@ -58,23 +75,62 @@ function gmkey(cf)
   return cf.topic + cf.id;
 }
 
+function time_approximate(a, b)
+{
+  return Math.abs(get_millisecond(a) - get_millisecond(b)) < 7000;
+}
+
+function clear_cache(cf)
+{
+  cf.cache.topic = cf.topic;
+  cf.cache.id = cf.id;
+  cf.cache.unit = cf.unit;
+  cf.cache.data = undefined;
+}
+
+function adjust_by_cache(cf)
+{
+  var range = {start: 0, end: 0};
+  
+  if (cf.cache.topic == cf.topic && cf.cache.id == cf.id &&
+      cf.cache.unit == cf.unit &&
+      (cf.cache.start < cf.start || time_approximate(cf.cache.start, cf.start))) {
+    if (cf.end > cf.cache.end) {
+      range.start = cf.cache.end;
+      range.end = cf.end;
+    }
+  } else {
+    clear_cache(cf);
+    range.start = cf.start;
+    range.end = cf.end;
+  }
+  return range;
+}
+
 function cacheit(cf, id, data)
 {
-  var mkey = gmkey(cf);
-  var key = mkey + gskey(id);
-  if (cf.cache[key] == undefined) {
-    cf.cache[key] = [[id, data]];
+  if (cf.unit == "d" || cf.unit == "h") return;
+  if (cf.topic != cf.cache.topic || cf.id != cf.cache.id &&
+      cf.unit != cf.cache.unit) {
+    clear_cache(cf);
+  }
+
+  if (cf.cache.data == undefined) {
+    cf.cache.data = [[id, data]];
+    cf.cache.start = cf.cache.end = id
   } else {
-    if (cf.cache[key][0][0] > id) {
-      cf.cache[key].unshift([id, data]);
-    } else {
-      cf.cache[key].push([id, data]);
+    if (id < cf.cache.start) {
+      cf.cache.data.unshift([id, data]);
+      cf.cache.start = id;
+    } else if (id > cf.cache.end) {
+      cf.cache.data.push([id, data]);
+      cf.cache.end = id;
     }
   }
   cf.last[cf.topic] = data;
 }
 
-function ecfresh(cf, ec, id, data, asc, force)
+function ecfresh(cf, ec, id, data, force)
 {
   if (id == undefined) {
     ec.handle.setOption(ec.option, true);
@@ -95,11 +151,20 @@ function ecfresh(cf, ec, id, data, asc, force)
     }
   }
 
-  if (asc) ec.option.xAxis[0].data.push(id);
-  else ec.option.xAxis[0].data.unshift(id);
+  var asc;
+  var len = ec.option.xAxis[0].data.length;
+  if (len == 0 || id > ec.option.xAxis[0].data[len-1]) {
+    ec.option.xAxis[0].data.push(id);
+    asc = true;
+  } else if (id < ec.option.xAxis[0].data[0]) {
+    ec.option.xAxis[0].data.unshift(id);
+    asc = false;
+  }
 
   var cluster = {};
   for (host in data) {
+    if (host == "cluster") continue;
+    
     for (attr in data[host]) {
       if (cluster[attr] == undefined) {
         cluster[attr] = data[host][attr];
@@ -124,14 +189,20 @@ function ecfresh(cf, ec, id, data, asc, force)
           val = 0;
         }
       }
-      if (asc) ec.option.series[idx].data.push(val);
-      else ec.option.series[idx].data.unshift(val);
+      if (asc != undefined) {
+        if (asc) ec.option.series[idx].data.push(val);
+        else ec.option.series[idx].data.unshift(val);
+      }
       idx++;
     }
   }
 
   // addData has bug, when dataGrow set true, it does not work
-  if (ec.option.series[0].data % 10 == 0) force = true;
+  if (cf.unit == "s" || cf.unit == "ss") {
+    if (ec.option.series[0].data % 10 == 0) force = true;
+  } else {
+    force = true;
+  }
   if (force) ec.handle.setOption(ec.option, true);
 }
 
@@ -207,6 +278,8 @@ function load_profile()
     return null;
   }
 
+  if (cf.attrs == undefined) cf.attrs = {};
+
   // eval the custom attr
   for (key in cf.attrs) {
     for (fname in cf.attrs[key].func) {
@@ -222,6 +295,19 @@ function load_profile()
     }
   }
 
+  return load_profile_post(cf);
+}
+
+function load_profile_post(cf)
+{
+  if (cf.unit == undefined) cf.unit = "s";
+  if (cf.autofresh == undefined) cf.autofresh = false;
+  
+  var bef = get_bef(cf.unit);
+
+  cf.start = iso8601(ago(bef, cf.unit), cf.unit);
+  cf.end = iso8601(0, cf.unit);
+  
   cf.cache = {};
   cf.last = {};
   cf.idset = {};
@@ -260,6 +346,13 @@ function load_idset(cf)
   }
 }
 
+function get_millisecond(str) {
+  var match = str.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})$/);
+  var date = new Date(match[1], match[2] - 1, match[3], match[4], match[5], match[6]);
+  return date.getTime();
+}
+
+
 // 2015-04-21T16:30:00
 function iso8601(ts, unit)
 {
@@ -272,30 +365,43 @@ function iso8601(ts, unit)
   if (d < 10) d = "0" + d;
 
   var ts = date.getFullYear() + "-" + m + "-" + d;
-  if (unit == "d") return s;
+  if (unit == "d") return ts;
 
   var h = date.getHours();
   if (h < 10) h = "0" + h;
 
   ts = ts + "T" + h;
-  if (unit == "h") return s;
+  if (unit == "h") return ts;
 
   var m = date.getMinutes();
   if (m < 10) m = "0" + m;
 
+  ts = ts + ":" + m;
+  if (unit == "m") return ts;
+
   var s = date.getSeconds();
   if (s < 10) s = "0" + s;
   
-  return ts + ":" + m + ":" + s;
+  return ts + ":" + s;
 }
 
-function ago(t, unit)
+function get_bef(unit)
+{
+  var bef;
+  if (unit == "s" || unit == "ss") bef = 30 * 60;
+  else if (unit == "m") bef = 300;
+  else bef = 30;
+  return bef;
+}
+
+function ago(t, unit, now)
 {
   if (unit == 'd') t = t * 86400;
   else if (unit == 'h') t = t * 3600;
   else if (unit == 'm') t = t * 60;
 
-  return (new Date()).getTime() - t*1000;
+  var date = (now == undefined ? new Date() : new Date(now));
+  return date.getTime() - t * 1000;
 }
 
 function build_query(path, params)
@@ -310,20 +416,42 @@ function build_query(path, params)
 
 function auto_fresh(cf, ec)
 {
-  var time = iso8601(0, "s");
+  setTimeout(function() {
+    auto_fresh_impl(cf,ec);
+  }, 1000);
+}
+
+function auto_fresh_impl(cf, ec)
+{
+  if (!cf.autofresh) return;
+
+  var time;
+  if (Math.abs((new Date()).getTime() - get_millisecond(cf.end)) < 600 * 1000) {
+    time = cf.end;
+  } else {
+    clear_cache(cf);
+    ec_option_init(ec);
+    time = iso8601(0, cf.unit);
+  }
   var url = build_query("/cgi-bin/de.cgi",
                         {start:time, end: "forever", topic: cf.topic, id: cf.id});
   console.log(url);
   var es = new EventSource(url);
   es.onmessage = function(event) {
-    eval('var obj = ' + event.data);
+    if (!cf.autofresh) {
+      es.close();
+      return;
+    }
+    var obj = JSON.parse(event.data);
+    // console.log(Object.keys(obj).length);
+    cf.end = event.lastEventId;
     ecfresh(cf, ec, event.lastEventId, obj, true, true);
     cacheit(cf, event.lastEventId, obj);
   };
   es.onerror = function(event) {
     consloe.log("auto fresh stop");
     es.close();
-    setInterval(function() {auto_fresh(cf, ec);}, 1000);
+    auto_fresh(cf, ec);
   }
 }
 
@@ -375,6 +503,8 @@ function fresh_id_wind(cf)
 function fresh_host_wind(cf, search)
 {
   var key = cf.topic;
+  if (cf.attrs[key] == undefined) return;
+  
   var html = '';
   var hosts = [];
   if (search != undefined) {
@@ -401,6 +531,8 @@ function fresh_host_wind(cf, search)
 function fresh_attr_wind(cf)
 {
   var key = cf.topic;
+  if (cf.attrs[key] == undefined) return;
+  
   var html = '';
   var attrs = Object.keys(cf.attrs[key].attr).sort();
   for (var i = 0; i < attrs.length; i++) {
@@ -458,6 +590,131 @@ function fetch_host_attr(cf)
     }
 
   }, 1 * 1000);
+}
+
+function init_time_change(cf)
+{
+  var f = function() {
+    var wind = $(this);
+    var time = $.trim(wind.val());
+    if (time == "") return;
+
+    var match;
+    var year, month, day, hour, min = "00", second = "00";
+    if ((match = time.match(/^(\d{4})-(\d{2})-(\d{2})/))) {
+      year  = match[1];
+      month = match[2];
+      day   = match[3];
+    } else if ((match = time.match(/^(\d{2})-(\d{2})/))) {
+      month = match[1];
+      day   = match[2];
+    } else if ((match = time.match(/^(\d{2})/))) {
+      day   = match[1];
+    }
+
+    if ((match = time.match(/\d{2}T(\d{2}):(\d{2}):(\d{2})$/))) {
+      hour   = match[1];
+      min    = match[2];
+      second = match[3];
+    } else if ((match = time.match(/\d{2}T(\d{2}):(\d{2})$/))) {
+      hour   = match[1];
+      min    = match[2];
+    } else if ((match = time.match(/\d{2}T(\d{2})$/))) {
+      hour   = match[1];
+    }
+
+    var error = false;
+    if (day == undefined) {
+      error = true;
+    } else {
+      var date = new Date();
+      
+      if (year == undefined) year = date.getFullYear();
+      if (month == undefined) {
+        month = date.getMonth()+1;
+        if (month < 10) month = "0" + month;
+      }
+      if (hour == undefined) {
+        hour = date.getHours();
+        if (hour < 10) hour = "0" + hour;
+      }
+
+      if (year   >= 2015 && year  <= 2115 &&
+          month  >= 1    && month <= 12 &&
+          day    >= 1    && day   <= 31 &&
+          hour   >= 0    && hour  <= 23 &&
+          min    >= 0    && min   <= 59 &&
+          second >= 0    && second <= 59) {
+        wind.val(year + "-" + month + "-" + day + "T" + hour + ":" + min + ":" + second);
+      } else {
+        error = true;
+      }
+    }
+
+    if (error) {
+      alert("invalid date time " + time);
+      wind.focus();
+      wind.val("");
+    }
+  };
+  
+  $('#start-time').change(f);
+  $('#end-time').change(f);
+}
+
+function init_unit_click(cf)
+{
+  var buttons = $('#unit button');
+  var units = ["d", "h", "m", "s", "ss"];
+  
+  buttons.each(function(index, value) {
+    if (units[index] == cf.unit) {
+      $(value).addClass("btn-primary");
+    }
+    $(value).click(function() {
+      var unit = units[index];
+      if (unit != "m" && unit != "s" && unit != "ss") {
+        alert("please disable auto fresh first");
+        return;
+      }
+      
+      buttons.each(function(i, id) {
+        $(id).removeClass("btn-primary");
+      });
+      $(this).addClass("btn-primary");
+      cf.unit = units[index];
+    });
+  });
+}
+
+function disable_auto_fresh(cf)
+{
+  cf.autofresh = false;
+  $('#auto-fresh').removeClass("btn-primary");
+}
+
+function init_autofresh_click(cf, ec)
+{
+  var self = $('#auto-fresh');
+  if (cf.autofresh) {
+    self.addClass("btn-primary");
+    auto_fresh(cf, ec);
+  }
+  
+  self.click(function() {
+    if (cf.unit != "m" && cf.unit != "s" && cf.unit != "ss") {
+      alert("only minute/second/seconds support autofresh");
+      return;
+    }
+    
+    cf.autofresh = !cf.autofresh;
+    if (cf.autofresh) {
+      self.addClass("btn-primary");
+      auto_fresh(cf, ec);
+    } else {
+      self.removeClass("btn-primary");
+    }
+  });
 }
 
 function init_host_search(cf)
@@ -526,8 +783,17 @@ function init_attr_define(cf)
 {
   $('#custom-attr-define').click(function() {
     var fname = $.trim($('#custom-attr-name').val());
+    var fbody = $.trim($('#custom-attr-func').val());
+    
     if (fname == "") {
       alert("custom attr need a name");
+      return;
+    }
+
+    if (fbody == "") {
+      var key = cf.topic;
+      cf.attrs[key].attr[fname] = true;
+      fresh_attr_wind(cf);
       return;
     }
 
@@ -536,7 +802,6 @@ function init_attr_define(cf)
       return;
     }
 
-    var fbody = $('#custom-attr-func').val();
     if (!eval('funcPtr = ' + fbody)) {
       alert("custom attr " + fbody + " eval failed");
       return;
@@ -573,9 +838,54 @@ function init_attr_undef(cf)
   });
 }
 
+function get_start_end(cf)
+{
+  var start = $.trim($("#start-time").val());
+  var end = $.trim($("#end-time").val());
+  
+  if (start != "" || end != "") {
+    var bef = get_bef(cf.unit);
+    var start_millis, end_millis;
+    
+    if (start == "") start_millis = ago(bef, cf.unit, get_millisecond(end));
+    else start_millis = get_millisecond(start);
+      
+    if (end == "") end_millis = ago(bef * -1, cf.unit, get_millisecond(start));
+    else end_millis = get_millisecond(end);
+
+    var msec;
+    if (cf.unit == "d") msec = bef * 86400;
+    else if (cf.unit == "h") msec = bef * 3600;
+    else if (cf.unit == "m") msec = bef * 60;
+    else msec = bef;
+
+    if (end_millis - start_millis > msec * 1000) {
+      alert("need too many date\n" +
+            "start " + start + "\n" +
+            "end   " + end + "\n" +
+            "unit is " + cf.unit);
+      $('#start-time').focus();
+      return false;
+    }
+
+    cf.start = iso8601(start_millis, cf.unit);
+    cf.end = iso8601(end_millis, cf.unit);
+  } else {
+    var bef = get_bef(cf.unit);
+
+    var start = iso8601(ago(bef, cf.unit), cf.unit);
+    if (start > cf.end) cf.start = start;
+    cf.end = iso8601(0, cf.unit);
+  }                       
+
+  return true;
+}
+
 function init_show_me(cf, ec)
 {
   $('#show-me').click(function() {
+    disable_auto_fresh(cf);
+    
     var topic = $.trim($('#topic-input').val());
     if (topic == "") topic = $('#topic-select').val();
     if (topic) cf.topic = topic;
@@ -583,7 +893,9 @@ function init_show_me(cf, ec)
     var id = $.trim($('#id-input').val());
     if (id == "") id = $('#id-select').val();
     if (id) cf.id = id;
-    
+
+    if (!get_start_end(cf)) return;
+      
     var hosts = [];
     $('#host-select option').each(function(i, o) {
       hosts.push($(o).val());
@@ -606,8 +918,17 @@ function init_show_me(cf, ec)
     
     if (attrs.length != 0) cf.attr = attrs;
 
+    var range = adjust_by_cache(cf);
+    if (range.start == range.end) return;
+
     ec_option_init(ec);
-    show_data(cf, ec);
+    if (cf.cache.data != undefined) {
+      for (var i = 0; i < cf.cache.data.length; ++i) {
+        ecfresh(cf, ec, cf.cache.data[i][0], cf.cache.data[i][1], true);
+      }
+    }
+
+    show_data(cf, ec, range.start, range.end);
   });
 }
 
@@ -618,18 +939,16 @@ function ec_option_init(ec)
   ec.option.legend.data = [];
 }
 
-function show_data(cf, ec)
+function show_data(cf, ec, start, end)
 {
-  var start = iso8601(ago(30, "m"), "s");
-  var end = iso8601(0, "s");
-  
 	var url = build_query("/cgi-bin/de.cgi",
-                        {start: start, end: end, topic: cf.topic, id: cf.id});
+                        {start: start, end: end, topic: cf.topic,
+                         id: cf.id, dataset: cf.unit == "ss" ? "all" : "samp"});
   console.log(url);
 	var es = new EventSource(url);
 
 	es.onmessage = function(event) {
-    console.log(event.lastEventId, event.data);
+    // console.log(event.lastEventId, event.data);
     var obj = JSON.parse(event.data);
     ecfresh(cf, ec, event.lastEventId, obj, false);
     cacheit(cf, event.lastEventId, obj);
@@ -645,7 +964,7 @@ function init_save_profile(cf)
 {
   var savef = function(async) {
     var sf = {topic: cf.topic, id: cf.id, attr: cf.attr, host: cf.host,
-              attrs: cf.attrs};
+              unit: cf.unit, autofresh: cf.autofresh, attrs: cf.attrs};
     async = async == undefined ? true : false;
     $.ajax({
       method: "PUT",
@@ -662,8 +981,8 @@ function init_save_profile(cf)
       $(window).unbind('beforeunload');
   });
   $(window).bind('beforeunload', function(event) {
-    console.log("HERE");
     savef(false);
+    return "^_^";
   });
 }
 
@@ -671,17 +990,16 @@ $(function() {
   cf = load_profile();
   if (!cf) return;
   
-  ec = ecInit();
+  ec = ecInit(cf);
 
   load_topic(cf);
   load_idset(cf);
-  show_data(cf, ec);
+  show_data(cf, ec, cf.start, cf.end);
 
   init_topic_select(cf);
 
   fetch_host_attr(cf);
   fresh_host_attr_wind(cf);
-  // auto_fresh(cf, ec);
 
   init_host_search(cf);
   init_host_add(cf);
@@ -690,7 +1008,11 @@ $(function() {
   init_attr_name_search(cf);
   init_attr_define(cf);
   init_attr_undef(cf);
+  
+  init_time_change(cf);
+  init_unit_click(cf);
+  init_autofresh_click(cf, ec);
+  
   init_show_me(cf, ec);
-
   init_save_profile(cf);
 });

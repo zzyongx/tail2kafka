@@ -26,7 +26,7 @@ extern "C" {
 }
 #include <rdkafka.h>
 
-// -llua-5.1 -lpthread -lrt -lz
+// g++ -o tail2kafka tail2kafka.cc librdkafka.a libluajit-5.1.a -O2 -Wall -g -lpthread -lrt -lz -ldl
 
 static const char   NL = '\n';
 static const int    UNSET_INT = INT_MAX;
@@ -136,7 +136,7 @@ struct LuaCtx {
   uint64_t      sn;
   bool          moved;
 
-  LuaCtx      *next;
+  LuaCtx       *next;
 
   LuaCtx();
 };
@@ -982,12 +982,55 @@ bool initSignal(char *errbuf)
 }
 
 bool processLine(LuaCtx *ctx, char *line, size_t nline);
+void processLines(LuaCtx *ctx)
+{
+  size_t n = 0;
+  char *pos;
+  while ((pos = (char *) memchr(ctx->buffer + n, NL, ctx->npos - n))) {
+    processLine(ctx, ctx->buffer + n, pos - (ctx->buffer + n));
+    n = (pos+1) - ctx->buffer;
+    if (n == ctx->npos) break;
+  }
 
-bool tail2kafka(LuaCtx *ctx)
+  if (n == 0) {
+    if (ctx->npos == MAX_LINE_LEN) {
+      fprintf(stderr, "%s line length exceed, truncate", ctx->file.c_str());
+      ctx->npos = 0;
+    }
+  } else if (ctx->npos > n) {
+    ctx->npos -= n;
+    memmove(ctx->buffer, ctx->buffer + n, ctx->npos);
+  } else {
+    ctx->npos = 0;
+  }
+}  
+
+inline void propagateTailContent(LuaCtx *ctx, size_t size, uint64_t sn)
+{
+  LuaCtx *nxt = ctx->next;
+  while (nxt) {
+    memcpy(nxt->buffer + nxt->npos, ctx->buffer + ctx->npos, size);
+    nxt->npos += size;
+    nxt->sn = sn;
+    nxt = nxt->next;
+  }
+  ctx->sn = sn;
+  ctx->npos += size;
+}
+
+inline void propagateProcessLines(LuaCtx *ctx)
+{
+  while (ctx) {
+    processLines(ctx);
+    ctx = ctx->next;
+  }
+}
+
+bool tail2kafka(LuaCtx *ctx, uint64_t sn)
 {
   struct stat st;
   if (fstat(ctx->fd, &st) != 0) {
-    fprintf(stderr, "%s stat error\n", ctx->file.c_str());
+    fprintf(stderr, "%s %d stat error\n", ctx->file.c_str(), ctx->fd);
     return false;
   }
   ctx->size = st.st_size;
@@ -1006,29 +1049,10 @@ bool tail2kafka(LuaCtx *ctx)
       fprintf(stderr, "%s read error\n", ctx->file.c_str());
       return false;
     }
-
     off += nn;
-    ctx->npos += nn;
 
-    size_t n = 0;
-    char *pos;
-    while ((pos = (char *) memchr(ctx->buffer + n, NL, ctx->npos - n))) {
-      processLine(ctx, ctx->buffer + n, pos - (ctx->buffer + n));
-      n = (pos+1) - ctx->buffer;
-      if (n == ctx->npos) break;
-    }
-
-    if (n == 0) {
-      if (ctx->npos == MAX_LINE_LEN) {
-        fprintf(stderr, "%s line length exceed, truncate", ctx->file.c_str());
-        ctx->npos = 0;
-      }
-    } else if (ctx->npos > n) {
-      ctx->npos -= n;
-      memmove(ctx->buffer, ctx->buffer + n, ctx->npos);
-    } else {
-      ctx->npos = 0;
-    }
+    propagateTailContent(ctx, nn, sn);
+    propagateProcessLines(ctx);
   }
   return true;
 }
@@ -1043,12 +1067,22 @@ bool lineAlign(LuaCtx *ctx)
   if (read(ctx->fd, ctx->buffer, MAX_LINE_LEN) != min) {
     return false;
   }
+  
+  LuaCtx *nxt = ctx->next;
+  while (nxt) {
+    memcpy(nxt->buffer, ctx->buffer, min);
+    nxt = nxt->next;
+  }
 
-  char *pos = (char *) memrchr(ctx->buffer, NL, min);
-  if (!pos) return false;
+  nxt = ctx;
+  while (nxt) {
+    char *pos = (char *) memrchr(nxt->buffer, NL, min);
+    if (!pos) return false;
 
-  ctx->npos = ctx->buffer + min - (pos+1);
-  memmove(ctx->buffer, pos+1, ctx->npos);
+    nxt->npos = nxt->buffer + min - (pos+1);
+    memmove(nxt->buffer, pos+1, nxt->npos);
+    nxt = nxt->next;
+  }
   return true;
 }
 
@@ -1114,11 +1148,7 @@ void tryReWatch(CnfCtx *ctx)
         lctx->inode = st.st_ino;
         lctx->moved = false;
 
-        while (lctx) {
-          lctx->sn = ctx->sn;
-          tail2kafka(lctx);
-          lctx = lctx->next;
-        }
+        tail2kafka(lctx, ctx->sn);
       } else {
         close(lctx->fd);
         lctx->fd = -1;
@@ -1204,15 +1234,11 @@ bool watchLoop(CnfCtx *ctx)
         struct inotify_event *event = (struct inotify_event *) p;
         if (event->mask & IN_MODIFY) {
           LuaCtx *lctx = wd2ctx(ctx, event->wd);
-          while (lctx) {
-            lctx->sn = ctx->sn;
-            tail2kafka(lctx);
-            lctx = lctx->next;
-          }
+          if (lctx) tail2kafka(lctx, ctx->sn);
         }
         if (event->mask & IN_MOVE_SELF) {
           LuaCtx *lctx = wd2ctx(ctx, event->wd);
-          if (lctx)  tryRmWatch(lctx, event->wd);
+          if (lctx) tryRmWatch(lctx, event->wd);
         }        
         p += sizeof(struct inotify_event) + event->len;
       }
@@ -1353,6 +1379,7 @@ bool processLine(LuaCtx *ctx, char *line, size_t nline)
     }
   } else {
     data = new std::string(line, nline);
+    rc = true;
   }
 
   if (data) {
@@ -1427,7 +1454,7 @@ bool initKafka(CnfCtx *ctx, char *errbuf)
 
       rd_kafka_topic_t *rkt;
       /* rd_kafka_topic_t will own tconf */
-      rkt = rd_kafka_topic_new(ctx->rk, (*ite)->topic.c_str(), tconf);
+      rkt = rd_kafka_topic_new(ctx->rk, lctx->topic.c_str(), tconf);
       if (!rkt) {
         snprintf(errbuf, MAX_ERR_LEN, "kafka_topic_new error");
         return false;

@@ -90,7 +90,9 @@ function clear_cache(cf)
 
 function adjust_by_cache(cf)
 {
-  var range = {start: 0, end: 0};
+  var range = {start: cf.start, end: cf.end};
+  
+  if (cf.unit == "d" || cf.unit == "h" || cf.unit == "m") return range;
   
   if (cf.cache.topic == cf.topic && cf.cache.id == cf.id &&
       cf.cache.unit == cf.unit &&
@@ -109,7 +111,7 @@ function adjust_by_cache(cf)
 
 function cacheit(cf, id, data)
 {
-  if (cf.unit == "d" || cf.unit == "h") return;
+  if (cf.unit == "d" || cf.unit == "h" || cf.unit == "m") return;
   if (cf.topic != cf.cache.topic || cf.id != cf.cache.id &&
       cf.unit != cf.cache.unit) {
     clear_cache(cf);
@@ -347,8 +349,17 @@ function load_idset(cf)
 }
 
 function get_millisecond(str) {
-  var match = str.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})$/);
-  var date = new Date(match[1], match[2] - 1, match[3], match[4], match[5], match[6]);
+  var match;
+  var date;
+  if ((match = str.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})$/))) {
+    date = new Date(match[1], match[2] - 1, match[3], match[4], match[5], match[6]);
+  } else if ((match = str.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/))) {
+    date = new Date(match[1], match[2] - 1, match[3], match[4], match[5], 0);
+  } else if ((match = str.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2})$/))) {
+    date = new Date(match[1], match[2] - 1, match[3], match[4], 0, 0);
+  } else if ((match = str.match(/^(\d{4})-(\d{2})-(\d{2})$/))) {
+    date = new Date(match[1], match[2] - 1, match[3], 0, 0, 0);
+  }
   return date.getTime();
 }
 
@@ -472,6 +483,8 @@ function init_topic_wind(cf)
 function init_topic_select(cf)
 {
   $('#topic-select').change(function() {
+    disable_auto_fresh(cf);
+    
     var topic = $('#topic-select').val();
     cf.topic = topic;
     cf.id    = cf.topics[topic].id;
@@ -853,17 +866,26 @@ function get_start_end(cf)
     if (end == "") end_millis = ago(bef * -1, cf.unit, get_millisecond(start));
     else end_millis = get_millisecond(end);
 
-    var msec;
-    if (cf.unit == "d") msec = bef * 86400;
-    else if (cf.unit == "h") msec = bef * 3600;
-    else if (cf.unit == "m") msec = bef * 60;
-    else msec = bef;
+    var sec;
+    if (cf.unit == "d") sec = bef * 86400;
+    else if (cf.unit == "h") sec = bef * 3600;
+    else if (cf.unit == "m") sec = bef * 60;
+    else sec = bef;
 
-    if (end_millis - start_millis > msec * 1000) {
-      alert("need too many date\n" +
-            "start " + start + "\n" +
-            "end   " + end + "\n" +
-            "unit is " + cf.unit);
+    var diff = end_millis - start_millis;
+    var error;
+
+    if (diff < 0) {
+      error = "end before start\n" +
+        "start " + start + "\n" + "end " + end;
+    } else if (diff > sec * 1000) {
+      error = "need too many data " + diff + "\n" +
+        "start " + start + "\n" +
+        "end   " + end + "\n" +
+        "unit is " + cf.unit;
+    }
+    if (error != undefined) {
+      alert(error);
       $('#start-time').focus();
       return false;
     }
@@ -885,6 +907,7 @@ function init_show_me(cf, ec)
 {
   $('#show-me').click(function() {
     disable_auto_fresh(cf);
+    cf.last = {};
     
     var topic = $.trim($('#topic-input').val());
     if (topic == "") topic = $('#topic-select').val();
@@ -919,7 +942,6 @@ function init_show_me(cf, ec)
     if (attrs.length != 0) cf.attr = attrs;
 
     var range = adjust_by_cache(cf);
-    if (range.start == range.end) return;
 
     ec_option_init(ec);
     if (cf.cache.data != undefined) {
@@ -927,6 +949,7 @@ function init_show_me(cf, ec)
         ecfresh(cf, ec, cf.cache.data[i][0], cf.cache.data[i][1], true);
       }
     }
+    if (range.start == range.end) return;
 
     show_data(cf, ec, range.start, range.end);
   });

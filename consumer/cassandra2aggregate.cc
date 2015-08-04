@@ -22,6 +22,7 @@ struct CaCtx {
   const char         *topic;
   const char         *id;
   time_t              now;
+  bool                cacheOnly;
   
   CassCluster        *cluster;
   CassSession        *session;
@@ -34,7 +35,7 @@ struct CaCtx {
 bool consTimeSeq(const char *start, const char *end, bool datailData, bool asc,
                  StringList *ts, TimeUnit *unit);
 
-bool initCaCtx(const char *db, const char *topic, const char *id, CaCtx *ctx);
+bool initCaCtx(const char *db, const char *topic, const char *id, bool cacheOnly, CaCtx *ctx);
 void destroyCaCtx(CaCtx *ctx);
 
 void getRealData(CaCtx *ctx, const StringList &ts, StringPairList *results = 0);
@@ -42,8 +43,8 @@ void getCacheData(CaCtx *ctx, const StringList &ts, TimeUnit unit, StringPairLis
 
 int main(int argc, char *argv[])
 {
-  if (argc < 7) {
-    fprintf(stderr, "usage: %s cassandra-cluster topic id start end [asc|desc] [all|samp]\n",
+  if (argc < 8) {
+    fprintf(stderr, "usage: %s cassandra-cluster topic id start end [asc|desc] [all|samp] [cacheonly]\n",
             argv[0]);
     return EXIT_FAILURE;
   }
@@ -53,6 +54,11 @@ int main(int argc, char *argv[])
   bool detailData = false;
   if (argc == 8) {
     detailData = strcmp(argv[7], "all") == 0;
+  }
+
+  bool cacheOnly = false;
+  if (argc == 9) {
+    cacheOnly = strcmp(argv[8], "cacheonly") == 0;
   }
 
   const char *db    = argv[1];
@@ -65,7 +71,7 @@ int main(int argc, char *argv[])
 
   CaCtx ctx;
 
-  if (!initCaCtx(db, topic, id, &ctx)) return EXIT_FAILURE;
+  if (!initCaCtx(db, topic, id, cacheOnly, &ctx)) return EXIT_FAILURE;
 
   if (unit == DAY || unit == HOUR || unit == MIN) {
     getCacheData(&ctx, ts, unit);
@@ -90,7 +96,7 @@ const CassPrepared *caPrepare(CaCtx *ctx, const char *query)
   return prepared;
 }
 
-bool initCaCtx(const char *db, const char *topic, const char *id, CaCtx *ctx)
+bool initCaCtx(const char *db, const char *topic, const char *id, bool cacheOnly, CaCtx *ctx)
 {
   ctx->cluster = cass_cluster_new();
   ctx->session = cass_session_new();
@@ -107,8 +113,9 @@ bool initCaCtx(const char *db, const char *topic, const char *id, CaCtx *ctx)
     return false;
   }
 
-  ctx->topic = topic;
-  ctx->id    = id;
+  ctx->topic     = topic;
+  ctx->id        = id;
+  ctx->cacheOnly = cacheOnly;
   time(&ctx->now);
 
   const char *query = "SELECT datas FROM de.cachedata WHERE topic = ? AND id = ? AND timestamp = ?";
@@ -397,10 +404,12 @@ void pollCacheWaitFuture(CaCtx *ctx, CassFutureList *cflist, TimeUnit unit,
       } else {
         const CassResult *result = cass_future_get_result(ite->first);
         if (cass_result_row_count(result) == 0) {
-          if (unit == DAY) getDayCacheData(ctx, ite->second.c_str(), &json);
-          else if (unit == HOUR) getHourCacheData(ctx, ite->second.c_str(), &json);
-          else if (unit == MIN) getMinCacheData(ctx, ite->second.c_str(), &json);
-          else assert(0);
+          if (!ctx->cacheOnly) {
+            if (unit == DAY) getDayCacheData(ctx, ite->second.c_str(), &json);
+            else if (unit == HOUR) getHourCacheData(ctx, ite->second.c_str(), &json);
+            else if (unit == MIN) getMinCacheData(ctx, ite->second.c_str(), &json);
+            else assert(0);
+          }
         } else {
           CassString value;
           cass_value_get_string(
@@ -414,8 +423,11 @@ void pollCacheWaitFuture(CaCtx *ctx, CassFutureList *cflist, TimeUnit unit,
         results->push_back(std::make_pair(ite->second, json));
       } else {
         if (json.empty()) json = "{}\n";
-        // json end with \n
-        printf("id: %s\ndata: %s\n", ite->second.c_str(), json.c_str());
+        if (json.at(json.size()-1) == '\n') {
+          printf("id: %s\ndata: %s\n", ite->second.c_str(), json.c_str());
+        } else {
+          printf("id: %s\ndata: %s\n\n", ite->second.c_str(), json.c_str());
+        }
       }
 
       cass_future_free(ite->first);

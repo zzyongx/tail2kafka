@@ -43,13 +43,14 @@ typedef std::list<CassFuture *> CfList;
 typedef std::set<std::string>   StringSet;
 
 struct OneTaskReq {
-  const char *topic;
+  const char  *topic;
   std::string *id; 
   std::string *time;
   std::string *data;
   
   StringSet   *idset;
-  OneTaskReq() : id(0), time(0), data(0), idset(0) {}
+  bool         cache;
+  OneTaskReq() : id(0), time(0), data(0), idset(0), cache(false) {}
 };
 
 struct ConsumerCtx {
@@ -75,6 +76,7 @@ struct CassandraCtx {
   CassFuture         *connect;
   const CassPrepared *prepared;
   const CassPrepared *idsetPrep;
+  const CassPrepared *cachePrep;
   CassandraCtx() : tid(0), cluster(0), session(0), connect(0) {}
 };
 
@@ -167,7 +169,8 @@ bool sendToStoreAgent(ConsumerCtx *ctx, rd_kafka_message_t *rkm)
   ptr = pos + 1;
 
   pos = (char *) memchr(ptr, SP, end - ptr);
-  if (!pos || pos - ptr != sizeof("YYYY-MM-DDTHH:MM:SS")-1) goto error;
+  if (!pos) goto error;
+  req.cache = (pos - ptr != sizeof("YYYY-MM-DDTHH:MM:SS")-1);
   req.time = new std::string(ptr, pos - ptr);
   ptr = pos + 1;
 
@@ -176,8 +179,12 @@ bool sendToStoreAgent(ConsumerCtx *ctx, rd_kafka_message_t *rkm)
   req.id = new std::string(ptr, pos - ptr);
   ptr = pos + 1;
 
-  data.assign(ptr, end - ptr);
-  req.data = new std::string(node + " " + data);
+  if (req.cache) {
+    req.data = new std::string(ptr, end - ptr);
+  } else {
+    data.assign(ptr, end - ptr);
+    req.data = new std::string(node + " " + data);
+  }
 
   // before req write req.id is valid
   ir = ctx->idset.insert(*(req.id));
@@ -195,6 +202,34 @@ bool sendToStoreAgent(ConsumerCtx *ctx, rd_kafka_message_t *rkm)
   error:
   taskFinish(&req);
   return false;
+}
+
+void *stdin_routine(void *data)
+{
+  ConsumerCtx *ctx = (ConsumerCtx *) data;
+  size_t N = 1024 * 1024;
+  char *buffer = new char[N];
+
+  while (fgets(buffer, N, stdin)) {
+    size_t n = strlen(buffer);
+    if (buffer[n-1] != '\n') {
+      fprintf(stderr, "%s line too long", buffer);
+      delete[] buffer;
+      return THREAD_FAILURE;
+    }
+    buffer[n-1] = '\0';
+    
+    rd_kafka_message_t rkm;
+    rkm.payload = buffer;
+    rkm.len = n-1;
+    rkm.offset = -1;
+    
+    if (!sendToStoreAgent(ctx, &rkm)) {
+      fprintf(stderr, "Bad data, skip %s\n", buffer);
+    }    
+  }
+  delete[] buffer;
+  return THREAD_SUCCESS;
 }
                                                                     
 void *consume_routine(void *data)
@@ -225,6 +260,12 @@ void *consume_routine(void *data)
 
 bool startConsumers(int fd, const char *brokers, int argc, char *argv[], ConsumerList *consumers)
 {
+  bool fromStdin = false;
+  if (strcmp(brokers, "-") == 0) {
+    argc = 1;
+    fromStdin = true;
+  }
+  
   char errstr[512];
   consumers->resize(argc);
   
@@ -232,7 +273,9 @@ bool startConsumers(int fd, const char *brokers, int argc, char *argv[], Consume
     ConsumerCtx *ctx = &(consumers->at(i));
     ctx->server = fd;
     ctx->topic = argv[i];
-    
+
+    if (fromStdin) break;
+
     uint64_t offset;
     if (!getKafkaOffset(ctx, &offset)) return false;
 
@@ -252,7 +295,12 @@ bool startConsumers(int fd, const char *brokers, int argc, char *argv[], Consume
 
   for (size_t i = 0; i < consumers->size(); ++i) {
     ConsumerCtx *ctx = &(consumers->at(i));
-    int rc = pthread_create(&(ctx->tid), NULL, consume_routine, ctx);
+    int rc;
+    if (fromStdin) {
+      rc = pthread_create(&(ctx->tid), NULL, stdin_routine, ctx);
+    } else {
+      rc = pthread_create(&(ctx->tid), NULL, consume_routine, ctx);
+    }
     if (rc != 0) {
       fprintf(stderr, "pthread_create error %s\n", strerror(rc));
       return false;
@@ -319,9 +367,10 @@ void *store_routine(void *data)
       }
 
       assert(nn == sizeof(req));
+      if (req.topic == 0) break;
 
       CassStatement *statm;
-      CassCollection *collection;
+      CassCollection *collection = 0;
 
       if (req.idset) {
         statm = cass_prepared_bind(ctx->idsetPrep);
@@ -333,6 +382,12 @@ void *store_routine(void *data)
         
         cass_statement_bind_collection(statm, 0, collection);
         cass_statement_bind_string(statm, 1, cass_string_init(req.topic));
+      } else if (req.cache) {
+        statm = cass_prepared_bind(ctx->cachePrep);
+        cass_statement_bind_string(statm, 0, cass_string_init(req.data->c_str()));
+        cass_statement_bind_string(statm, 1, cass_string_init(req.topic));
+        cass_statement_bind_string(statm, 2, cass_string_init(req.id->c_str()));
+        cass_statement_bind_string(statm, 3, cass_string_init(req.time->c_str()));
       } else {
         statm = cass_prepared_bind(ctx->prepared);
 
@@ -346,7 +401,7 @@ void *store_routine(void *data)
       }
       
       // cass_statement_set_consistency(statm, CASS_CONSISTENCY_TWO);
-      cass_collection_free(collection);
+      if (collection) cass_collection_free(collection);
 
       cfwaits.push_back(cass_session_execute(ctx->session, statm));
       cass_statement_free(statm);
@@ -360,6 +415,19 @@ void *store_routine(void *data)
   return THREAD_SUCCESS;
 }
 
+const CassPrepared *caPrepare(CassandraCtx *ctx, const char *query)
+{
+  CassFuture *prepareFuture = cass_session_prepare(ctx->session, cass_string_init(query));
+  if (cass_future_error_code(prepareFuture) != CASS_OK) {
+    CassString msg = cass_future_error_message(prepareFuture);
+    fprintf(stderr, "prepare %s error %.*s\n", query, (int) msg.length, msg.data);
+    return 0;
+  }
+  const CassPrepared *prepared = cass_future_get_prepared(prepareFuture);
+  cass_future_free(prepareFuture);
+  return prepared;
+}
+
 
 bool startAgent(int rfd, const char *db, CassandraCtx *ctx)
 {
@@ -368,6 +436,7 @@ bool startAgent(int rfd, const char *db, CassandraCtx *ctx)
   ctx->session = cass_session_new();
   ctx->prepared = 0;
   ctx->idsetPrep = 0;
+  ctx->cachePrep = 0;
 
   cass_cluster_set_contact_points(ctx->cluster, db);
   cass_cluster_set_max_connections_per_host(ctx->cluster, MAX_CNP);
@@ -382,29 +451,18 @@ bool startAgent(int rfd, const char *db, CassandraCtx *ctx)
   }
 
   /* 30 days ttl */
-  CassString query = cass_string_init("UPDATE de.realdata USING TTL 2592000 SET datas = datas + ? "
-                                      "WHERE topic = ? AND id = ? AND timestamp = ?");
-  CassFuture *prepareFuture = cass_session_prepare(ctx->session, query);
-  if (cass_future_error_code(prepareFuture) != CASS_OK) {
-    CassString msg = cass_future_error_message(prepareFuture);
-    fprintf(stderr, "prepare %.*s error %.*s\n", (int) query.length, query.data,
-            (int) msg.length, msg.data);
-    return false;
-  }
-  ctx->prepared = cass_future_get_prepared(prepareFuture);
-  cass_future_free(prepareFuture);
+  const char *query = "UPDATE de.realdata USING TTL 2592000 SET datas = datas + ? "
+                      "WHERE topic = ? AND id = ? AND timestamp = ?";
+  ctx->prepared = caPrepare(ctx, query);
+  if (!ctx->prepared) return false;
 
-  query = cass_string_init("UPDATE de.idset SET datas = datas + ? "
-                           "WHERE topic = ?");
-  prepareFuture = cass_session_prepare(ctx->session, query);
-  if (cass_future_error_code(prepareFuture) != CASS_OK) {
-    CassString msg = cass_future_error_message(prepareFuture);
-    fprintf(stderr, "prepare %.*s error %.*s\n", (int) query.length, query.data,
-            (int) msg.length, msg.data);
-    return false;
-  }
-  ctx->idsetPrep = cass_future_get_prepared(prepareFuture);
-  cass_future_free(prepareFuture);
+  query = "UPDATE de.idset SET datas = datas + ? WHERE topic = ?";
+  ctx->idsetPrep = caPrepare(ctx, query);
+  if (!ctx->idsetPrep) return false;
+
+  query = "UPDATE de.cachedata SET datas = ? WHERE topic = ? AND id = ? AND timestamp = ?";
+  ctx->cachePrep = caPrepare(ctx, query);
+  if (!ctx->cachePrep) return false;
 
   int rc = pthread_create(&ctx->tid, NULL, store_routine, ctx);
   if (rc != 0) {
@@ -419,6 +477,8 @@ bool waitFinish(CassandraCtx *ctx, ConsumerList *consumers)
 {
   void *status;
   void *rc = THREAD_SUCCESS;
+
+  int server = -1;
   
   for (ConsumerList::iterator ite = consumers->begin(); ite != consumers->end(); ++ite) {
     if (ite->tid != 0) {
@@ -428,7 +488,13 @@ bool waitFinish(CassandraCtx *ctx, ConsumerList *consumers)
     if (ite->rkt) rd_kafka_topic_destroy(ite->rkt);
     if (ite->rk) rd_kafka_destroy(ite->rk);
     if (ite->offsetfd != -1) close(ite->offsetfd);
+    
+    server = ite->server;
   }
+
+  OneTaskReq req;
+  req.topic = 0;
+  write(server, &req, sizeof(req));
 
   if (ctx->tid != 0) {
     pthread_join(ctx->tid, &status);
@@ -444,6 +510,7 @@ bool waitFinish(CassandraCtx *ctx, ConsumerList *consumers)
   
   if (ctx->prepared) cass_prepared_free(ctx->prepared);
   if (ctx->idsetPrep) cass_prepared_free(ctx->idsetPrep);
+  if (ctx->cachePrep) cass_prepared_free(ctx->cachePrep);
 
   if (ctx->session) cass_session_free(ctx->session);
   if (ctx->cluster) cass_cluster_free(ctx->cluster);

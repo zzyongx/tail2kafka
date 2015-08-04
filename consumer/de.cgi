@@ -4,6 +4,8 @@ use strict;
 use warnings;
 use Time::Local;
 use FindBin qw($Bin);
+use LWP;
+use JSON::PP qw(decode_json);
 
 # QUERY_STRING="topic=yuntu-app-tair&id=yuntu&start=2015-04-21T16:00:00&end=2015-04-21T16:30:00" /var/www/cgi-bin/de.cgi
 
@@ -39,7 +41,8 @@ if ($param{end} eq "forever")  {
 } else {
   my $cmd = join(" ", $Cmd, $Ca,
                  $param{topic}, $param{id}, $param{start}, $param{end},
-                 $param{order} || "desc", $param{dataset} || "samp");
+                 $param{order} || "desc", $param{dataset} || "samp",
+                 ($param{cacheonly} eq "yes" ? "cacheonly" : "normal"));
   exec($cmd);
 }
 

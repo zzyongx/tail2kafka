@@ -8,12 +8,12 @@ function init_zoom(cf, ec)
     
     var bef, start, end;
     if (zoom.start == 0 && zoom.end != 100 && zoomlen == cf.zoomlen) {
-      bef = get_bef(cf.unit);
+      bef = get_bef(cf);
       end = cf.start;
       start = cf.start = iso8601(ago(bef, cf.unit, get_millisecond(cf.start)), cf.unit);
       console.log("get more old data", cf.start, " ", cf.end);
     } else if (zoom.end == 100 && zoom.start != 0 && zoomlen == cf.zoomlen) {
-      bef = get_bef(cf.unit);
+      bef = get_bef(cf);
       start = cf.end;
       var t = ago(bef * -1, cf.unit, get_millisecond(cf.end));
       if (t > (new Date()).getTime()) t = 0;
@@ -92,30 +92,42 @@ function adjust_by_cache(cf)
 {
   var range = {start: cf.start, end: cf.end};
   
-  if (cf.unit == "d" || cf.unit == "h" || cf.unit == "m") return range;
+  if (cf.unit == "d" || cf.unit == "h") {
+    clear_cache(cf);
+    return range;
+  }
   
   if (cf.cache.topic == cf.topic && cf.cache.id == cf.id &&
       cf.cache.unit == cf.unit &&
       (cf.cache.start < cf.start || time_approximate(cf.cache.start, cf.start))) {
     if (cf.end > cf.cache.end) {
-      range.start = cf.cache.end;
+      if (cf.unit == "m") {
+        range.start = iso8601(get_millisecond(cf.cache.end) - 45 * 1000, cf.unit);
+      } else {
+        range.start = cf.cache.end;
+      }
       range.end = cf.end;
+    } else {
+      range.start = range.end = 0;
     }
   } else {
     clear_cache(cf);
-    range.start = cf.start;
-    range.end = cf.end;
   }
   return range;
 }
 
 function cacheit(cf, id, data)
 {
-  if (cf.unit == "d" || cf.unit == "h" || cf.unit == "m") return;
+  cf.last[cf.topic] = data;
+  
+  if (cf.unit == "d" || cf.unit == "h") return;
   if (cf.topic != cf.cache.topic || cf.id != cf.cache.id &&
       cf.unit != cf.cache.unit) {
     clear_cache(cf);
   }
+
+  // the last data is incomplete
+  if (cf.unit == "m" && (id == cf.end)) return;
 
   if (cf.cache.data == undefined) {
     cf.cache.data = [[id, data]];
@@ -129,7 +141,6 @@ function cacheit(cf, id, data)
       cf.cache.end = id;
     }
   }
-  cf.last[cf.topic] = data;
 }
 
 function ecfresh(cf, ec, id, data, force)
@@ -163,19 +174,19 @@ function ecfresh(cf, ec, id, data, force)
     asc = false;
   }
 
-  var cluster = {};
-  for (host in data) {
-    if (host == "cluster") continue;
-    
-    for (attr in data[host]) {
-      if (cluster[attr] == undefined) {
-        cluster[attr] = data[host][attr];
-      } else {
-        cluster[attr] += data[host][attr];
+  if (!data.cluster) {
+    var cluster = {};
+    for (host in data) {
+      for (attr in data[host]) {
+        if (cluster[attr] == undefined) {
+          cluster[attr] = data[host][attr];
+        } else {
+          cluster[attr] += data[host][attr];
+        }
       }
     }
+    data.cluster = cluster;      
   }
-  data.cluster = cluster;
 
   var idx = 0;
   for (var i = 0; i < cf.host.length; i++) {
@@ -304,15 +315,18 @@ function load_profile_post(cf)
 {
   if (cf.unit == undefined) cf.unit = "s";
   if (cf.autofresh == undefined) cf.autofresh = false;
-  
-  var bef = get_bef(cf.unit);
 
-  cf.start = iso8601(ago(bef, cf.unit), cf.unit);
-  cf.end = iso8601(0, cf.unit);
-  
   cf.cache = {};
   cf.last = {};
   cf.idset = {};
+
+  load_topic(cf);
+  
+  var bef = get_bef(cf);
+
+  cf.start = iso8601(ago(bef, cf.unit), cf.unit);
+  cf.end = iso8601(0, cf.unit);
+
   return cf;
 }
 
@@ -321,6 +335,7 @@ function load_topic(cf)
   $.ajax({
     url: "/cgi-bin/de.topic.cgi",
     dataType: "json",
+    async: false,
   }).done(function(data) {
     console.log("load_topic", data);
     cf.topics = data;
@@ -339,6 +354,7 @@ function load_idset(cf)
       url: "/cgi-bin/de.id.cgi",
       data: {topic: cf.topic},
       dataType: "json",
+      async: false,
     }).done(function(data) {
       cf.idset[cf.topic] = data;
       fresh_id_wind(cf);
@@ -363,6 +379,20 @@ function get_millisecond(str) {
   return date.getTime();
 }
 
+function get_unit(str) {
+  var match;
+  var unit;
+  if ((match = str.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})$/))) {
+    unit = "s";
+  } else if ((match = str.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/))) {
+    unit = "m";
+  } else if ((match = str.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2})$/))) {
+    unit = "h";
+  } else if ((match = str.match(/^(\d{4})-(\d{2})-(\d{2})$/))) {
+    unit = "d";
+  }
+  return unit;
+}
 
 // 2015-04-21T16:30:00
 function iso8601(ts, unit)
@@ -396,12 +426,19 @@ function iso8601(ts, unit)
   return ts + ":" + s;
 }
 
-function get_bef(unit)
+function get_bef(cf)
 {
+  var unit = cf.unit;
+  var conly = (cf.topics ? (cf.topics[cf.topic].cache == 1) : false);
+  
   var bef;
-  if (unit == "s" || unit == "ss") bef = 30 * 60;
-  else if (unit == "m") bef = 300;
-  else bef = 30;
+  if (unit == "s" || unit == "ss") {
+    bef = 30 * 60;
+  } else if (unit == "m") {
+    bef = conly ? 3000 : 300;
+  } else {
+    bef = conly ? 120 : 5;
+  }
   return bef;
 }
 
@@ -588,7 +625,7 @@ function fetch_host_attr(cf)
       len1 = Object.keys(cf.attrs[key].attr).length;
       len2 = Object.keys(cf.attrs[key].host).length;
     }
-    
+
     for (host in cf.last[key]) {
       if (cf.attrs[key] == undefined) cf.attrs[key] = {host: {}, attr: {}, func:{}};
       cf.attrs[key].host[host] = true;
@@ -686,7 +723,7 @@ function init_unit_click(cf)
     }
     $(value).click(function() {
       var unit = units[index];
-      if (unit != "m" && unit != "s" && unit != "ss") {
+      if (unit != "m" && unit != "s" && unit != "ss" && cf.autofresh) {
         alert("please disable auto fresh first");
         return;
       }
@@ -857,7 +894,7 @@ function get_start_end(cf)
   var end = $.trim($("#end-time").val());
   
   if (start != "" || end != "") {
-    var bef = get_bef(cf.unit);
+    var bef = get_bef(cf);
     var start_millis, end_millis;
     
     if (start == "") start_millis = ago(bef, cf.unit, get_millisecond(end));
@@ -893,10 +930,10 @@ function get_start_end(cf)
     cf.start = iso8601(start_millis, cf.unit);
     cf.end = iso8601(end_millis, cf.unit);
   } else {
-    var bef = get_bef(cf.unit);
+    var bef = get_bef(cf);
 
     var start = iso8601(ago(bef, cf.unit), cf.unit);
-    if (start > cf.end) cf.start = start;
+    if (start > cf.end || get_unit(cf.start) != cf.unit) cf.start = start;
     cf.end = iso8601(0, cf.unit);
   }                       
 
@@ -964,9 +1001,11 @@ function ec_option_init(ec)
 
 function show_data(cf, ec, start, end)
 {
+  var conly = (cf.topics[cf.topic].cache == 1);
 	var url = build_query("/cgi-bin/de.cgi",
                         {start: start, end: end, topic: cf.topic,
-                         id: cf.id, dataset: cf.unit == "ss" ? "all" : "samp"});
+                         id: cf.id, dataset: cf.unit == "ss" ? "all" : "samp",
+                         cacheonly: (conly ? "yes" : "no")});
   console.log(url);
 	var es = new EventSource(url);
 
@@ -1015,7 +1054,6 @@ $(function() {
   
   ec = ecInit(cf);
 
-  load_topic(cf);
   load_idset(cf);
   show_data(cf, ec, cf.start, cf.end);
 

@@ -429,7 +429,7 @@ function iso8601(ts, unit)
 function get_bef(cf)
 {
   var unit = cf.unit;
-  var conly = (cf.topics ? (cf.topics[cf.topic].cache == 1) : false);
+  var conly = (cf.topics ? (cf.topics[cf.topic].mode == "cacheonly") : false);
   
   var bef;
   if (unit == "s" || unit == "ss") {
@@ -437,7 +437,7 @@ function get_bef(cf)
   } else if (unit == "m") {
     bef = conly ? 3000 : 300;
   } else {
-    bef = conly ? 120 : 5;
+    bef = conly ? 365 : 5;
   }
   return bef;
 }
@@ -1001,11 +1001,14 @@ function ec_option_init(ec)
 
 function show_data(cf, ec, start, end)
 {
-  var conly = (cf.topics[cf.topic].cache == 1);
-	var url = build_query("/cgi-bin/de.cgi",
+  var mode = cf.topics[cf.topic].mode;
+  if (mode == "") {
+    mode = (cf.unit == "ss") ? "all" : "samp";
+  }
+  
+  var url = build_query("/cgi-bin/de.cgi",
                         {start: start, end: end, topic: cf.topic,
-                         id: cf.id, dataset: cf.unit == "ss" ? "all" : "samp",
-                         cacheonly: (conly ? "yes" : "no")});
+                         id: cf.id, mode: mode});
   console.log(url);
 	var es = new EventSource(url);
 

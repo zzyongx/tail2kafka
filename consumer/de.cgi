@@ -41,8 +41,7 @@ if ($param{end} eq "forever")  {
 } else {
   my $cmd = join(" ", $Cmd, $Ca,
                  $param{topic}, $param{id}, $param{start}, $param{end},
-                 $param{order} || "desc", $param{dataset} || "samp",
-                 ($param{cacheonly} eq "yes" ? "cacheonly" : "normal"));
+                 $param{order} || "desc", $param{mode} || "all");
   exec($cmd);
 }
 

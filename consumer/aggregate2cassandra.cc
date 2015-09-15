@@ -327,8 +327,10 @@ void pollWaitFuture(CfList *cfwaits, bool wait = false)
 
     if (ready) {
       if (cass_future_error_code(*ite) != CASS_OK) {
-        CassString msg = cass_future_error_message(*ite);
-        fprintf(stderr, "Bad query %.*s\n", (int) msg.length, msg.data);
+        const char *msg;
+        size_t len;
+        cass_future_error_message(*ite, &msg, &len);
+        fprintf(stderr, "Bad query %.*s\n", (int) len, msg);
       }
       cass_future_free(*ite);
       ite = cfwaits->erase(ite);
@@ -377,27 +379,27 @@ void *store_routine(void *data)
 
         collection = cass_collection_new(CASS_COLLECTION_TYPE_SET, 1);
         for (StringSet::iterator ite = req.idset->begin(); ite != req.idset->end(); ++ite) {
-          cass_collection_append_string(collection, cass_string_init(ite->c_str()));
+          cass_collection_append_string(collection, ite->c_str());
         }
         
         cass_statement_bind_collection(statm, 0, collection);
-        cass_statement_bind_string(statm, 1, cass_string_init(req.topic));
+        cass_statement_bind_string(statm, 1, req.topic);
       } else if (req.cache) {
         statm = cass_prepared_bind(ctx->cachePrep);
-        cass_statement_bind_string(statm, 0, cass_string_init(req.data->c_str()));
-        cass_statement_bind_string(statm, 1, cass_string_init(req.topic));
-        cass_statement_bind_string(statm, 2, cass_string_init(req.id->c_str()));
-        cass_statement_bind_string(statm, 3, cass_string_init(req.time->c_str()));
+        cass_statement_bind_string(statm, 0, req.data->c_str());
+        cass_statement_bind_string(statm, 1, req.topic);
+        cass_statement_bind_string(statm, 2, req.id->c_str());
+        cass_statement_bind_string(statm, 3, req.time->c_str());
       } else {
         statm = cass_prepared_bind(ctx->prepared);
 
         collection = cass_collection_new(CASS_COLLECTION_TYPE_LIST, 1);
-        cass_collection_append_string(collection, cass_string_init(req.data->c_str()));
+        cass_collection_append_string(collection, req.data->c_str());
 
         cass_statement_bind_collection(statm, 0, collection);
-        cass_statement_bind_string(statm, 1, cass_string_init(req.topic));
-        cass_statement_bind_string(statm, 2, cass_string_init(req.id->c_str()));
-        cass_statement_bind_string(statm, 3, cass_string_init(req.time->c_str()));
+        cass_statement_bind_string(statm, 1, req.topic);
+        cass_statement_bind_string(statm, 2, req.id->c_str());
+        cass_statement_bind_string(statm, 3, req.time->c_str());
       }
       
       // cass_statement_set_consistency(statm, CASS_CONSISTENCY_TWO);
@@ -417,10 +419,12 @@ void *store_routine(void *data)
 
 const CassPrepared *caPrepare(CassandraCtx *ctx, const char *query)
 {
-  CassFuture *prepareFuture = cass_session_prepare(ctx->session, cass_string_init(query));
+  CassFuture *prepareFuture = cass_session_prepare(ctx->session, query);
   if (cass_future_error_code(prepareFuture) != CASS_OK) {
-    CassString msg = cass_future_error_message(prepareFuture);
-    fprintf(stderr, "prepare %s error %.*s\n", query, (int) msg.length, msg.data);
+    const char *msg;
+    size_t len;
+    cass_future_error_message(prepareFuture, &msg, &len);
+    fprintf(stderr, "prepare %s error %.*s\n", query, (int) len, msg);
     return 0;
   }
   const CassPrepared *prepared = cass_future_get_prepared(prepareFuture);
@@ -445,8 +449,10 @@ bool startAgent(int rfd, const char *db, CassandraCtx *ctx)
   
   ctx->connect = cass_session_connect(ctx->session, ctx->cluster);
   if (cass_future_error_code(ctx->connect) != CASS_OK) {
-    CassString msg = cass_future_error_message(ctx->connect);
-    fprintf(stderr, "connect %s error %.*s\n", db, (int) msg.length, msg.data);
+    const char *msg;
+    size_t len;
+    cass_future_error_message(ctx->connect, &msg, &len);
+    fprintf(stderr, "connect %s error %.*s\n", db, (int) len, msg);
     return false;
   }
 

@@ -17,13 +17,18 @@ typedef std::vector<std::string>                           StringList;
 typedef std::vector< std::pair<std::string, std::string> > StringPairList; 
 typedef std::list< std::pair<CassFuture *, std::string> >  CassFutureList;
 
+#define ALL       0x0000
+#define SAMP      0x0001
+#define CACHEONLY 0x0002
+#define OMITCACHE 0x0004
+#define SECOND1   0x0008
+
 enum TimeUnit { DAY, HOUR, MIN, SECOND };
-enum DataMode { ALL, SAMP, CACHEONLY, SECOND1 };
 struct CaCtx {
   const char         *topic;
   const char         *id;
   time_t              now;
-  DataMode            mode;
+  int                 mode;
   
   CassCluster        *cluster;
   CassSession        *session;
@@ -33,10 +38,10 @@ struct CaCtx {
   const CassPrepared *updateCachePrep;
 };
 
-bool consTimeSeq(const char *start, const char *end, bool asc, DataMode mode,
+bool consTimeSeq(const char *start, const char *end, bool asc, int mode,
                  StringList *ts, TimeUnit *unit);
 
-bool initCaCtx(const char *db, const char *topic, const char *id, DataMode mode, CaCtx *ctx);
+bool initCaCtx(const char *db, const char *topic, const char *id, int mode, CaCtx *ctx);
 void destroyCaCtx(CaCtx *ctx);
 
 void getRealData(CaCtx *ctx, const StringList &ts, StringPairList *results = 0);
@@ -46,23 +51,31 @@ int main(int argc, char *argv[])
 {
   if (argc < 7) {
     fprintf(stderr, "usage: %s cassandra-cluster topic id start end\n"
-                    "          [asc|desc] [all|samp|cacheonly|second1]\n",
+                    "          [asc|desc] [{all,samp,cacheonly,omitcache,second1}]\n",
             argv[0]);
     return EXIT_FAILURE;
   }
 
   bool asc = strcmp(argv[6], "asc") == 0;
   
-  DataMode mode = ALL;
+  int mode = 0;
   if (argc == 8) {
-    if (strcmp(argv[7], "all") == 0) {
-      mode = ALL;
-    } else if (strcmp(argv[7], "samp") == 0) {
-      mode = SAMP;
-    } else if (strcmp(argv[7], "cacheonly") == 0) {
-      mode = CACHEONLY;
-    } else if (strcmp(argv[7], "second1") == 0) {
-      mode = SECOND1;
+    for (const char *pos = argv[7]; *pos; ++pos) {
+      const char *ptr = strchr(pos, ',');
+      size_t n = ptr ? ptr - pos : 0;
+      if (strncmp(pos, "all", (n ? n : 3)) == 0) {
+        mode |= ALL;
+      } else if (strncmp(pos, "samp", (n ? n : 4)) == 0) {
+        mode |= SAMP;
+      } else if (strncmp(pos, "cacheonly", (n ? n : 9)) == 0) {
+        mode |= CACHEONLY;
+      } else if (strncmp(pos, "second1", (n ? n : 7)) == 0) {
+        mode |= SECOND1;
+      } else if (strncmp(pos, "omitcache", (n ? n : 9)) == 0) {
+        mode |= OMITCACHE;
+      }
+      if (!ptr) break;
+      pos = ptr;
     }
   }
 
@@ -90,10 +103,12 @@ int main(int argc, char *argv[])
 
 const CassPrepared *caPrepare(CaCtx *ctx, const char *query)
 {
-  CassFuture *prepareFuture = cass_session_prepare(ctx->session, cass_string_init(query));
+  CassFuture *prepareFuture = cass_session_prepare(ctx->session, query);
   if (cass_future_error_code(prepareFuture) != CASS_OK) {
-    CassString msg = cass_future_error_message(prepareFuture);
-    fprintf(stderr, "prepare %s error %.*s\n", query, (int) msg.length, msg.data);
+    const char *msg;
+    size_t len;
+    cass_future_error_message(prepareFuture, &msg, &len);
+    fprintf(stderr, "prepare %s error %.*s\n", query, (int) len, msg);
     return 0;
   }
   const CassPrepared *prepared = cass_future_get_prepared(prepareFuture);
@@ -101,7 +116,7 @@ const CassPrepared *caPrepare(CaCtx *ctx, const char *query)
   return prepared;
 }
 
-bool initCaCtx(const char *db, const char *topic, const char *id, DataMode mode, CaCtx *ctx)
+bool initCaCtx(const char *db, const char *topic, const char *id, int mode, CaCtx *ctx)
 {
   ctx->cluster = cass_cluster_new();
   ctx->session = cass_session_new();
@@ -113,8 +128,10 @@ bool initCaCtx(const char *db, const char *topic, const char *id, DataMode mode,
 
   ctx->connect = cass_session_connect(ctx->session, ctx->cluster);
   if (cass_future_error_code(ctx->connect) != CASS_OK) {
-    CassString msg = cass_future_error_message(ctx->connect);
-    fprintf(stderr, "connect %s error %.*s\n", db, (int) msg.length, msg.data);
+    const char *msg;
+    size_t len;
+    cass_future_error_message(ctx->connect, &msg, &len);
+    fprintf(stderr, "connect %s error %.*s\n", db, (int) len, msg);
     return false;
   }
 
@@ -152,11 +169,27 @@ void destroyCaCtx(CaCtx *ctx)
   if (ctx->cluster) cass_cluster_free(ctx->cluster);
 }
 
+inline void assignJsonNumber(Json::Value &ref, int sign, int64_t value, int point)
+{
+  // printf("%d %ld %d\n", sign, value, point);
+  
+  if (point) {
+    ref = ref.asDouble() + sign * (double) value / point;
+  } else if (ref.isDouble()) {
+    ref = ref.asDouble() + sign * value;
+  } else {
+    ref = ref.asInt64() + sign * value;
+  }
+}
+    
+
 bool raw2json(const char *data, size_t size, Json::Value &root)
 {
   std::string host;
   std::string key;
-  int value = 0;
+  int64_t value = 0;
+  int point = 0;
+  int sign  = 1;
   enum {WaitHost, WaitKey, WaitValue} status = WaitHost;
 
   for (size_t i = 0; i < size; ++i) {
@@ -171,12 +204,16 @@ bool raw2json(const char *data, size_t size, Json::Value &root)
         }
       } else if (status == WaitValue) {
         status = WaitKey;
-        int oval = root[host].isMember(key) ? root[host][key].asInt() : 0;
-        root[host][key] = oval + value;
+        if (!root[host].isMember(key)) root[host][key] = 0;
+        Json::Value &ref = root[host][key];
+        assignJsonNumber(ref, sign, value, point);
         
         key.clear();
-        value = 0;
-      } else return false;
+        value = point = 0;
+        sign = 1;
+      } else {
+        return false;
+      }
     } else if (status == WaitHost) {
       host.append(1, data[i]);
     } else if (status == WaitKey) {
@@ -184,14 +221,20 @@ bool raw2json(const char *data, size_t size, Json::Value &root)
     } else if (status == WaitValue) {
       if (data[i] >= '0' && data[i] <= '9') {
         value = value * 10 + data[i] - '0';
-      } else if (data[i] != '.') {
+        if (point) point *= 10;
+      } else if (data[i] == '.') {
+        point = 1;
+      } else if (data[i] == '-' && value == 0) {
+        sign = -1;
+      } else {
         return false;
       }
     }
   }
   if (status == WaitValue) {
-    int oval = root[host].isMember(key) ? root[host][key].asInt() : 0;
-    root[host][key] = oval + value;
+    if (!root[host].isMember(key)) root[host][key] = 0;
+    Json::Value &ref = root[host][key];
+    assignJsonNumber(ref, sign, value, point);
   } else {
     return false;
   }
@@ -216,9 +259,10 @@ void pollRealWaitFuture(CassFutureList *cflist, StringPairList *results, bool wa
       std::string json;
       
       if (cass_future_error_code(ite->first) != CASS_OK) {
-        CassString msg = cass_future_error_message(ite->first);
-        fprintf(stderr, "Bad query %s %.*s\n", ite->second.c_str(),
-                (int) msg.length, msg.data);
+        const char *msg;
+        size_t len;
+        cass_future_error_message(ite->first, &msg, &len);
+        fprintf(stderr, "Bad query %s %.*s\n", ite->second.c_str(), (int) len, msg);
       } else {
         const CassResult *result = cass_future_get_result(ite->first);
         // fprintf(stderr, "timestamp %s\n", ite->second.c_str());
@@ -228,11 +272,12 @@ void pollRealWaitFuture(CassFutureList *cflist, StringPairList *results, bool wa
           Json::Value root(Json::objectValue);
 
           while (cass_iterator_next(ite)) {
-            CassString value;
-            cass_value_get_string(cass_iterator_get_value(ite), &value);
+            const char *value;
+            size_t valuelen;
+            cass_value_get_string(cass_iterator_get_value(ite), &value, &valuelen);
 
-            if (!raw2json(value.data, value.length, root)) {
-              fprintf(stderr, "invalid data %.*s\n", (int) value.length, value.data);
+            if (!raw2json(value, valuelen, root)) {
+              fprintf(stderr, "invalid data %.*s\n", (int) valuelen, value);
             }
           }
 
@@ -267,9 +312,9 @@ void getRealData(CaCtx *ctx, const StringList &ts, StringPairList *results)
     CassStatement *statm = cass_prepared_bind(ctx->realPrep);
     // cass_statement_set_consistency(statm, CASS_CONSISTENCY_TWO);
 
-    cass_statement_bind_string(statm, 0, cass_string_init(ctx->topic));
-    cass_statement_bind_string(statm, 1, cass_string_init(ctx->id));
-    cass_statement_bind_string(statm, 2, cass_string_init(ite->c_str()));
+    cass_statement_bind_string(statm, 0, ctx->topic);
+    cass_statement_bind_string(statm, 1, ctx->id);
+    cass_statement_bind_string(statm, 2, ite->c_str());
 
     CassFuture *resultFuture = cass_session_execute(ctx->session, statm);
     cflist.push_back(std::make_pair(resultFuture, *ite));
@@ -284,7 +329,7 @@ void cacheSum(const StringPairList &results, std::string *json)
   for (StringPairList::const_iterator ite = results.begin();
        ite != results.end(); ++ite) {
     if (ite->second.empty()) continue;
-    
+
     Json::Value root;
     Json::Reader reader;
     bool rc = reader.parse(ite->second, root);
@@ -301,7 +346,12 @@ void cacheSum(const StringPairList &results, std::string *json)
         std::string key2 = jt.key().asString();
         
         if (!obj[key].isMember(key2)) obj[key][key2] = 0;
-        obj[key][key2] = obj[key][key2].asUInt() + (*jt).asUInt();
+        Json::Value &ref = obj[key][key2];
+        if (ref.isDouble() || (*jt).isDouble()) {
+          ref = ref.asDouble() + (*jt).asDouble();
+        } else {
+          ref = ref.asInt64() + (*jt).asInt64();
+        }
       }
     }
   }
@@ -327,16 +377,18 @@ void cacheIt(CaCtx *ctx, const char *time, TimeUnit unit, const std::string &dat
   // cass_statement_set_consistency(statm, CASS_CONSISTENCY_TWO);
 
   cass_statement_bind_int32(statm, 0, ttl);
-  cass_statement_bind_string(statm, 1, cass_string_init(data.c_str()));
-  cass_statement_bind_string(statm, 2, cass_string_init(ctx->topic));
-  cass_statement_bind_string(statm, 3, cass_string_init(ctx->id));
-  cass_statement_bind_string(statm, 4, cass_string_init(time));
+  cass_statement_bind_string(statm, 1, data.c_str());
+  cass_statement_bind_string(statm, 2, ctx->topic);
+  cass_statement_bind_string(statm, 3, ctx->id);
+  cass_statement_bind_string(statm, 4, time);
 
   CassFuture *resultFuture = cass_session_execute(ctx->session, statm);
   cass_future_wait(resultFuture);
   if (cass_future_error_code(resultFuture) != CASS_OK) {
-    CassString msg = cass_future_error_message(resultFuture);
-    fprintf(stderr, "Bad query %s %.*s\n", time, (int) msg.length, msg.data);
+    const char *msg;
+    size_t len;
+    cass_future_error_message(resultFuture, &msg, &len);
+    fprintf(stderr, "Bad query %s %.*s\n", time, (int) len, msg);
   }
   cass_future_free(resultFuture);
   cass_statement_free(statm);
@@ -376,7 +428,7 @@ void getMinCacheData(CaCtx *ctx, const char *timeMin, std::string *json)
 {
   char tbuf[64];
   StringList ts;
-  if (ctx->mode == SECOND1) {
+  if (ctx->mode & SECOND1) {
     snprintf(tbuf, 64, "%s:%02d", timeMin, 0);
     ts.push_back(tbuf);
   } else {
@@ -408,24 +460,26 @@ void pollCacheWaitFuture(CaCtx *ctx, CassFutureList *cflist, TimeUnit unit,
       std::string json;
       
       if (cass_future_error_code(ite->first) != CASS_OK) {
-        CassString msg = cass_future_error_message(ite->first);
-        fprintf(stderr, "Bad query %s %.*s\n", ite->second.c_str(),
-                (int) msg.length, msg.data);
+        const char *msg;
+        size_t len;
+        cass_future_error_message(ite->first, &msg, &len);
+        fprintf(stderr, "Bad query %s %.*s\n", ite->second.c_str(), (int) len, msg);
       } else {
         const CassResult *result = cass_future_get_result(ite->first);
-        if (cass_result_row_count(result) == 0) {
-          if (ctx->mode != CACHEONLY) {
+        if ((ctx->mode & OMITCACHE) || cass_result_row_count(result) == 0) {
+          if (!(ctx->mode & CACHEONLY)) {
             if (unit == DAY) getDayCacheData(ctx, ite->second.c_str(), &json);
             else if (unit == HOUR) getHourCacheData(ctx, ite->second.c_str(), &json);
             else if (unit == MIN) getMinCacheData(ctx, ite->second.c_str(), &json);
             else assert(0);
           }
         } else {
-          CassString value;
+          const char *value;
+          size_t valuelen;
           cass_value_get_string(
             cass_row_get_column(cass_result_first_row(result), 0),
-            &value);
-          json.assign(value.data, value.length);
+            &value, &valuelen);
+          json.assign(value, valuelen);
         }
       }
 
@@ -457,9 +511,9 @@ void getCacheData(CaCtx *ctx, const StringList &ts, TimeUnit unit, StringPairLis
     CassStatement *statm = cass_prepared_bind(ctx->cachePrep);
     // cass_statement_set_consistency(statm, CASS_CONSISTENCY_TWO);
 
-    cass_statement_bind_string(statm, 0, cass_string_init(ctx->topic));
-    cass_statement_bind_string(statm, 1, cass_string_init(ctx->id));
-    cass_statement_bind_string(statm, 2, cass_string_init(ite->c_str()));
+    cass_statement_bind_string(statm, 0, ctx->topic);
+    cass_statement_bind_string(statm, 1, ctx->id);
+    cass_statement_bind_string(statm, 2, ite->c_str());
     
     CassFuture *resultFuture = cass_session_execute(ctx->session, statm);
     cflist.push_back(std::make_pair(resultFuture, *ite));    
@@ -568,7 +622,7 @@ std::string timeToStr(time_t time, TimeUnit unit)
 static const int MAX_SCAN = 3600;
 
 bool consTimeSeq(const char *startStr, const char *endStr, bool asc,
-                 DataMode mode, StringList *ts, TimeUnit *unit)
+                 int mode, StringList *ts, TimeUnit *unit)
 {
   time_t start, end;
   
@@ -593,7 +647,7 @@ bool consTimeSeq(const char *startStr, const char *endStr, bool asc,
   } else if (*unit == MIN) {
     step = 60;
   } else if (*unit == SECOND) {
-    step = (mode == ALL) ? 1 : 6;
+    step = (mode & ALL) ? 1 : 6;
   }
 
   if ((start - end)/step > MAX_SCAN) {

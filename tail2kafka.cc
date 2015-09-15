@@ -24,7 +24,7 @@ extern "C" {
 #include <lauxlib.h>
 #include <lualib.h>
 }
-#include <rdkafka.h>
+#include <librdkafka/rdkafka.h>
 
 // g++ -o tail2kafka tail2kafka.cc librdkafka.a libluajit-5.1.a -O2 -Wall -g -lpthread -lrt -lz -ldl
 
@@ -54,6 +54,7 @@ struct CnfCtx {
   std::string host;
   std::string pidfile;
   std::string brokers;
+  int         partition;
   SSHash      kafkaGlobal;
   SSHash      kafkaTopic;
 
@@ -599,6 +600,18 @@ CnfCtx *loadCnfCtx(const char *file, char *errbuf)
     goto error;
   }
   ctx->brokers = lua_tostring(L, 1);
+  lua_settop(L, 0);
+
+  lua_getglobal(L, "partition");
+  if (lua_isnil(L, 1)) {
+    ctx->partition = 0;
+  } else {
+    if (!lua_isnumber(L, 1)) {
+      snprintf(errbuf, MAX_ERR_LEN, "%s partition must be number", file);
+      goto error;
+    }
+    ctx->partition = lua_tonumber(L, 1);
+  }
   lua_settop(L, 0);
 
   lua_getglobal(L, "kafka_global");
@@ -1500,15 +1513,15 @@ void *routine(void *data)
 
     rkmsgs.resize(req.datas->size());
     for (size_t i = 0; i < req.datas->size(); ++i) {
-      rkmsgs[i].payload = (void *) req.datas->at(i)->c_str();
-      rkmsgs[i].len     = req.datas->at(i)->size();
-      rkmsgs[i].key     = 0;
-      rkmsgs[i].key_len = 0;
+      rkmsgs[i].payload  = (void *) req.datas->at(i)->c_str();
+      rkmsgs[i].len      = req.datas->at(i)->size();
+      rkmsgs[i].key      = 0;
+      rkmsgs[i].key_len  = 0;
       rkmsgs[i]._private = req.datas->at(i);
       // printf("%s kafka produce '%s'\n", rd_kafka_topic_name(rkt), req.datas->at(i)->c_str());
     }
     
-    rd_kafka_produce_batch(rkt, 0, 0,
+    rd_kafka_produce_batch(rkt, ctx->partition, 0,
                            &rkmsgs[0], rkmsgs.size());
 
     for (size_t i = 0; i < req.datas->size(); ++i) {

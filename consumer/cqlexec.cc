@@ -7,6 +7,7 @@
 #include <list>
 #include <utility>
 #include <algorithm>
+#include <stdint.h>
 
 #include <jsoncpp/json/json.h>
 #include <cassandra.h>
@@ -57,8 +58,10 @@ bool initCaCtx(const char *db, CaCtx *ctx)
 
   ctx->connect = cass_session_connect(ctx->session, ctx->cluster);
   if (cass_future_error_code(ctx->connect) != CASS_OK) {
-    CassString msg = cass_future_error_message(ctx->connect);
-    fprintf(stderr, "connect %s error %.*s\n", db, (int) msg.length, msg.data);
+    const char *msg;
+    size_t len;
+    cass_future_error_message(ctx->connect, &msg, &len);
+    fprintf(stderr, "connect %s error %.*s\n", db, (int) len, msg);
     return false;
   }
 
@@ -85,7 +88,7 @@ Json::Value col2json(const CassValue *col)
     int i;
     cass_value_get_int32(col, &i);
     return Json::Value(i);
-  } else if (type == CASS_VALUE_TYPE_BIGINT) {
+  } else if (type == CASS_VALUE_TYPE_BIGINT || type == CASS_VALUE_TYPE_TIMESTAMP) {
     cass_int64_t i;
     cass_value_get_int64(col, &i);
     return Json::Value(i);
@@ -102,18 +105,28 @@ Json::Value col2json(const CassValue *col)
     cass_value_get_bool(col, &b);
     return Json::Value(b == cass_true);
   } else if (type == CASS_VALUE_TYPE_TEXT || type == CASS_VALUE_TYPE_VARCHAR) {
-    CassString s;
-    cass_value_get_string(col, &s);
-    return Json::Value(s.data, s.data + s.length);
+    const char *output;
+    size_t len;
+    cass_value_get_string(col, &output, &len);
+    return Json::Value(output, output + len);
+  } else if (type == CASS_VALUE_TYPE_BLOB) {
+    const char *output;
+    size_t len;
+    cass_value_get_bytes(col, (const uint8_t **) &output, &len);
+    char tmpf[] = "/tmp/cqlexec.XXXXXX";
+    int fd = mkstemp(tmpf);
+    write(fd, output, len);
+    return Json::Value(tmpf, tmpf + sizeof(tmpf));
   } else if (type == CASS_VALUE_TYPE_MAP) {
     CassIterator *ite = cass_iterator_from_map(col);
     Json::Value root(Json::objectValue);
     
     while (cass_iterator_next(ite)) {
-      CassString key, value;
-      cass_value_get_string(cass_iterator_get_map_key(ite), &key);
-      cass_value_get_string(cass_iterator_get_map_value(ite), &value);
-      root[std::string(key.data, key.length)] = Json::Value(value.data, value.data + value.length);
+      const char *key, *value;
+      size_t keylen, valuelen;
+      cass_value_get_string(cass_iterator_get_map_key(ite), &key, &keylen);
+      cass_value_get_string(cass_iterator_get_map_value(ite), &value, &valuelen);
+      root[std::string(key, keylen)] = Json::Value(value, value + valuelen);
     }
     cass_iterator_free(ite);
     return root;
@@ -122,9 +135,10 @@ Json::Value col2json(const CassValue *col)
     Json::Value root(Json::arrayValue);
 
     while (cass_iterator_next(ite)) {
-      CassString value;
-      cass_value_get_string(cass_iterator_get_value(ite), &value);
-      root.append(Json::Value(value.data, value.data + value.length));
+      const char *value;
+      size_t valuelen;
+      cass_value_get_string(cass_iterator_get_value(ite), &value, &valuelen);
+      root.append(Json::Value(value, value +  valuelen));
     }
     cass_iterator_free(ite);
     return root;
@@ -146,13 +160,15 @@ bool execCql(CaCtx *ctx, const char *query, std::string *json)
     return false;
   }
   
-  CassStatement *statm = cass_statement_new(cass_string_init(query), 0);
+  CassStatement *statm = cass_statement_new(query, 0);
   CassFuture *resultFuture = cass_session_execute(ctx->session, statm);
   cass_future_wait(resultFuture);
 
   if (cass_future_error_code(resultFuture) != CASS_OK) {
-    CassString msg = cass_future_error_message(resultFuture);
-    fprintf(stderr, "exec %s error %.*s\n", query, (int) msg.length, msg.data);
+    const char *msg;
+    size_t len;
+    cass_future_error_message(resultFuture, &msg, &len);
+    fprintf(stderr, "exec %s error %.*s\n", query, (int) len, msg);
     return false;
   }
 

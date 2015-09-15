@@ -202,6 +202,7 @@ function ecfresh(cf, ec, id, data, force)
           val = 0;
         }
       }
+      val = (val % 1 === 0) ? val : Number(val).toFixed(2);
       if (asc != undefined) {
         if (asc) ec.option.series[idx].data.push(val);
         else ec.option.series[idx].data.unshift(val);
@@ -429,15 +430,15 @@ function iso8601(ts, unit)
 function get_bef(cf)
 {
   var unit = cf.unit;
-  var conly = (cf.topics ? (cf.topics[cf.topic].mode == "cacheonly") : false);
+  var samp = (cf.topics[cf.topic].mode != "") ? true : false;
   
   var bef;
   if (unit == "s" || unit == "ss") {
     bef = 30 * 60;
   } else if (unit == "m") {
-    bef = conly ? 3000 : 300;
+    bef = samp ? 900 : 300;
   } else {
-    bef = conly ? 365 : 5;
+    bef = samp ? 186 : 5;
   }
   return bef;
 }

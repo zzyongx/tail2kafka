@@ -41,7 +41,7 @@ public:
     i = j = 0;
   }
   char *operator()() {
-    snprintf(buffer, 256, "basic.%d.%d", i, j);
+    snprintf(buffer, 256, "basic.%d.%d\n", i, j);
     if (++i == 100) {
       j++;
       i = 0;
@@ -61,13 +61,13 @@ void *basic_routine(void *)
   assert(fp);
 
   for (int i = 0; i < 100; ++i) {
-    fprintf(fp, "%s\n", basicPro());
+    fprintf(fp, "%s", basicPro());
   }
   fflush(fp);
   sleep_ms(100000);
   
   for (int i = 0; i < 100; ++i) {
-    fprintf(fp, "%s\n", basicPro());
+    fprintf(fp, "%s", basicPro());
     sleep_ms(1000);
   }
   fclose(fp);

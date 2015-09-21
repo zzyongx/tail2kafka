@@ -13,7 +13,7 @@
 
 #include <librdkafka/rdkafka.h>
 
-// g++ -o kafka2file kafka2file.cc librdkafka.a -O2 -Wall -g -lpthread -lrt -lz -ldl
+// g++ -o kafka2file kafka2file.cc /usr/local/lib/librdkafka.a -O2 -Wall -g -lpthread -lrt -lz -ldl
 
 #define MAX_PARTITION 32
 #define OFFDIR "/tmp/kafka2file"

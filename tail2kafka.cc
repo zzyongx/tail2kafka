@@ -57,6 +57,7 @@ struct CnfCtx {
   std::string pidfile;
   std::string brokers;
   int         partition;
+  int         pollLimit;
   SSHash      kafkaGlobal;
   SSHash      kafkaTopic;
 
@@ -173,14 +174,9 @@ LuaCtx::LuaCtx()
   sn = 0;
 }
 
-struct Buffer {
-  std::string data;
-  Buffer *next;
-  Buffer() : next(0) {}
-};
-
 struct OneTaskReq {
   int            idx;
+  std::string   *data;
   StringPtrList *datas;
 };
 
@@ -679,6 +675,18 @@ CnfCtx *loadCnfCtx(const char *file, char *errbuf)
   }
   lua_settop(L, 0);
 
+  lua_getglobal(L, "polllimit");
+  if (lua_isnil(L, 1)) {
+    ctx->pollLimit = 100;
+  } else {
+    if (!lua_isnumber(L, 1)) {
+      snprintf(errbuf, MAX_ERR_LEN, "%s polllimit must be number", file);
+      goto error;
+    }
+    ctx->pollLimit = lua_tonumber(L, 1);
+  }
+  lua_settop(L, 0);
+
   lua_getglobal(L, "kafka_global");
   if (!lua_istable(L, 1)) {
     snprintf(errbuf, MAX_ERR_LEN, "%s kafka_global must be hash table", file);
@@ -918,18 +926,17 @@ void serializeCache(LuaCtx *ctx, StringPtrList *results)
 
 void flushCache(CnfCtx *ctx, bool timeout)
 {
-  for (LuaCtxPtrList::iterator ite = ctx->luaCtxs.begin();
-       ite != ctx->luaCtxs.end(); ++ite) {
+  for (LuaCtxPtrList::iterator ite = ctx->luaCtxs.begin(), end = ctx->luaCtxs.end();
+       ite != end; ++ite) {
     LuaCtx *lctx = *ite;
     while (lctx) {
       if (!lctx->cache.empty()) {
         if (timeout || lctx->sn + 1000 < ctx->sn) {
           fprintf(stderr, "%s timeout flush cache\n", lctx->file.c_str());
           lctx->sn = ctx->sn;
-      
-          StringPtrList *datas = new StringPtrList;
-          serializeCache(lctx, datas);
-          OneTaskReq req = {lctx->idx, datas};
+
+          OneTaskReq req = {lctx->idx, 0, new StringPtrList};
+          serializeCache(lctx, req.datas);
           ssize_t nn = write(ctx->server, &req, sizeof(OneTaskReq));
           assert(nn != -1 && nn == sizeof(OneTaskReq));
           lctx->cache.clear();
@@ -1060,15 +1067,33 @@ bool initSignal(char *errbuf)
   return true;
 }
 
+inline bool copyRawRequired(LuaCtx *ctx)
+{
+#ifdef DISABLE_COPYRAW
+  return false;
+#else
+  return !(ctx->transform || ctx->aggregate || ctx->filter || ctx->grep) &&
+    ctx->main->pollLimit;
+#endif
+}
+
 bool processLine(LuaCtx *ctx, char *line, size_t nline);
 void processLines(LuaCtx *ctx)
 {
   size_t n = 0;
   char *pos;
-  while ((pos = (char *) memchr(ctx->buffer + n, NL, ctx->npos - n))) {
-    processLine(ctx, ctx->buffer + n, pos - (ctx->buffer + n));
-    n = (pos+1) - ctx->buffer;
-    if (n == ctx->npos) break;
+
+  if (copyRawRequired(ctx)) {
+    if ((pos = (char *) memrchr(ctx->buffer, NL, ctx->npos))) {
+      processLine(ctx, ctx->buffer, pos - ctx->buffer);
+      n = (pos+1) - ctx->buffer;
+    }
+  } else {
+    while ((pos = (char *) memchr(ctx->buffer + n, NL, ctx->npos - n))) {
+      processLine(ctx, ctx->buffer + n, pos - (ctx->buffer + n));
+      n = (pos+1) - ctx->buffer;
+      if (n == ctx->npos) break;
+    }
   }
 
   if (n == 0) {
@@ -1210,7 +1235,8 @@ bool addWatch(CnfCtx *ctx, char *errbuf)
 
 void tryReWatch(CnfCtx *ctx)
 {
-  for (LuaCtxPtrList::iterator ite = ctx->luaCtxs.begin(); ite != ctx->luaCtxs.end(); ++ite) {
+  for (LuaCtxPtrList::iterator ite = ctx->luaCtxs.begin(), end = ctx->luaCtxs.end();
+       ite != end; ++ite) {
     LuaCtx *lctx = *ite;
     if (lctx->fd != -1) continue;
     lctx->fd = open(lctx->file.c_str(), O_RDONLY);
@@ -1286,6 +1312,12 @@ bool watchInit(CnfCtx *ctx, char *errbuf)
   return addWatch(ctx, errbuf);
 }
 
+inline void nanosleep(int ms)
+{
+  struct timespec spec = {0, ms * 1000 * 1000};
+  nanosleep(&spec, 0);
+}
+
 bool watchLoop(CnfCtx *ctx)
 {
   const size_t eventBufferSize = ctx->count * ONE_EVENT_SIZE * 5;
@@ -1326,6 +1358,7 @@ bool watchLoop(CnfCtx *ctx)
     }
     tryRmWatch(ctx);
     tryReWatch(ctx);
+    if (ctx->pollLimit) nanosleep(ctx->pollLimit);
   }
 
   /* in case routine is not interrupted by signal */
@@ -1431,14 +1464,13 @@ bool processLine(LuaCtx *ctx, char *line, size_t nline)
 {
   /* ignore empty line */
   if (nline == 0) return true;
-  
-  std::string *data = 0;
-  StringPtrList *datas = new StringPtrList;
+
+  OneTaskReq req = {ctx->idx, 0, 0};
   bool rc;
   
   if (ctx->transform) {
-    data = new std::string;
-    rc = ctx->transform(ctx, line, nline-1, data);
+    req.data = new std::string;
+    rc = ctx->transform(ctx, line, nline-1, req.data);
   } else if (ctx->aggregate || ctx->filter || ctx->grep) {
     StringList fields;
     split(line, nline, &fields);
@@ -1450,29 +1482,24 @@ bool processLine(LuaCtx *ctx, char *line, size_t nline)
 		}
 		
     if (ctx->aggregate) {
-      rc = ctx->aggregate(ctx, fields, datas);
+      req.datas = new StringPtrList;
+      rc = ctx->aggregate(ctx, fields, req.datas);
     } else {
-      data = new std::string;
-      rc = ctx->grep ? ctx->grep(ctx, fields, data) :
-				ctx->filter(ctx, fields, data);
+      req.data = new std::string;
+      rc = ctx->grep ? ctx->grep(ctx, fields, req.data) :
+				ctx->filter(ctx, fields, req.data);
     }
   } else {
-    data = new std::string(line, nline);
-    data->append(1, '\n');
+    req.data = new std::string(line, nline);
+    req.data->append(1, '\n');
     rc = true;
   }
-
-  if (data) {
-    if (!data->empty()) datas->push_back(data);
-    else delete data;
-  }
   
-  if (datas->empty()) {
-    delete datas;
-  } else {
-    OneTaskReq req = {ctx->idx, datas};
+  if (req.data || (req.datas && !req.datas->empty())) {
     ssize_t nn = write(ctx->main->server, &req, sizeof(OneTaskReq));
     assert(nn != -1 && nn == sizeof(OneTaskReq));
+  } else if (req.datas) {
+    delete req.datas;
   }
 
   return rc;
@@ -1596,32 +1623,43 @@ void *routine(void *data)
       break;
     }
 
-    if (!req.datas) break;  // terminate task
+    if (!req.data && !req.datas) break;  // terminate task
 
     rd_kafka_topic_t *rkt = ctx->rkts[req.idx];
 
-    rkmsgs.resize(req.datas->size());
-    for (StringPtrList::iterator ite = req.datas->begin(), end = req.datas->end();
-         ite != end; ++ite) {
-      rkmsgs[i].payload  = (void *) (*ite)->c_str();
-      rkmsgs[i].len      = (*ite)->size();
-      rkmsgs[i].key      = 0;
-      rkmsgs[i].key_len  = 0;
-      rkmsgs[i]._private = *ite;
-      // printf("%s kafka produce '%s'\n", rd_kafka_topic_name(rkt), (*ite)->c_str());
-    }
-    
-    rd_kafka_produce_batch(rkt, RD_KAFKA_PARTITION_UA, 0,
-                           &rkmsgs[0], rkmsgs.size());
-
-    for (size_t i = 0; i < req.datas->size(); ++i) {
-      if (rkmsgs[i].err) {
-        fprintf(stderr, "%s kafka produce error %s\n", rd_kafka_topic_name(rkt),
-                rd_kafka_message_errstr(&rkmsgs[i]));
+    if (req.data) {
+      int rc = rd_kafka_produce(rkt, RD_KAFKA_PARTITION_UA, 0,
+                                (void *) req.data->c_str(), req.data->size(),
+                                0, 0, req.data);
+      if (rc != 0) {
+        fprintf(stderr, "%s kafka produce error %s\n", rd_kafka_topic_name(rkt), strerror(errno));
       }
-    }
+      delete req.datas;
+    } else {
+      rkmsgs.resize(req.datas->size());
+      size_t i = 0;
+      for (StringPtrList::iterator ite = req.datas->begin(), end = req.datas->end();
+           ite != end; ++ite, ++i) {
+        rkmsgs[i].payload  = (void *) (*ite)->c_str();
+        rkmsgs[i].len      = (*ite)->size();
+        rkmsgs[i].key      = 0;
+        rkmsgs[i].key_len  = 0;
+        rkmsgs[i]._private = *ite;
+        // printf("%s kafka produce '%s'\n", rd_kafka_topic_name(rkt), (*ite)->c_str());
+      }
     
-    delete req.datas;
+      rd_kafka_produce_batch(rkt, RD_KAFKA_PARTITION_UA, 0,
+                             &rkmsgs[0], rkmsgs.size());
+
+      for (std::vector<rd_kafka_message_t>::iterator ite = rkmsgs.begin(), end = rkmsgs.end();
+           ite != end; ++ite) {
+        if (ite->err) {
+          fprintf(stderr, "%s kafka produce error %s\n", rd_kafka_topic_name(rkt),
+                  rd_kafka_message_errstr(&(*ite)));
+        }
+      }
+      delete req.datas;
+    }
     
     rd_kafka_poll(ctx->rk, 0);
   }
@@ -1648,7 +1686,7 @@ bool initSingleton(CnfCtx *ctx, char *errbuf)
 
 inline void terminateRoutine(CnfCtx *ctx)
 {
-  OneTaskReq req = {0, 0};
+  OneTaskReq req = {0, 0, 0};
   write(ctx->server, &req, sizeof(req));
 }
 
@@ -1758,12 +1796,17 @@ void TEST(loadLuaCtx)()
 {
   char errbuf[MAX_ERR_LEN];
   LuaCtx *ctx;
+
+  CnfCtx cnf;
+  cnf.host = "127.0.0.1";
   
-  ctx = loadLuaCtx(0, "./basic.lua", errbuf);
+  ctx = loadLuaCtx(&cnf, "./basic.lua", errbuf);
   check(ctx, "%s", errbuf);
   check(ctx->fd == -1, "%d", ctx->fd);
   check(ctx->file == "./basic.log", "%s", ctx->file.c_str());
   check(ctx->topic == "basic", "%s", ctx->topic.c_str());
+  check(ctx->autoparti, "%s", (ctx->autoparti ? "TRUE" : "FALSE"));
+  check(ctx->partition == RD_KAFKA_PARTITION_UA, "%d", ctx->partition);
   unloadLuaCtx(ctx);
 
   ctx = loadLuaCtx(0, "./filter.lua", errbuf);
@@ -1803,6 +1846,8 @@ void TEST(loadCnf)()
 
   check(ctx->host == "zzyong.paas.user.vm", "%s", ctx->host.c_str());
   check(ctx->brokers == "127.0.0.1:9092", "%s", ctx->brokers.c_str());
+  check(ctx->partition == 1, "%d", ctx->partition);
+  check(ctx->pollLimit == 300, "%d", ctx->pollLimit);
   check(ctx->kafkaGlobal["client.id"] == "tail2kafka",
         "%s", ctx->kafkaGlobal["client.id"].c_str());
   check(ctx->kafkaTopic["request.required.acks"] == "1",
@@ -1960,6 +2005,9 @@ void TEST(watchInit)()
   rc = watchInit(ctx, errbuf);
   check(rc == true, "%s", errbuf);
 
+  /* for test */
+  ctx->pollLimit = 0;
+
   LuaCtx *lctx;
   for (LuaCtxPtrList::iterator ite = ctx->luaCtxs.begin(); ite != ctx->luaCtxs.end(); ++ite) {
     if ((*ite)->topic == "basic") {
@@ -1980,17 +2028,16 @@ void TEST(watchInit)()
   close(fd);
   // unlink("./basic.log");
   rename("./basic.log", "./basic.log.old");
-  
 
   OneTaskReq req;
   read(ctx->accept, &req, sizeof(OneTaskReq));
 
   /* test wath */
   check(req.idx == lctx->idx, "%d = %d", req.idx, lctx->idx);
-  check(*(req.datas->at(0)) == "456", "%s", req.datas->at(0)->c_str());
+  check(*req.data == "456\n", "%s", req.data->c_str());
 
   read(ctx->accept, &req, sizeof(OneTaskReq));
-  check(*(req.datas->at(0)) == "789", "%s", req.datas->at(0)->c_str());
+  check(*req.data == "789\n", "%s", req.data->c_str());
 
   check(lctx->size == 11, "%d", (int) lctx->size);
 
@@ -1999,15 +2046,18 @@ void TEST(watchInit)()
   for (WatchCtxHash::iterator ite = ctx->wch.begin(); ite != ctx->wch.end(); ++ite) {
     check(ite->second != lctx, "%s should be remove from inotify", lctx->file.c_str());
   }
+
+  /* enable raw copy */
+  ctx->pollLimit = 300;
   
   /* test rewatch */
   fd = open("./basic.log", O_CREAT | O_WRONLY, 0644);
   assert(fd != -1);
-  write(fd, "abcd\n", 5);
+  write(fd, "abcd\nefg\n", sizeof("abcd\nefg\n")-1);
   close(fd);
 
   read(ctx->accept, &req, sizeof(OneTaskReq));
-  check(*(req.datas->at(0)) == "abcd", "%s", req.datas->at(0)->c_str());
+  check(*req.data == "abcd\nefg\n", "%s", req.data->c_str());
 
   want = STOP;
   pthread_join(tid, 0);

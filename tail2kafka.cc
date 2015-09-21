@@ -1601,13 +1601,14 @@ void *routine(void *data)
     rd_kafka_topic_t *rkt = ctx->rkts[req.idx];
 
     rkmsgs.resize(req.datas->size());
-    for (size_t i = 0; i < req.datas->size(); ++i) {
-      rkmsgs[i].payload  = (void *) req.datas->at(i)->c_str();
-      rkmsgs[i].len      = req.datas->at(i)->size();
+    for (StringPtrList::iterator ite = req.datas->begin(), end = req.datas->end();
+         ite != end; ++ite) {
+      rkmsgs[i].payload  = (void *) (*ite)->c_str();
+      rkmsgs[i].len      = (*ite)->size();
       rkmsgs[i].key      = 0;
       rkmsgs[i].key_len  = 0;
-      rkmsgs[i]._private = req.datas->at(i);
-      // printf("%s kafka produce '%s'\n", rd_kafka_topic_name(rkt), req.datas->at(i)->c_str());
+      rkmsgs[i]._private = *ite;
+      // printf("%s kafka produce '%s'\n", rd_kafka_topic_name(rkt), (*ite)->c_str());
     }
     
     rd_kafka_produce_batch(rkt, RD_KAFKA_PARTITION_UA, 0,

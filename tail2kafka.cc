@@ -18,6 +18,8 @@
 #include <poll.h>
 #include <unistd.h>
 #include <sys/inotify.h>
+#include <sys/socket.h>
+#include <netdb.h>
 
 extern "C" {
 #include <lua.h>
@@ -26,7 +28,7 @@ extern "C" {
 }
 #include <librdkafka/rdkafka.h>
 
-// g++ -o tail2kafka tail2kafka.cc librdkafka.a libluajit-5.1.a -O2 -Wall -g -lpthread -lrt -lz -ldl
+// g++ -o tail2kafka tail2kafka.cc /usr/local/lib/librdkafka.a /usr/lib/libluajit-5.1.a -g -Wall -lz -lpthread -lrt -ldl
 
 static const char   NL = '\n';
 static const int    UNSET_INT = INT_MAX;
@@ -115,6 +117,10 @@ struct LuaCtx {
   bool          withhost;
   bool          withtime;
   int           timeidx;
+  
+  uint32_t      addr;
+  bool          autoparti;  
+  int           partition;
 
   transform_pt  transform;
   std::string   transformFun;
@@ -151,6 +157,8 @@ LuaCtx::LuaCtx()
   autosplit = false;
   withhost  = true;
   withtime  = true;
+  autoparti = false;
+  partition = RD_KAFKA_PARTITION_UA;
   timeidx   = UNSET_INT;
   
   buffer = new char[MAX_LINE_LEN];
@@ -165,6 +173,12 @@ LuaCtx::LuaCtx()
   sn = 0;
 }
 
+struct Buffer {
+  std::string data;
+  Buffer *next;
+  Buffer() : next(0) {}
+};
+
 struct OneTaskReq {
   int            idx;
   StringPtrList *datas;
@@ -175,6 +189,7 @@ void unloadCnfCtx(CnfCtx *ctx);
 bool initSignal(char *errbuf);
 bool initSingleton(CnfCtx *ctx, char *errbuf);
 pid_t spawn(CnfCtx *ctx, char *errbuf);
+int runForeGround(CnfCtx *ctx, char *errbuf);
 
 enum Want {WAIT, START1, START2, RELOAD, STOP} want;
 
@@ -196,10 +211,14 @@ int main(int argc, char *argv[])
     return EXIT_FAILURE;
   }
 
-  if (getenv("TAIL2KAFKA_NOSTDIO")) {
-    daemon(1, 0);
-  } else {
-    daemon(1, 1);
+  bool daemonOff = getenv("DAEMON_OFF");
+
+  if (!daemonOff) {
+    if (getenv("TAIL2KAFKA_NOSTDIO")) {
+      daemon(1, 0);
+    } else {
+      daemon(1, 1);
+    }
   }
   want = START1;
 
@@ -213,6 +232,8 @@ int main(int argc, char *argv[])
     return EXIT_FAILURE;
   }
 
+  if (daemonOff) return runForeGround(ctx, errbuf);
+
   sigset_t set;
   sigemptyset(&set);
   sigaddset(&set, SIGCHLD);
@@ -223,7 +244,7 @@ int main(int argc, char *argv[])
     return EXIT_FAILURE;
   }
   
-  sigemptyset(&set);  
+  sigemptyset(&set);
 
   int rc = EXIT_SUCCESS;
 
@@ -413,6 +434,27 @@ static bool initLuaCtxTransform(CnfCtx *cnfCtx, LuaCtx *ctx, const char *file, c
   return rc;  
 }
 
+static bool hostAddr(const std::string &host, uint32_t *addr, char *errbuf)
+{
+  struct addrinfo *ai;
+  struct addrinfo  hints;
+
+  memset(&hints, 0x00, sizeof(hints));
+  hints.ai_family = AF_INET;
+
+  int rc = getaddrinfo(host.c_str(), NULL, &hints, &ai);
+  if (rc != 0) {
+    snprintf(errbuf, MAX_ERR_LEN, "getaddrinfo() error %s\n",
+             rc == EAI_SYSTEM ? strerror(errno) : gai_strerror(rc));
+    return false;
+  }
+
+  struct sockaddr_in *in = (struct sockaddr_in *) ai->ai_addr;
+  *addr = in->sin_addr.s_addr;
+  freeaddrinfo(ai);
+  return true;
+}
+
 static LuaCtx *loadLuaCtx(CnfCtx *cnfCtx, const char *file, char *errbuf)
 {
   int fd;
@@ -470,6 +512,29 @@ static LuaCtx *loadLuaCtx(CnfCtx *cnfCtx, const char *file, char *errbuf)
       goto error;
     }
     ctx->autosplit = lua_toboolean(L, 1);
+  }
+  lua_settop(L, 0);
+
+  lua_getglobal(L, "paritition");
+  if (!lua_isnil(L, 1)) {
+    if (!lua_isnumber(L, 1)) {
+      snprintf(errbuf, MAX_ERR_LEN, "%s partition must be number", file);
+      goto error;
+    }
+    ctx->partition = (int) lua_tonumber(L, 1);
+  }
+  lua_settop(L, 0);
+
+  lua_getglobal(L, "autoparti");
+  if (!lua_isnil(L, 1)) {
+    if (!lua_isboolean(L, 1)) {
+      snprintf(errbuf, MAX_ERR_LEN, "%s autoparti must be boolean", file);
+      goto error;
+    }
+    ctx->autoparti = lua_toboolean(L, 1);
+    if (ctx->autoparti) {
+      if (!hostAddr(cnfCtx->host, &ctx->addr, errbuf)) goto error;
+    }
   }
   lua_settop(L, 0);
 
@@ -837,6 +902,7 @@ inline std::string to_string(int i)
 
 void serializeCache(LuaCtx *ctx, StringPtrList *results)
 {
+  
   for (SSIHash::iterator ite = ctx->cache.begin(); ite != ctx->cache.end(); ++ite) {
     std::string *s = new std::string;
     if (ctx->withhost) s->append(ctx->main->host).append(1, ' ');
@@ -1392,6 +1458,7 @@ bool processLine(LuaCtx *ctx, char *line, size_t nline)
     }
   } else {
     data = new std::string(line, nline);
+    data->append(1, '\n');
     rc = true;
   }
 
@@ -1411,10 +1478,27 @@ bool processLine(LuaCtx *ctx, char *line, size_t nline)
   return rc;
 }
 
-void dr_cb(rd_kafka_t *, void *, size_t, rd_kafka_resp_err_t, void *, void *data)
+static void dr_cb(
+  rd_kafka_t *, void *, size_t, rd_kafka_resp_err_t, void *, void *data)
 {
   std::string *p = (std::string *) data;
   delete p;
+}
+
+static int32_t partitioner_cb (
+  const rd_kafka_topic_t *, const void *, size_t, int32_t pc, void *opaque, void *)
+{
+  LuaCtx *ctx = (LuaCtx *) opaque;
+  if (ctx->partition == RD_KAFKA_PARTITION_UA) {
+    if (ctx->autoparti) {
+      ctx->partition = (ntohl(ctx->addr) & 0xff) % pc;
+      return ctx->partition;
+    } else {
+      return ctx->main->partition;
+    }
+  } else {
+    return ctx->partition;
+  }
 }
 
 bool initKafka(CnfCtx *ctx, char *errbuf)
@@ -1465,6 +1549,9 @@ bool initKafka(CnfCtx *ctx, char *errbuf)
         }
       }
 
+      rd_kafka_topic_conf_set_opaque(tconf, lctx);
+      rd_kafka_topic_conf_set_partitioner_cb(tconf, partitioner_cb);
+      
       rd_kafka_topic_t *rkt;
       /* rd_kafka_topic_t will own tconf */
       rkt = rd_kafka_topic_new(ctx->rk, lctx->topic.c_str(), tconf);
@@ -1509,6 +1596,8 @@ void *routine(void *data)
       break;
     }
 
+    if (!req.datas) break;  // terminate task
+
     rd_kafka_topic_t *rkt = ctx->rkts[req.idx];
 
     rkmsgs.resize(req.datas->size());
@@ -1521,7 +1610,7 @@ void *routine(void *data)
       // printf("%s kafka produce '%s'\n", rd_kafka_topic_name(rkt), req.datas->at(i)->c_str());
     }
     
-    rd_kafka_produce_batch(rkt, ctx->partition, 0,
+    rd_kafka_produce_batch(rkt, RD_KAFKA_PARTITION_UA, 0,
                            &rkmsgs[0], rkmsgs.size());
 
     for (size_t i = 0; i < req.datas->size(); ++i) {
@@ -1554,6 +1643,43 @@ bool initSingleton(CnfCtx *ctx, char *errbuf)
     snprintf(errbuf, MAX_ERR_LEN, "lock %s failed", ctx->pidfile.c_str());
     return false;
   }
+}
+
+inline void terminateRoutine(CnfCtx *ctx)
+{
+  OneTaskReq req = {0, 0};
+  write(ctx->server, &req, sizeof(req));
+}
+
+int runForeGround(CnfCtx *ctx, char *errbuf)
+{
+  if (!watchInit(ctx, errbuf)) {
+    fprintf(stderr, "watch init error %s\n", errbuf);
+    return EXIT_FAILURE;
+  }
+
+  want = WAIT;
+    
+  sigset_t set;
+  sigemptyset(&set);
+  sigprocmask(SIG_SETMASK, &set, NULL);
+    
+  /* initKafka startup librdkafka thread */
+  if (!initKafka(ctx, errbuf)) {
+    fprintf(stderr, "init kafka error %s\n", errbuf);
+    exit(EXIT_FAILURE);
+  }
+    
+  pthread_t tid;
+  pthread_create(&tid, NULL, routine, ctx);
+  watchLoop(ctx);
+  terminateRoutine(ctx);
+  pthread_join(tid, NULL);
+  unloadCnfCtx(ctx);
+
+  printf("exit normal\n");
+
+  return EXIT_SUCCESS;
 }
 
 pid_t spawn(CnfCtx *ctx, char *errbuf)

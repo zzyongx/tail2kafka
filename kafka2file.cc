@@ -15,7 +15,7 @@
 
 // g++ -o kafka2file kafka2file.cc librdkafka.a -O2 -Wall -g -lpthread -lrt -lz -ldl
 
-#define MAX_PARTITION 10
+#define MAX_PARTITION 32
 #define OFFDIR "/tmp/kafka2file"
 
 #ifdef DEBUG
@@ -61,10 +61,10 @@ int main(int argc, char *argv[])
   return rc ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
-int getKafkaOffset(const char *topic, int id, uint64_t *offset)
+int getKafkaOffset(const char *topic, int partition, uint64_t *offset)
 {
   char path[512];
-  snprintf(path, 512, "%s/%s.%d", OFFDIR, topic, id);
+  snprintf(path, 512, "%s/%s.%d", OFFDIR, topic, partition);
 
   int fd = -1;
   struct stat st;
@@ -119,7 +119,7 @@ bool initKafka(
   for (const char *p = partition; /* */; ++p) {
     if (!*p || *p == ',') {
       if (n >= MAX_PARTITION) {
-        fprintf(stderr, "partition %d >= %d", n, MAX_PARTITION);
+        fprintf(stderr, "partition %d >= %d\n", n, MAX_PARTITION);
         return false;
       }
       
@@ -146,6 +146,8 @@ bool initKafka(
 
 bool outRotate(KafkaCtx *ctx, const char *datadir, const char *topic)
 {
+  if (datadir[0] == '-') return STDOUT_FILENO;
+  
   time_t now = time(0);
   if (ctx->out != -1 && now % 3600 != 0) return true;
 
@@ -194,6 +196,8 @@ bool consumeLoop(KafkaCtx *ctx, const char *datadir, const char *topic)
 /* pidfile may stale, this's not a perfect method */
 bool initSingleton(const char *datadir, const char *topic, int uuid)
 {
+  if (datadir[0] == '-') return true;
+  
   char path[256];
   snprintf(path, 256, "%s/%s.%d.lock", datadir, topic, uuid);
   

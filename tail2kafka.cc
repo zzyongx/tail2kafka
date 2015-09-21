@@ -76,6 +76,7 @@ struct CnfCtx {
     rk     = 0;
     accept = -1;
     server = -1;
+    wfd    = -1;
     sn     = 0;
     count  = 0;
   }
@@ -184,7 +185,7 @@ CnfCtx *loadCnf(const char *dir, char *errbuf);
 void unloadCnfCtx(CnfCtx *ctx);
 bool initSignal(char *errbuf);
 bool initSingleton(CnfCtx *ctx, char *errbuf);
-pid_t spawn(CnfCtx *ctx, char *errbuf);
+pid_t spawn(CnfCtx *ctx, CnfCtx *octx, char *errbuf);
 int runForeGround(CnfCtx *ctx, char *errbuf);
 
 enum Want {WAIT, START1, START2, RELOAD, STOP} want;
@@ -255,7 +256,7 @@ int main(int argc, char *argv[])
     }
     
     if (want == START1 || want == START2) {
-      pid = spawn(ctx, errbuf);
+      pid = spawn(ctx, 0, errbuf);
       if (pid == -1) {
         fprintf(stderr, "spawn failed, exit\n");
         rc = EXIT_FAILURE;
@@ -264,11 +265,10 @@ int main(int argc, char *argv[])
     } else if (want == RELOAD) {
       CnfCtx *nctx = loadCnf(dir, errbuf);
       if (nctx) {
-        pid_t npid = spawn(nctx, errbuf);
+        pid_t npid = spawn(nctx, ctx, errbuf);
         if (npid != -1) {
           fprintf(stderr, "reload cnf\n");
           kill(pid, SIGTERM);
-          unloadCnfCtx(ctx);
           ctx = nctx;
           pid = npid;
         } else {
@@ -596,6 +596,7 @@ void unloadCnfCtx(CnfCtx *ctx)
     }
   }
   lua_close(ctx->L);
+  close(ctx->wfd);
   
   uninitKafka(ctx);
   if (ctx->accept != -1) close(ctx->accept);
@@ -1201,6 +1202,7 @@ bool addWatch(CnfCtx *ctx, char *errbuf)
   for (LuaCtxPtrList::iterator ite = ctx->luaCtxs.begin(); ite != ctx->luaCtxs.end(); ++ite) {
     LuaCtx *lctx = *ite;
 
+    if (lctx->fd != -1) close(lctx->fd);
     for (int i = 0; i < 12; i++) {
       lctx->fd = open(lctx->file.c_str(), O_RDONLY);
       // try best to watch the file
@@ -1300,14 +1302,16 @@ inline LuaCtx *wd2ctx(CnfCtx *ctx, int wd)
 bool watchInit(CnfCtx *ctx, char *errbuf)
 {
   // inotify_init1 Linux 2.6.27
-  ctx->wfd = inotify_init();
   if (ctx->wfd == -1) {
-    snprintf(errbuf, MAX_ERR_LEN, "inotify_init error");
-    return false;
+    ctx->wfd = inotify_init();
+    if (ctx->wfd == -1) {
+      snprintf(errbuf, MAX_ERR_LEN, "inotify_init error");
+      return false;
+    }
+    
+    int nb = 1;
+    ioctl(ctx->wfd, FIONBIO, &nb);
   }
-
-  int nb = 1;
-  ioctl(ctx->wfd, FIONBIO, &nb);
 
   return addWatch(ctx, errbuf);
 }
@@ -1361,10 +1365,7 @@ bool watchLoop(CnfCtx *ctx)
     if (ctx->pollLimit) nanosleep(ctx->pollLimit);
   }
 
-  /* in case routine is not interrupted by signal */
   want = STOP;
-  close(ctx->server);
-  ctx->server = -1;
   return true;
 }
 
@@ -1716,17 +1717,18 @@ int runForeGround(CnfCtx *ctx, char *errbuf)
   pthread_join(tid, NULL);
   unloadCnfCtx(ctx);
 
-  printf("exit normal\n");
-
   return EXIT_SUCCESS;
 }
 
-pid_t spawn(CnfCtx *ctx, char *errbuf)
+pid_t spawn(CnfCtx *ctx, CnfCtx *octx, char *errbuf)
 {
   if (!watchInit(ctx, errbuf)) {
     fprintf(stderr, "watch init error %s\n", errbuf);
     return -1;
   }
+
+  /* unload old ctx before fork */
+  if (octx) unloadCnfCtx(octx);
 
   int pid = fork();
   if (pid == 0) {
@@ -1745,8 +1747,7 @@ pid_t spawn(CnfCtx *ctx, char *errbuf)
     pthread_t tid;
     pthread_create(&tid, NULL, routine, ctx);
     watchLoop(ctx);
-    /* this function may case memleak, but this process will exit, who care */
-    pthread_kill(tid, SIGUSR1);
+    terminateRoutine(ctx);    
     pthread_join(tid, NULL);
     unloadCnfCtx(ctx);
     exit(EXIT_SUCCESS);

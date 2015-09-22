@@ -123,6 +123,7 @@ struct LuaCtx {
   uint32_t      addr;
   bool          autoparti;  
   int           partition;
+  bool          rawcopy;
 
   transform_pt  transform;
   std::string   transformFun;
@@ -162,6 +163,7 @@ LuaCtx::LuaCtx()
   autoparti = false;
   partition = RD_KAFKA_PARTITION_UA;
   timeidx   = UNSET_INT;
+  rawcopy   = true;
   
   buffer = new char[MAX_LINE_LEN];
   npos = 0;
@@ -531,6 +533,16 @@ static LuaCtx *loadLuaCtx(CnfCtx *cnfCtx, const char *file, char *errbuf)
     if (ctx->autoparti) {
       if (!hostAddr(cnfCtx->host, &ctx->addr, errbuf)) goto error;
     }
+  }
+  lua_settop(L, 0);
+
+  lua_getglobal(L, "rawcopy");
+  if (!lua_isnil(L, 1)) {
+    if (!lua_isboolean(L, 1)) {
+      snprintf(errbuf, MAX_ERR_LEN, "%s rawcopy must be boolean", file);
+      goto error;
+    }
+    ctx->rawcopy = lua_toboolean(L, 1);
   }
   lua_settop(L, 0);
 
@@ -1074,7 +1086,7 @@ inline bool copyRawRequired(LuaCtx *ctx)
   return false;
 #else
   return !(ctx->transform || ctx->aggregate || ctx->filter || ctx->grep) &&
-    ctx->main->pollLimit;
+    ctx->main->pollLimit && ctx->rawcopy;
 #endif
 }
 

@@ -146,7 +146,10 @@ bool initKafka(
 
 bool outRotate(KafkaCtx *ctx, const char *datadir, const char *topic)
 {
-  if (datadir[0] == '-') return STDOUT_FILENO;
+  if (datadir[0] == '-') {
+    ctx->out = STDOUT_FILENO;
+    return true;
+  }
   
   time_t now = time(0);
   if (ctx->out != -1 && now % 3600 != 0) return true;

@@ -38,6 +38,7 @@ bool initKafka(
   const char *brokers, const char *topic, const char *partition, KafkaCtx *ctx);
 bool consumeLoop(KafkaCtx *ctx, const char *datadir, const char *topic);
 void uninitKafka(KafkaCtx *ctx);
+void deleteLockFile();
 bool initSingleton(const char *datadir, const char *topic, int uuid);
 
 int main(int argc, char *argv[])
@@ -54,7 +55,10 @@ int main(int argc, char *argv[])
   KafkaCtx ctx;
 
   if (!initKafka(brokers, topic, partition, &ctx)) return EXIT_FAILURE;
+
   if (!initSingleton(datadir, topic, ctx.iid)) return EXIT_FAILURE;
+  atexit(deleteLockFile);
+  
   bool rc = consumeLoop(&ctx, datadir, topic);
   uninitKafka(&ctx);
 
@@ -196,15 +200,21 @@ bool consumeLoop(KafkaCtx *ctx, const char *datadir, const char *topic)
   return true;
 }
 
+static char LOCK_FILE[256] = {0};
+
+void deleteLockFile()
+{
+  if (LOCK_FILE[0] != '\0') unlink(LOCK_FILE);
+}
+
 /* pidfile may stale, this's not a perfect method */
 bool initSingleton(const char *datadir, const char *topic, int uuid)
 {
   if (datadir[0] == '-') return true;
   
-  char path[256];
-  snprintf(path, 256, "%s/%s.%d.lock", datadir, topic, uuid);
+  snprintf(LOCK_FILE, 256, "%s/%s.%d.lock", datadir, topic, uuid);
   
-  int fd = open(path, O_CREAT | O_WRONLY, 0644);
+  int fd = open(LOCK_FILE, O_CREAT | O_WRONLY, 0644);
   if (lockf(fd, F_TLOCK, 0) == 0) {
     ftruncate(fd, 0);
     char pid[32];
@@ -212,7 +222,7 @@ bool initSingleton(const char *datadir, const char *topic, int uuid)
     write(fd, pid, strlen(pid));
     return true;
   } else {
-    fprintf(stderr, "lock %s failed", path);
+    fprintf(stderr, "lock %s failed", LOCK_FILE);
     return false;
   }
 }

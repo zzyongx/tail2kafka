@@ -1,0 +1,264 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use LWP;
+use JSON::PP qw(decode_json);
+use IO::Socket::INET;
+use File::Basename;
+use FindBin qw($Bin);
+use Data::Dumper;
+
+my $KAFKA = join(
+	",",
+	"kafka01.log.sjs",
+	"kafka02.log.sjs",
+	"kafka03.log.sjs",
+	"kafka04.log.sjs",
+	"kafka05.log.sjs",
+	"kafka06.log.sjs",
+	"kafka07.log.sjs",
+	"kafka08.log.sjs"
+);
+my $PARTITION = "0,1,2,3";
+my $MAINPARTI = "0";
+my $KAFKA2FILE = "kafka2file";
+my $DATADIR = "/tmp/ckeeper";
+mkdir($DATADIR) unless (-d $DATADIR);
+
+my $hostf = shift or usage();
+my $appApi = shift or usage();
+my $remoteWdir = shift or usage();
+
+my $hosts = getHosts($hostf);
+
+while (1) {
+	my $apps = getApps($appApi);
+	my $procs = getProcs($hosts, $remoteWdir);
+	my $healthyHosts = getHostByHealth($hosts);
+
+  print Dumper($apps);
+	print Dumper($procs);
+
+  my ($timeUp, $token, $ym, $ymd, $ymdh, $ymdhIso) = getTimeToken();
+  while (my ($app, $eoi) = each(%$apps)) {
+    my $host;
+		if (exists $procs->{$app}) {
+      $host = $procs->{$app}->{host};
+			if (!$procs->{$app}->{status}) {
+				print "$app was down, start $app on ", $procs->{$app}->{host}, "\n";
+				startProc($procs->{$app}->{host}, $app, $remoteWdir);
+			}
+		} else {
+			$host = getHostByLoad($healthyHosts, $procs);
+			print "$app may new, start $app on $host\n";
+			startProc($host, $app, $remoteWdir);
+			$procs->{$app} = {host => $host, status => 1};
+		}
+
+    if ($timeUp) {
+      my $tokenf = "$DATADIR/$app.$MAINPARTI.$token";
+      unless (-f $tokenf) {
+        if (scpKafkaOffset($host, "/tmp/kafka2file/$app.$MAINPARTI", $tokenf)) {
+          my $dir = eoi2dir($eoi);
+          my $lfile = "$remoteWdir/$app.$MAINPARTI.$ymdhIso";
+          copyDataToHdfs($host, $lfile, "$dir/$app/$ym/$ymd", "$app.$MAINPARTI.$ymd");
+        }
+      }
+    }
+	}
+
+	local $| = 1;
+	sleep(30);
+}
+
+sub usage {
+	print "$0 host-file app-api remote-wdir\n";
+	exit(0);
+}
+
+sub getHosts {
+	my $f = shift;
+	open(my $fh, "<$f") or die "open $f $!";
+	my @hosts = grep {chomp; $_ =~ /[a-z0-9]+/; } <$fh>;
+	close($fh);
+	return \@hosts;
+}
+
+sub getApps {
+	my $api = shift;
+	return {"12" => "test", "34" => "test", "56" => "test"} if ($api eq "test");
+	my $rsp = LWP::UserAgent->new()->get($api);
+  unless ($rsp->is_success) {
+    die "get $api http error";
+  }
+  my $obj = decode_json($rsp->content);
+  unless ($obj) {
+    die "get $api invalid json";
+  }
+  unless ($obj->{ret_code} == 0) {
+    die "get $api ret_code not 0";
+  }
+
+  my $apps = {};
+  while (my ($k, $v) = each(%{$obj->{ret_info}})) {
+    $apps->{$k} = $v->{eoi};
+  }
+	return $apps;
+}
+
+sub getProcs {
+	my ($hosts, $wdir) = @_;
+	my $procs = {};
+	foreach my $host (@$hosts) {
+		$procs = getHostProc($host, $wdir, $procs);
+	}
+	return $procs;
+}
+
+sub getHostProc {
+	my ($host, $wdir, $procs) = @_;
+	my $locks = ssh3($host, "ls $wdir/*.lock");
+	foreach my $lock (split /\n/, $locks) {
+		$lock = basename($lock);
+		next unless ($lock =~ /^([^.]+)/);
+		my $app = $1;
+		system("ssh $host 'ls /proc/\$(cat $wdir/$lock)/exe' 2>/dev/null");
+		if ($? == 0) {
+			$procs->{$app} = {host => $host, status => 1};
+		} else {
+			if (!$procs->{$app}) {
+				$procs->{$app} = {host => $host, stats => 0};
+			}
+		}
+	}
+	return $procs;
+}
+
+sub startProc {
+	my ($host, $app, $wdir) = @_;
+	system("ssh $host '$KAFKA2FILE $KAFKA $app $PARTITION $wdir'");
+}
+
+sub getHostByHealth {
+	my ($hosts) = @_;
+	my @healthyHosts;
+	foreach my $host (@$hosts) {
+		for (my $i = 0; $i < 3; $i++) {
+			system("ssh $host cd");
+			if ($? == 0) {
+				push(@healthyHosts, $host);
+				last;
+			}
+			sleep(1) if ($i+1 < 3);
+		}
+	}
+	return \@healthyHosts;
+}
+
+sub getHostByLoad {
+	my ($hosts, $procs) = @_;
+
+	my %hosts;
+	$hosts{$_} = 0 foreach (@$hosts);
+
+	while (my ($k, $o) = each(%$procs)) {
+		$hosts{$o->{host}}++;
+	}
+
+	my $min = 10000;
+	my $host = "";
+	foreach (my ($k, $v) = each(%hosts)) {
+		if ($v < $min) {
+			$host = $k;
+			$min = $v;
+		}
+	}
+	return $host;
+}
+
+sub ssh3 {
+	my ($host, $cmd) = @_;
+	for (my $i = 0; $i < 3; $i++) {
+		my $output = `ssh $host '$cmd' 2>/dev/null`;
+		return $output if ($? == 0);
+
+		`ssh $host cd`;
+		return "" if ($? == 0);
+
+		sleep(1) if ($i+1 < 3);
+	}
+
+	`ssh $host 'cd /'`;
+	if ($? != 0) {
+		print scalar localtime, " $host is down\n";
+	}
+
+	return undef;
+}
+
+sub scpKafkaOffset {
+  my ($host, $rfile, $lfile) = @_;
+  for (my $i = 0; $i < 3; $i++) {
+    system("scp $host:$rfile $lfile");
+    return 1 if ($? == 0);
+
+    sleep(1) if ($i+1 < 3);
+  }
+  return 0;
+}
+
+sub copyDataToHdfs {
+  my ($host, $fsFile, $hdfsDir, $hdfsFile) = @_;
+  my $r = ssh3($host, "hadoop fs -mkdir -p $hdfsDir");
+  if (!defined($r)) {
+    print "ssh $host 'hadoop fs -mkdir -p $hdfsDir' failed";
+    return 0;
+  }
+
+  my $pid = fork();
+  if ($pid == 0) {
+    print "ssh $host 'bzip2 -c -z $fsFile | hadoop fs -put - $hdfsDir/$hdfsFile'";
+    exit(0);
+  }
+
+  return 1;
+}
+
+sub getTimeToken {
+  my $now = time();
+
+  if ($now % 3600 < 3600) {
+    my @v = localtime($now);
+    my $token = sprintf("%04d-%02d-%02dT%02d", $v[5]+1900, $v[4]+1, $v[3], $v[2]);
+
+    @v = localtime($now + 60 - 3600);
+    my $ym      = sprintf("%04d%02d", $v[5]+1900, $v[4]+1);
+    my $ymd     = sprintf("%04d%02d%02d", $v[5]+1900, $v[4]+1, $v[3]);
+    my $ymdh    = sprintf("%04d%02d%02d%02d", $v[5]+1900, $v[4]+1, $v[3], $v[2]);
+    my $ymdhIso = sprintf("%04d-%02d-%02dT%02d", $v[5]+1900, $v[4]+1, $v[3], $v[2]);
+
+    return (1, $token, $ym, $ymd, $ymdh, $ymdhIso);
+  } else {
+    return (0);
+  }
+}
+
+sub eoi2dir {
+  my ($eoi) = @_;
+  my %hash = (
+    68 => "desktop/ie",
+    70 => "desktop/pinyin",
+    72 => "desktop/bizhi",
+    74 => "desktop/haoma",
+    76 => "desktop/mse",
+    78 => "desktop/shouji",
+    80 => "desktop/zhushou",
+    82 => "desktop/speech",
+    test => "test",
+  );
+
+  exists $hash{$eoi} or die "eoi $eoi not exists";
+
+  return "/storage/sogou/". $hash{$eoi};
+}

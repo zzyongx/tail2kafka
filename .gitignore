@@ -1,2 +1,5 @@
 *.log
 deps
+GPATH
+GRTAGS
+GTAGS

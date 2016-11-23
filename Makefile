@@ -4,6 +4,7 @@ INSTALL = install
 LDFLAGS = -lrt -ldl -lpthread -lcurl
 PREDEF  =
 ARLIBS  = ./deps/librdkafka.a ./deps/libluajit-5.1.a
+CFLAGS  = -I/usr/local/include/luajit-2.0
 
 ifeq ($(DEBUG), 1)
 	CFLAGS += -O0 -g

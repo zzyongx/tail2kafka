@@ -1,7 +1,7 @@
 CC      = gcc
 CXX     = g++
 INSTALL = install
-LDFLAGS = -lrt -ldl -lpthread -lcurl
+LDFLAGS = -lrt -ldl -lpthread -lz
 PREDEF  =
 ARLIBS  = ./deps/librdkafka.a ./deps/libluajit-5.1.a
 CFLAGS  = -I/usr/local/include/luajit-2.0
@@ -41,7 +41,7 @@ get-deps:
 	  cd deps && \
     (test -f v0.9.2 || wget https://github.com/edenhill/librdkafka/archive/v0.9.2.tar.gz) && \
 	  rm -rf librdkafka-0.9.2 && tar xzf v0.9.2 && cd librdkafka-0.9.2 && \
-    ./configure && make && make install
+    ./configure --disable-ssl --disable-sasl && make -j2 && make install
 	cp /usr/local/lib/librdkafka.a ./deps
 
 	@echo "compile libluajit" && \

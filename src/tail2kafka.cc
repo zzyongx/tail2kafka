@@ -28,8 +28,6 @@ extern "C" {
 }
 #include <librdkafka/rdkafka.h>
 
-// g++ -o tail2kafka tail2kafka.cc /usr/local/lib/librdkafka.a /usr/lib/libluajit-5.1.a -g -Wall -lz -lpthread -lrt -ldl
-
 static const char   NL = '\n';
 static const int    UNSET_INT = INT_MAX;
 static const size_t MAX_LINE_LEN = 102400;

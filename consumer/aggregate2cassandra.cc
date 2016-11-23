@@ -37,7 +37,7 @@ static const char   SP       = ' ';
 static const size_t MAX_QLEN = 1024;
 static const size_t MAX_CNP  = 1024;
 static const size_t MAX_WAIT = 1024;
-static const char *OFFDIR    = "/tmp/aggregate2cassandra";
+static const char *OFFDIR    = "/var/lib/aggregate2cassandra";
 
 typedef std::list<CassFuture *> CfList;
 typedef std::set<std::string>   StringSet;

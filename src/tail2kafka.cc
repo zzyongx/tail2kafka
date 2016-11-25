@@ -1611,13 +1611,63 @@ void uninitKafka(CnfCtx *ctx)
   }
   if (ctx->rk) rd_kafka_destroy(ctx->rk);
 }
+
+void kafka_produce(rd_kafka_t *rk, rd_kafka_topic_t *rkt, std::string *data)
+{
+  int i = 0;
+  again:
+  int rc = rd_kafka_produce(rkt, RD_KAFKA_PARTITION_UA, 0,
+                            (void *) data->c_str(), data->size(),
+                            0, 0, data);
+  if (rc != 0) {
+    if (errno == ENOBUFS) {
+      fprintf(stderr, "%s kafka produce error(#%d) %s\n", rd_kafka_topic_name(rkt), ++i,
+              strerror(errno));
+      rd_kafka_poll(rk, 10);
+      goto again;
+    } else {
+      fprintf(stderr, "%s kafka produce error %d:%s\n", rd_kafka_topic_name(rkt), errno,
+              strerror(errno));
+      delete data;
+    }
+  }
+}
+
+void kafka_produce(rd_kafka_t *rk, rd_kafka_topic_t *rkt, StringPtrList *datas)
+{
+  std::vector<rd_kafka_message_t> rkmsgs;  
+  rkmsgs.resize(datas->size());
+  
+  size_t i = 0;
+  for (StringPtrList::iterator ite = datas->begin(), end = datas->end();
+       ite != end; ++ite, ++i) {
+    rkmsgs[i].payload  = (void *) (*ite)->c_str();
+    rkmsgs[i].len      = (*ite)->size();
+    rkmsgs[i].key      = 0;
+    rkmsgs[i].key_len  = 0;
+    rkmsgs[i]._private = *ite;
+    // printf("%s kafka produce '%s'\n", rd_kafka_topic_name(rkt), (*ite)->c_str());
+  }
+    
+  rd_kafka_produce_batch(rkt, RD_KAFKA_PARTITION_UA, 0,
+                         &rkmsgs[0], rkmsgs.size());
+
+  for (std::vector<rd_kafka_message_t>::iterator ite = rkmsgs.begin(), end = rkmsgs.end();
+       ite != end; ++ite) {
+    if (ite->err) {
+      fprintf(stderr, "%s kafka produce batch error %s\n", rd_kafka_topic_name(rkt),
+              rd_kafka_message_errstr(&(*ite)));
+      
+      rd_kafka_poll(rk, 10);
+      kafka_produce(rk, rkt, (std::string *) ite->_private);
+    }
+  }
+}
     
 void *routine(void *data)
 {
   CnfCtx *ctx = (CnfCtx *) data;
   OneTaskReq req;
-  
-  std::vector<rd_kafka_message_t> rkmsgs;
   
   while (want == WAIT) {
     ssize_t nn = read(ctx->accept, &req, sizeof(OneTaskReq));
@@ -1638,41 +1688,11 @@ void *routine(void *data)
     rd_kafka_topic_t *rkt = ctx->rkts[req.idx];
 
     if (req.data) {
-      int rc = rd_kafka_produce(rkt, RD_KAFKA_PARTITION_UA, 0,
-                                (void *) req.data->c_str(), req.data->size(),
-                                0, 0, req.data);
-      if (rc != 0) {
-        delete req.data;
-        fprintf(stderr, "%s kafka produce error %s\n", rd_kafka_topic_name(rkt), strerror(errno));
-      }
+      kafka_produce(ctx->rk, rkt, req.data);
     } else {
-      rkmsgs.resize(req.datas->size());
-      size_t i = 0;
-      for (StringPtrList::iterator ite = req.datas->begin(), end = req.datas->end();
-           ite != end; ++ite, ++i) {
-        rkmsgs[i].payload  = (void *) (*ite)->c_str();
-        rkmsgs[i].len      = (*ite)->size();
-        rkmsgs[i].key      = 0;
-        rkmsgs[i].key_len  = 0;
-        rkmsgs[i]._private = *ite;
-        // printf("%s kafka produce '%s'\n", rd_kafka_topic_name(rkt), (*ite)->c_str());
-      }
-    
-      rd_kafka_produce_batch(rkt, RD_KAFKA_PARTITION_UA, 0,
-                             &rkmsgs[0], rkmsgs.size());
-
-      for (std::vector<rd_kafka_message_t>::iterator ite = rkmsgs.begin(), end = rkmsgs.end();
-           ite != end; ++ite) {
-        if (ite->err) {
-          std::string *ptr = (std::string *) ite->_private;
-          delete ptr;
-
-          fprintf(stderr, "%s kafka produce batch error %s\n", rd_kafka_topic_name(rkt),
-                  rd_kafka_message_errstr(&(*ite)));
-        }
-      }
+      kafka_produce(ctx->rk, rkt, req.datas);
     }
-    // just in case
+
     delete req.datas;
     rd_kafka_poll(ctx->rk, 0);
   }

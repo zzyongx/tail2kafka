@@ -604,7 +604,7 @@ void unloadCnfCtx(CnfCtx *ctx)
       lctx = next;
     }
   }
-  lua_close(ctx->L);
+  if (ctx->L) lua_close(ctx->L);
   close(ctx->wfd);
   
   uninitKafka(ctx);
@@ -1206,16 +1206,24 @@ bool lineAlign(LuaCtx *ctx)
  */
 static const uint32_t WATCH_EVENT = IN_MODIFY | IN_MOVE_SELF;
 
+void closeParentFd(CnfCtx *ctx)
+{
+  for (LuaCtxPtrList::iterator ite = ctx->luaCtxs.begin(); ite != ctx->luaCtxs.end(); ++ite) {
+    LuaCtx *lctx = *ite;
+    if (lctx->fd != -1) close(lctx->fd);
+  }
+}
+
 bool addWatch(CnfCtx *ctx, char *errbuf)
 {
   for (LuaCtxPtrList::iterator ite = ctx->luaCtxs.begin(); ite != ctx->luaCtxs.end(); ++ite) {
     LuaCtx *lctx = *ite;
 
     if (lctx->fd != -1) close(lctx->fd);
-    for (int i = 0; i < 12; i++) {
+    for (int i = 0; i < 15; i++) {
       lctx->fd = open(lctx->file.c_str(), O_RDONLY);
       // try best to watch the file
-      if (lctx->fd == -1) sleep(5);
+      if (lctx->fd == -1) sleep(1);
       else break;
     }
     if (lctx->fd == -1) {
@@ -1784,6 +1792,8 @@ pid_t spawn(CnfCtx *ctx, CnfCtx *octx, char *errbuf)
     unloadCnfCtx(ctx);
     exit(EXIT_SUCCESS);
   }
+
+  closeParentFd(ctx);
   return pid;
 }
 

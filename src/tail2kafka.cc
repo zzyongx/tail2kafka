@@ -28,13 +28,12 @@ extern "C" {
 }
 #include <librdkafka/rdkafka.h>
 
-static const char   NL = '\n';
-static const int    UNSET_INT = INT_MAX;
-static const size_t MAX_LINE_LEN = 102400;
-static const size_t MAX_FILES    = 64;
-static const size_t ONE_EVENT_SIZE =
-  sizeof(struct inotify_event) + NAME_MAX;
-static const size_t MAX_ERR_LEN = 512;
+static const char   NL             = '\n';
+static const int    UNSET_INT      = INT_MAX;
+static const size_t MAX_LINE_LEN   = 204800;
+static const size_t MAX_FILES      = 64;
+static const size_t ONE_EVENT_SIZE = sizeof(struct inotify_event) + NAME_MAX;
+static const size_t MAX_ERR_LEN    = 512;
 
 struct LuaCtx;
 
@@ -1109,7 +1108,7 @@ void processLines(LuaCtx *ctx)
 
   if (n == 0) {
     if (ctx->npos == MAX_LINE_LEN) {
-      fprintf(stderr, "%s line length exceed, truncate", ctx->file.c_str());
+      fprintf(stderr, "%s line length exceed, truncate\n", ctx->file.c_str());
       ctx->npos = 0;
     }
   } else if (ctx->npos > n) {
@@ -1509,7 +1508,7 @@ bool processLine(LuaCtx *ctx, char *line, size_t nline)
   if (req.data || (req.datas && !req.datas->empty())) {
     ssize_t nn = write(ctx->main->server, &req, sizeof(OneTaskReq));
     assert(nn != -1 && nn == sizeof(OneTaskReq));
-  } else if (req.datas) {
+  } else if (req.datas) {  // if req.datas->empty()
     delete req.datas;
   }
 
@@ -1643,9 +1642,9 @@ void *routine(void *data)
                                 (void *) req.data->c_str(), req.data->size(),
                                 0, 0, req.data);
       if (rc != 0) {
+        delete req.data;
         fprintf(stderr, "%s kafka produce error %s\n", rd_kafka_topic_name(rkt), strerror(errno));
       }
-      delete req.datas;
     } else {
       rkmsgs.resize(req.datas->size());
       size_t i = 0;
@@ -1665,13 +1664,16 @@ void *routine(void *data)
       for (std::vector<rd_kafka_message_t>::iterator ite = rkmsgs.begin(), end = rkmsgs.end();
            ite != end; ++ite) {
         if (ite->err) {
-          fprintf(stderr, "%s kafka produce error %s\n", rd_kafka_topic_name(rkt),
+          std::string *ptr = (std::string *) ite->_private;
+          delete ptr;
+
+          fprintf(stderr, "%s kafka produce batch error %s\n", rd_kafka_topic_name(rkt),
                   rd_kafka_message_errstr(&(*ite)));
         }
       }
-      delete req.datas;
     }
-    
+    // just in case
+    delete req.datas;
     rd_kafka_poll(ctx->rk, 0);
   }
   

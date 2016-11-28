@@ -1,0 +1,13 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+my $L = 1024;
+my $S = 'f' x $L;
+my $N = 500 * 10000;
+
+for my $i (1 .. $N) {
+  my $l = int(rand($L));
+  print $i, " ", substr($S, 0, $l), "\n";
+}

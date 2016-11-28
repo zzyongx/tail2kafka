@@ -8,6 +8,7 @@
 #include <map>
 #include <algorithm>
 #include <errno.h>
+#include <time.h>
 #include <sys/types.h>
 #include <dirent.h>
 #include <sys/stat.h>
@@ -99,6 +100,9 @@ typedef bool (*filter_pt)(
   std::string *result);
 bool filter(LuaCtx *ctx, const StringList &fields, std::string *result);
 
+#define FILE_MOVED     0x01
+#define FILE_TRUNCATED 0x02
+
 struct LuaCtx {
   int           idx;
   
@@ -111,6 +115,9 @@ struct LuaCtx {
   std::string   file;
   off_t         size;
   std::string   topic;
+
+  int           lines;
+  time_t        start;
 
   bool          autosplit;
   bool          withhost;
@@ -141,7 +148,7 @@ struct LuaCtx {
   size_t        npos;
 
   uint64_t      sn;
-  bool          moved;
+  int           stat;
 
   LuaCtx       *next;
 
@@ -947,6 +954,8 @@ void flushCache(CnfCtx *ctx, bool timeout)
 
           OneTaskReq req = {lctx->idx, 0, new StringPtrList};
           serializeCache(lctx, req.datas);
+
+          lctx->lines += req.datas->size();
           ssize_t nn = write(ctx->server, &req, sizeof(OneTaskReq));
           assert(nn != -1 && nn == sizeof(OneTaskReq));
           lctx->cache.clear();
@@ -1154,6 +1163,11 @@ bool tail2kafka(LuaCtx *ctx, uint64_t sn)
     fprintf(stderr, "%s seek cur error\n", ctx->file.c_str());
     return false;
   }
+
+  if (off > ctx->size) {
+    ctx->stat |= FILE_TRUNCATED;
+    return true;
+  }
   
   while (off < ctx->size) {
     size_t min = std::min(ctx->size - off, (off_t) (MAX_LINE_LEN - ctx->npos));
@@ -1162,6 +1176,9 @@ bool tail2kafka(LuaCtx *ctx, uint64_t sn)
     if (nn == -1) {
       fprintf(stderr, "%s read error\n", ctx->file.c_str());
       return false;
+    } else if (nn == 0) { // file was truncated
+      ctx->stat |= FILE_TRUNCATED;
+      break;
     }
     off += nn;
 
@@ -1235,7 +1252,9 @@ bool addWatch(CnfCtx *ctx, char *errbuf)
     fstat(lctx->fd, &st);
     lctx->size = st.st_size;
     lctx->inode = st.st_ino;
-    lctx->moved = false;
+    lctx->stat = 0;
+    lctx->lines = 0;
+    lctx->start = time(0);
 
     if (!lineAlign(lctx)) {
       snprintf(errbuf, MAX_ERR_LEN, "%s align new line error", lctx->file.c_str());
@@ -1263,20 +1282,16 @@ void tryReWatch(CnfCtx *ctx)
       struct stat st;
       fstat(lctx->fd, &st);
 
-      // if file was unlinked, moved or truncated
-      if (st.st_ino != lctx->inode || st.st_size < lctx->size) {
-        printf("rewatch %s\n", lctx->file.c_str());
+      printf("rewatch %s\n", lctx->file.c_str());
         
-        int wd = inotify_add_watch(ctx->wfd, lctx->file.c_str(), WATCH_EVENT);
-        ctx->wch.insert(std::make_pair(wd, lctx));
-        lctx->inode = st.st_ino;
-        lctx->moved = false;
+      int wd = inotify_add_watch(ctx->wfd, lctx->file.c_str(), WATCH_EVENT);
+      ctx->wch.insert(std::make_pair(wd, lctx));
+      lctx->inode = st.st_ino;
+      lctx->stat = 0;
+      lctx->lines = 0;
+      lctx->start = time(0);
 
-        tail2kafka(lctx, ctx->sn);
-      } else {
-        close(lctx->fd);
-        lctx->fd = -1;
-      }
+      tail2kafka(lctx, ctx->sn);
     }
   }
 }
@@ -1285,7 +1300,7 @@ void tryReWatch(CnfCtx *ctx)
 inline void tryRmWatch(LuaCtx *ctx, int wd)
 {
   printf("tag remove %d %s\n", wd, ctx->file.c_str());
-  ctx->moved = true;
+  ctx->stat |= FILE_MOVED;
 }
 
 /* unlink or truncate */
@@ -1296,9 +1311,13 @@ void tryRmWatch(CnfCtx *ctx)
     
     struct stat st;
     fstat(lctx->fd, &st);
-    if (lctx->moved || st.st_nlink == 0 || st.st_size < lctx->size) {
-      printf("remove %s\n", lctx->file.c_str());
-      
+
+    // if file was unlinked, moved or truncated
+    if ((lctx->stat & FILE_MOVED) || (lctx->stat & FILE_TRUNCATED) ||
+        st.st_ino != lctx->inode || st.st_nlink == 0 || st.st_size < lctx->size) {
+      printf("remove %s, %d lines sended in %d seconds\n", lctx->file.c_str(), lctx->lines,
+             (int) (time(0) - lctx->start));
+
       inotify_rm_watch(lctx->main->wfd, ite->first);
       lctx->main->wch.erase(ite++);
       close(lctx->fd);
@@ -1371,7 +1390,7 @@ bool watchLoop(CnfCtx *ctx)
         if (event->mask & IN_MOVE_SELF) {
           LuaCtx *lctx = wd2ctx(ctx, event->wd);
           if (lctx) tryRmWatch(lctx, event->wd);
-        }        
+        }
         p += sizeof(struct inotify_event) + event->len;
       }
 
@@ -1514,6 +1533,9 @@ bool processLine(LuaCtx *ctx, char *line, size_t nline)
   }
   
   if (req.data || (req.datas && !req.datas->empty())) {
+    if (req.data) ++ctx->lines;
+    else ctx->lines += req.datas->size();
+
     ssize_t nn = write(ctx->main->server, &req, sizeof(OneTaskReq));
     assert(nn != -1 && nn == sizeof(OneTaskReq));
   } else if (req.datas) {  // if req.datas->empty()

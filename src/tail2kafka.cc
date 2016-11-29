@@ -1659,7 +1659,7 @@ void kafka_produce(rd_kafka_t *rk, rd_kafka_topic_t *rkt, std::string *data)
     if (errno == ENOBUFS) {
       fprintf(stderr, "%s kafka produce error(#%d) %s\n", rd_kafka_topic_name(rkt), ++i,
               strerror(errno));
-      rd_kafka_poll(rk, 10);
+      rd_kafka_poll(rk, i < 10 ? 10 * i : 100);
       goto again;
     } else {
       fprintf(stderr, "%s kafka produce error %d:%s\n", rd_kafka_topic_name(rkt), errno,

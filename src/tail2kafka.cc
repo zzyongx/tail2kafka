@@ -29,6 +29,11 @@ extern "C" {
 }
 #include <librdkafka/rdkafka.h>
 
+#define safe_close(fd) do { \
+  close((fd));              \
+  (fd) = -1;                \
+} while (0)
+
 static const char   NL             = '\n';
 static const int    UNSET_INT      = INT_MAX;
 static const size_t MAX_LINE_LEN   = 204800;
@@ -283,6 +288,7 @@ int main(int argc, char *argv[])
       } else {
         fprintf(stderr, "load cnf error %s\n", errbuf);
       }
+      want = WAIT;
     }
     sigsuspend(&set);
   }
@@ -491,7 +497,7 @@ static LuaCtx *loadLuaCtx(CnfCtx *cnfCtx, const char *file, char *errbuf)
         snprintf(errbuf, MAX_ERR_LEN, "%s file %s autocreat failed", file, ctx->file.c_str());
         goto error;
       }
-      close(fd);
+      safe_close(fd);
     } else {
       snprintf(errbuf, MAX_ERR_LEN, "%s file %s stat failed", file, ctx->file.c_str());
       goto error;
@@ -612,7 +618,7 @@ void unloadCnfCtx(CnfCtx *ctx)
     }
   }
   if (ctx->L) lua_close(ctx->L);
-  close(ctx->wfd);
+  if (ctx->wfd != -1) close(ctx->wfd);
   
   uninitKafka(ctx);
   if (ctx->accept != -1) close(ctx->accept);
@@ -1227,7 +1233,7 @@ void closeParentFd(CnfCtx *ctx)
 {
   for (LuaCtxPtrList::iterator ite = ctx->luaCtxs.begin(); ite != ctx->luaCtxs.end(); ++ite) {
     LuaCtx *lctx = *ite;
-    if (lctx->fd != -1) close(lctx->fd);
+    if (lctx->fd != -1) safe_close(lctx->fd);
   }
 }
 
@@ -1263,7 +1269,8 @@ bool addWatch(CnfCtx *ctx, char *errbuf)
 
     int wd = inotify_add_watch(ctx->wfd, lctx->file.c_str(), WATCH_EVENT);
     if (wd == -1) {
-      snprintf(errbuf, MAX_ERR_LEN, "%s add watch error", lctx->file.c_str());
+      snprintf(errbuf, MAX_ERR_LEN, "%s add watch error %d:%s", lctx->file.c_str(),
+               errno, strerror(errno));
       return false;
     }
     ctx->wch.insert(std::make_pair(wd, lctx));
@@ -1320,8 +1327,7 @@ void tryRmWatch(CnfCtx *ctx)
 
       inotify_rm_watch(lctx->main->wfd, ite->first);
       lctx->main->wch.erase(ite++);
-      close(lctx->fd);
-      lctx->fd = -1;
+      safe_close(lctx->fd);
     } else {
       ++ite;
     }
@@ -1698,7 +1704,7 @@ void *routine(void *data)
 {
   CnfCtx *ctx = (CnfCtx *) data;
   OneTaskReq req;
-  
+
   while (want == WAIT) {
     ssize_t nn = read(ctx->accept, &req, sizeof(OneTaskReq));
     if (nn == -1) {

@@ -168,7 +168,7 @@ LuaCtx::LuaCtx()
   autoparti = false;
   partition = RD_KAFKA_PARTITION_UA;
   timeidx   = UNSET_INT;
-  rawcopy   = true;
+  rawcopy   = false;
 
   buffer = new char[MAX_LINE_LEN];
   npos = 0;
@@ -1926,8 +1926,8 @@ void TEST(loadCnf)()
 
   check(ctx->host == "zzyong", "%s", ctx->host.c_str());
   check(ctx->brokers == "127.0.0.1:9092", "%s", ctx->brokers.c_str());
-  check(ctx->partition == 1, "%d", ctx->partition);
-  check(ctx->pollLimit == 300, "%d", ctx->pollLimit);
+  check(ctx->partition == 0, "%d", ctx->partition);
+  check(ctx->pollLimit == 50, "%d", ctx->pollLimit);
   check(ctx->kafkaGlobal["client.id"] == "tail2kafka",
         "%s", ctx->kafkaGlobal["client.id"].c_str());
   check(ctx->kafkaTopic["request.required.acks"] == "1",
@@ -2105,6 +2105,8 @@ void TEST(watchInit)()
     }
   }
   check(lctx != 0, "%s", "topic basic not found");
+
+	lctx->rawcopy = true;
 
   pthread_t tid;
   pthread_create(&tid, NULL, TEST(watchLoop), ctx);

@@ -11,16 +11,19 @@
 #include <librdkafka/rdkafka.h>
 
 typedef std::vector<std::string> StringList;
-static const char *hostname = "zzyong.paas.user.vm";
+static const char *hostname = "zzyong";
+
+#define LOG(f) "logs/"f
 
 void start_producer();
 void start_consumer();
 
-int main(int argc, char *argv[])
+int main()
 {
   start_producer();
   sleep(1);
   start_consumer();
+	printf("OK\n");
   return EXIT_SUCCESS;
 }
 
@@ -57,7 +60,7 @@ BasicProducer basicPro;
 
 void *basic_routine(void *)
 {
-  FILE *fp = fopen("./basic.log", "a");
+  FILE *fp = fopen(LOG("basic.log"), "a");
   assert(fp);
 
   for (int i = 0; i < 100; ++i) {
@@ -65,7 +68,7 @@ void *basic_routine(void *)
   }
   fflush(fp);
   sleep_ms(100000);
-  
+
   for (int i = 0; i < 100; ++i) {
     fprintf(fp, "%s", basicPro());
     sleep_ms(1000);
@@ -99,16 +102,16 @@ FilterProducer filterPro;
 
 void *filter_routine(void *)
 {
-  FILE *fp = fopen("./filter.log", "a");
+  FILE *fp = fopen(LOG("filter.log"), "a");
   assert(fp);
-  
+
   for (int i = 0; i < 100; ++i) {
     fprintf(fp, "%s\n", filterPro());
   }
-  
+
   fflush(fp);
   sleep_ms(1000);
-  
+
   for (int i = 0; i < 100; ++i) {
     fprintf(fp, "%s\n", filterPro());
   }
@@ -141,16 +144,16 @@ GrepProducer grepPro;
 
 void *grep_routine(void *)
 {
-  FILE *fp = fopen("./grep.log", "a");
+  FILE *fp = fopen(LOG("grep.log"), "a");
   assert(fp);
-  
+
   for (int i = 0; i < 100; ++i) {
     fprintf(fp, "%s\n", grepPro());
   }
-  
+
   fflush(fp);
   sleep_ms(1000);
-  
+
   for (int i = 0; i < 100; ++i) {
     fprintf(fp, "%s\n", grepPro());
   }
@@ -177,7 +180,7 @@ public:
         i++;
         if (i % 5 == 0) pkey = true;
       }
-      
+
     } else {
       snprintf(buffer, 256,
                "aggregate - - [02/Apr/2015:12:05:%02d +0800] - - - - \"200\" 230 0.1 - - - - %d\n",
@@ -195,7 +198,7 @@ AggregateProducer aggregatePro;
 
 void *aggregate_routine(void *)
 {
-  FILE *fp = fopen("./aggregate.log", "a");
+  FILE *fp = fopen(LOG("aggregate.log"), "a");
   assert(fp);
 
   for (int i = 0; i < 100; ++i) {
@@ -228,7 +231,7 @@ TransformProducer transformPro;
 
 void *transform_routine(void *)
 {
-  FILE *fp = fopen("./transform.log", "a");
+  FILE *fp = fopen(LOG("transform.log"), "a");
   assert(fp);
 
   for (int i = 0; i < 99; ++i) {
@@ -239,7 +242,7 @@ void *transform_routine(void *)
   transformPro.reset();
   return NULL;
 }
-    
+
 
 void start_producer()
 {
@@ -270,15 +273,18 @@ void *consumer_routine(void *data)
 {
   ConsumerCtx *ctx = (ConsumerCtx *) data;
   char errstr[512];
-  
-  rd_kafka_t *rk = rd_kafka_new(RD_KAFKA_CONSUMER, 0, errstr, sizeof(errstr));
+
+  rd_kafka_conf_t *conf = rd_kafka_conf_new();
+  rd_kafka_conf_set(conf, "broker.version.fallback", "0.8.2.1", 0, 0);
+
+  rd_kafka_t *rk = rd_kafka_new(RD_KAFKA_CONSUMER, conf, errstr, sizeof(errstr));
   if (!rd_kafka_brokers_add(rk, BROKERS)) {
     fprintf(stderr, "invalid brokers %s\n", BROKERS);
     return THREAD_FAILURE;
   }
-   
+
   rd_kafka_topic_t *rkt = rd_kafka_topic_new(rk, ctx->topic, 0);
-  
+
   if (rd_kafka_consume_start(rkt, 0,
                              RD_KAFKA_OFFSET_BEGINNING) == -1) {
     fprintf(stderr, "%s failed to start consuming: %s\n", ctx->topic,
@@ -348,7 +354,7 @@ void transform_consumer(rd_kafka_message_t *rkm)
   check(memcmp(rkm->payload, ptr, rkm->len) == 0,
         "%.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
 }
-  
+
 void start_consumer()
 {
   ConsumerCtx ctxs[] = {
@@ -372,4 +378,3 @@ void start_consumer()
     check(rc == THREAD_SUCCESS, "%s %s", ctxs[i].topic, rc == THREAD_SUCCESS ? "OK" : "ERROR");
   }
 }
-  

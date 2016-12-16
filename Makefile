@@ -27,14 +27,17 @@ endif
 
 VPATH = .:./libs
 
-default: configure tail2kafka
+default: configure tail2kafka kafka2file
 	@echo finished
 
 tail2kafka: build/tail2kafka.o
 	$(CXX) $(CFLAGS) -o $@ $^ $(ARLIBS) $(LDFLAGS)
 
-unittest:
-	make clean && mkdir -p logs && make UNITTEST=1 && ./tail2kafka && rm -rf logs && make clean
+kafka2file: build/kafka2file.o
+	$(CXX) $(CFLAGS) -o $@ $^ $(ARLIBS) $(LDFLAGS)
+
+speedlimit: build/mix/speedlimit.o
+	$(CXX) $(CFLAGS) -o $@ $^
 
 .PHONY: get-deps
 get-deps:
@@ -57,19 +60,35 @@ get-deps:
 .PHONY: configure
 configure:
 	@mkdir -p build
+	@mkdir -p build/mix
 	@ls -l $(ARLIBS) >/dev/null || (echo "make get-deps first" && exit 2)
 
 build/%.o: src/%.cc
+	$(CXX) -o $@ $(WARN) $(CXXWARN) $(CFLAGS) $(PREDEF) -c $<
+
+build/mix/%.o: mix/%.cc
 	$(CXX) -o $@ $(WARN) $(CXXWARN) $(CFLAGS) $(PREDEF) -c $<
 
 .PHONY: debug
 debug:
 	make DEBUG=1
 
+tail2kafka_blackbox: build/tail2kafka_blackbox.o
+	$(CXX) $(CFLAGS) -o $@ $^ $(ARLIBS) $(LDFLAGS)
+
 .PHONY: test
 test:
-	@echo "if first run test, run make clean"
-	make debug
+	mkdir -p logs
+
+	@echo "unit test"
+	make clean &&	make UNITTEST=1
+	./tail2kafka
+
+	@echo "blackbox test"
+	make clean && make &&	make tail2kafka_blackbox
+	./blackboxtest/blackbox_test.sh
+
+	rm -rf logs
 
 .PHONY: install
 install:

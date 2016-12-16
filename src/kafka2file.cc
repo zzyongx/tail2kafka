@@ -13,8 +13,6 @@
 
 #include <librdkafka/rdkafka.h>
 
-// g++ -o kafka2file kafka2file.cc /usr/local/lib/librdkafka.a -O2 -Wall -g -lpthread -lrt -lz -ldl
-
 #define MAX_PARTITION 32
 #define OFFDIR "/var/lib/kafka2file"
 
@@ -58,7 +56,7 @@ int main(int argc, char *argv[])
 
   if (!initSingleton(datadir, topic, ctx.iid)) return EXIT_FAILURE;
   atexit(deleteLockFile);
-  
+
   bool rc = consumeLoop(&ctx, datadir, topic);
   uninitKafka(&ctx);
 
@@ -69,6 +67,7 @@ int getKafkaOffset(const char *topic, int partition, uint64_t *offset)
 {
   char path[512];
   snprintf(path, 512, "%s/%s.%d", OFFDIR, topic, partition);
+  mkdir(OFFDIR, 0755);
 
   int fd = -1;
   struct stat st;
@@ -110,7 +109,10 @@ bool initKafka(
   memset(ctx->idxMap, 0x00, sizeof(ctx->idxMap));
   ctx->out = -1;
 
-  ctx->rk = rd_kafka_new(RD_KAFKA_CONSUMER, 0, errstr, sizeof(errstr));
+  rd_kafka_conf_t *conf = rd_kafka_conf_new();
+  rd_kafka_conf_set(conf, "broker.version.fallback", "0.8.2.1", 0, 0);
+
+  ctx->rk = rd_kafka_new(RD_KAFKA_CONSUMER, conf, errstr, sizeof(errstr));
   if (rd_kafka_brokers_add(ctx->rk, brokers) == 0) {
     fprintf(stderr, "invalid brokers %s\n", brokers);
     return false;
@@ -118,7 +120,7 @@ bool initKafka(
   ctx->rkt  = rd_kafka_topic_new(ctx->rk, topic, 0);
   ctx->rkqu = rd_kafka_queue_new(ctx->rk);
   ctx->iid  = MAX_PARTITION;
-  
+
   int n = 0;
   for (const char *p = partition; /* */; ++p) {
     if (!*p || *p == ',') {
@@ -126,13 +128,13 @@ bool initKafka(
         fprintf(stderr, "partition %d >= %d\n", n, MAX_PARTITION);
         return false;
       }
-      
+
       offsetfd = getKafkaOffset(topic, n, &offset);
       if (offsetfd == -1) return false;
       ctx->idxMap[n] = offsetfd;
 
       if (n < ctx->iid) ctx->iid = n;
-      
+
       if (rd_kafka_consume_start_queue(ctx->rkt, n, offset, ctx->rkqu) == -1) {
         fprintf(stderr, "%s:%d failed to start consuming: %s\n", topic, n,
                 rd_kafka_err2str(rd_kafka_errno2err(errno)));
@@ -154,7 +156,7 @@ bool outRotate(KafkaCtx *ctx, const char *datadir, const char *topic)
     ctx->out = STDOUT_FILENO;
     return true;
   }
-  
+
   time_t now = time(0);
   if (ctx->out != -1 && now % 3600 != 0) return true;
 
@@ -180,7 +182,7 @@ bool consumeLoop(KafkaCtx *ctx, const char *datadir, const char *topic)
 {
   while (true) {
     if (!outRotate(ctx, datadir, topic)) return false;
-    
+
     rd_kafka_message_t *rkm;
     rkm = rd_kafka_consume_queue(ctx->rkqu, 1000);
     if (!rkm) continue;  // timeout
@@ -211,9 +213,9 @@ void deleteLockFile()
 bool initSingleton(const char *datadir, const char *topic, int uuid)
 {
   if (datadir[0] == '-') return true;
-  
+
   snprintf(LOCK_FILE, 256, "%s/%s.%d.lock", datadir, topic, uuid);
-  
+
   int fd = open(LOCK_FILE, O_CREAT | O_WRONLY, 0644);
   if (lockf(fd, F_TLOCK, 0) == 0) {
     ftruncate(fd, 0);

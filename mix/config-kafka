@@ -1,0 +1,90 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+my %opts = getopt();
+
+open(IN, "<". $opts{'template'});
+my @lines = <IN>;
+close(IN);
+
+foreach my $line (@lines) {
+  $line =~ s/_BROKER_ID_/${opts{'broker-id'}}/;
+  $line =~ s/_HOST_NAME_/${opts{'host-name'}}/;
+  $line =~ s/_LOG_DIRS_/${opts{'log-dirs'}}/;
+  $line =~ s/_LOG_RETENTION_HOURS_/${opts{'log-retention-hours'}}/;
+  $line =~ s/_NUM_PARTITIONS_/${opts{'num-partitions'}}/;
+  $line =~ s/_DEFAULT_REPLICATION_FACTOR_/${opts{'default-replication-factor'}}/;
+  $line =~ s/_ZOOKEEPER_CONNECT_/${opts{'zookeeper-connect'}}/;
+  print $line;
+}
+
+sub help {
+  print "config-kafka \n";
+  print " --broker-id=id default last ip segment\n";
+  print " --host-name=eth1\n";
+  print " --log-dirs=dirs\n";
+  print " --log-retention-hours=48\n";
+  print " --num-partitions=1\n";
+  print " --default-replication-factor=1\n";
+  print " --zookeeper-connect=zk\n";
+  print " --template=file template config file\n";
+  exit(0);
+}
+
+sub getopt {
+  my %opt = (
+    'broker-id'                  => undef,
+    'host-name'                  => 'eth1',
+    'log-dirs'                   => undef,
+    'log-retention-hours'        => 48,
+    'num-partitions'             => 1,
+    'default-replication-factor' => 1,
+    'zookeeper-connect'          => undef,
+    'template'                   => undef,
+  );
+  foreach my $arg (@ARGV) {
+    if ($arg =~ /--([^=]+)=(.+)/) {
+      unless (exists $opt{$1}) {
+        print "unknow option $1\n";
+        help();
+      }
+      $opt{$1} = $2;
+    }
+  }
+
+  if ($opt{'host-name'} =~ /^eth/) {
+    my $cmd = "/sbin/ip addr show ". $opt{'host-name'};
+    my $out = `$cmd`;
+    unless ($out =~ /inet (\d+\.\d+\.\d+\.(\d+))/g) {
+      print "unknow host inter ". $opt{'host-name'}, "\n";
+      help();
+    }
+    $opt{'host-name'} = $1;
+    unless (defined $opt{'broker-id'}) {
+      $opt{'broker-id'} = $2;
+    }
+  }
+  unless (defined $opt{'broker-id'}) {
+    print "broker-id required\n";
+    help();
+  }
+  unless (defined $opt{'log-dirs'}) {
+    print "log-dirs required\n";
+    help();
+  }
+  unless (defined $opt{'zookeeper-connect'}) {
+    print "zookeeper-connect required\n";
+    help();
+  }
+  unless (defined $opt{'template'}) {
+    print "template required\n";
+    help();
+  }
+  unless (-f $opt{'template'}) {
+    print "template must be a file\n";
+    help();
+  }
+  return %opt;
+}

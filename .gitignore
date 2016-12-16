@@ -1,5 +1,9 @@
-*.log
-deps
 GPATH
 GRTAGS
 GTAGS
+deps
+build
+tail2kafka
+kafka2file
+speedlimit
+tail2kafka_blackbox

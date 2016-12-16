@@ -1,4 +1,4 @@
-file       = "./filter.log"
+file       = "logs/filter.log"
 topic      = "filter"
 timeidx    = 4
 filter     = {4, 5, 6, -1}

@@ -1,4 +1,4 @@
-file      = "./aggregate.log"
+file      = "logs/aggregate.log"
 topic     = "aggregate"
 autosplit = true
 timeidx   = 4
@@ -13,11 +13,11 @@ aggregate = function(fields)
 
   local reqt  = tonumber(fields[11]);
   if not reqt then return nil end
-  
+
   local status = "status_" .. fields[9]
   local size   = fields[10]
   local appid  = fields[n];
-  
+
   if reqt <= 0.1 then reqt = "reqt<0.1"
   elseif reqt <= 0.3 then reqt = "reqt<0.3"
   elseif reqt <= 0.5 then reqt = "reqt<0.5"

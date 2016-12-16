@@ -1,4 +1,4 @@
-file  = "./basic.log"
+file  = "logs/basic.log"
 topic = "basic"
 autocreat = true
 autoparti = true

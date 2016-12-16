@@ -17,8 +17,8 @@ else
             -Wparentheses -Wswitch -Wuninitialized -Wunused
 endif
 
-ifeq ($(UNIT_TEST), 1)
-	PREDEF += -DUNIT_TEST -DNO_LOGER
+ifeq ($(UNITTEST), 1)
+	PREDEF += -DUNITTEST -DNO_LOGER
 endif
 
 ifndef ($(INSTALLDIR))
@@ -32,6 +32,9 @@ default: configure tail2kafka
 
 tail2kafka: build/tail2kafka.o
 	$(CXX) $(CFLAGS) -o $@ $^ $(ARLIBS) $(LDFLAGS)
+
+unittest:
+	make clean && mkdir -p logs && make UNITTEST=1 && ./tail2kafka && rm -rf logs && make clean
 
 .PHONY: get-deps
 get-deps:

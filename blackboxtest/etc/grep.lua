@@ -1,4 +1,4 @@
-file     = "./grep.log"
+file     = "logs/grep.log"
 topic    = "grep"
 autocreat = true
 grep     = function(fields)

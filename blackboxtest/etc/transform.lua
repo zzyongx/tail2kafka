@@ -1,4 +1,4 @@
-file     = "transform.log"
+file     = "logs/transform.log"
 topic    = "transform"
 autocreat = true
 transform = function(line)

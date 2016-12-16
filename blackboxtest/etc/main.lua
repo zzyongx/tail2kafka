@@ -1,4 +1,5 @@
-hostshell = "echo -n $(sogou-host | grep -v rsync)"
+-- remove the trailing newline
+hostshell = "echo -n $(hostname)"
 pidfile   = "/var/run/tail2kafka.pid"
 partition = 1
 polllimit = 300

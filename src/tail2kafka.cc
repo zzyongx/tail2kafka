@@ -37,7 +37,6 @@ extern "C" {
 static const char   NL             = '\n';
 static const int    UNSET_INT      = INT_MAX;
 static const size_t MAX_LINE_LEN   = 204800;
-static const size_t MAX_FILES      = 64;
 static const size_t ONE_EVENT_SIZE = sizeof(struct inotify_event) + NAME_MAX;
 static const size_t MAX_ERR_LEN    = 512;
 
@@ -55,7 +54,7 @@ typedef std::vector<rd_kafka_topic_t *>    TopicList;
 
 struct CnfCtx {
   lua_State    *L;
-  
+
   std::string host;
   std::string pidfile;
   std::string brokers;
@@ -74,8 +73,9 @@ struct CnfCtx {
   int                    accept;
   int                    server;
   uint64_t               sn;
-  
+
   CnfCtx() {
+    L      = 0;
     rk     = 0;
     accept = -1;
     server = -1;
@@ -86,34 +86,30 @@ struct CnfCtx {
 };
 
 typedef bool (*transform_pt)(
-  LuaCtx *ctx, const char *line, size_t nline,
-  std::string *result);
-bool transform(LuaCtx *ctx, const char *line, size_t nline, std::string *result);
+  LuaCtx *ctx, const char *line, size_t nline, std::string **ptr);
+bool transform(LuaCtx *ctx, const char *line, size_t nline, std::string **ptr);
 
 typedef bool(*grep_pt)(
-  LuaCtx *ctx, const StringList &fields,
-  std::string *result);
-bool grep(LuaCtx *ctx, const StringList &fields, std::string *result);
+  LuaCtx *ctx, const StringList &fields, std::string **ptr);
+bool grep(LuaCtx *ctx, const StringList &fields, std::string **ptr);
 
 typedef bool (*aggregate_pt)(
-  LuaCtx *ctx, const StringList &fields,
-  StringPtrList *results);
-bool aggregate(LuaCtx *ctx, const StringList &fields, StringPtrList *results);
+  LuaCtx *ctx, const StringList &fields, StringPtrList **ptr);
+bool aggregate(LuaCtx *ctx, const StringList &fields, StringPtrList **ptr);
 
 typedef bool (*filter_pt)(
-  LuaCtx *ctx, const StringList &fields,
-  std::string *result);
-bool filter(LuaCtx *ctx, const StringList &fields, std::string *result);
+  LuaCtx *ctx, const StringList &fields, std::string **ptr);
+bool filter(LuaCtx *ctx, const StringList &fields, std::string **ptr);
 
 #define FILE_MOVED     0x01
 #define FILE_TRUNCATED 0x02
 
 struct LuaCtx {
   int           idx;
-  
+
   CnfCtx       *main;
   lua_State    *L;
-  
+
   int           fd;
   ino_t         inode;
   bool          autocreat;
@@ -128,15 +124,15 @@ struct LuaCtx {
   bool          withhost;
   bool          withtime;
   int           timeidx;
-  
+
   uint32_t      addr;
-  bool          autoparti;  
+  bool          autoparti;
   int           partition;
   bool          rawcopy;
 
   transform_pt  transform;
   std::string   transformFun;
-  
+
   grep_pt       grep;
   std::string   grepFun;
 
@@ -173,7 +169,7 @@ LuaCtx::LuaCtx()
   partition = RD_KAFKA_PARTITION_UA;
   timeidx   = UNSET_INT;
   rawcopy   = true;
-  
+
   buffer = new char[MAX_LINE_LEN];
   npos = 0;
 
@@ -251,7 +247,7 @@ int main(int argc, char *argv[])
     fprintf(stderr, "sigprocmask failed, %s\n", strerror(errno));
     return EXIT_FAILURE;
   }
-  
+
   sigemptyset(&set);
 
   int rc = EXIT_SUCCESS;
@@ -265,7 +261,7 @@ int main(int argc, char *argv[])
         want = WAIT;
       }
     }
-    
+
     if (want == START1 || want == START2) {
       pid = spawn(ctx, 0, errbuf);
       if (pid == -1) {
@@ -294,7 +290,7 @@ int main(int argc, char *argv[])
   }
 
   if (pid != -1) kill(pid, SIGTERM);
-  
+
   unloadCnfCtx(ctx);
   return rc;
 }
@@ -313,19 +309,19 @@ static bool initLuaCtxFilter(LuaCtx *ctx, const char *file, char *errbuf)
   bool rc = false;
   int size;
   lua_getglobal(ctx->L, "filter");
-  
+
   if (!lua_isnil(ctx->L, 1)) {
     if (!lua_istable(ctx->L, 1)) {
       snprintf(errbuf, MAX_ERR_LEN, "%s filter must be table", file);
       goto ret;
     }
-    
+
     size = luaL_getn(ctx->L, 1);
     if (size == 0) {
       snprintf(errbuf, MAX_ERR_LEN, "%s filter element number must >0", file);
       goto ret;
     }
-    
+
     for (int i = 0; i < size; ++i) {
       lua_pushinteger(ctx->L, i+1);
       lua_gettable(ctx->L, 1);
@@ -358,7 +354,7 @@ static bool initLuaCtxAggregate(CnfCtx *cnfCtx, LuaCtx *ctx, const char *file, c
   bool rc = false;
   const char *fun;
   lua_getglobal(ctx->L, "aggregate");
-  
+
   if (!lua_isnil(ctx->L, 1)) {
     if (lua_isstring(ctx->L, 1)) {
       fun = lua_tostring(ctx->L, 1);
@@ -391,7 +387,7 @@ static bool initLuaCtxGrep(CnfCtx *cnfCtx, LuaCtx *ctx, const char *file, char *
   bool rc = false;
   const char *fun;
   lua_getglobal(ctx->L, "grep");
-  
+
   if (!lua_isnil(ctx->L, 1)) {
     if (lua_isstring(ctx->L, 1)) {
       fun = lua_tostring(ctx->L, 1);
@@ -408,7 +404,7 @@ static bool initLuaCtxGrep(CnfCtx *cnfCtx, LuaCtx *ctx, const char *file, char *
     ctx->grep = grep;
   }
   rc = true;
-  
+
   ret:
   lua_settop(ctx->L, 0);
   return rc;
@@ -419,7 +415,7 @@ static bool initLuaCtxTransform(CnfCtx *cnfCtx, LuaCtx *ctx, const char *file, c
   bool rc = true;
   const char *fun;
   lua_getglobal(ctx->L, "transform");
-  
+
   if (!lua_isnil(ctx->L, 1)) {
     if (lua_isstring(ctx->L, 1)) {
       fun = lua_tostring(ctx->L, 1);
@@ -439,7 +435,7 @@ static bool initLuaCtxTransform(CnfCtx *cnfCtx, LuaCtx *ctx, const char *file, c
 
   ret:
   lua_settop(ctx->L, 0);
-  return rc;  
+  return rc;
 }
 
 static bool hostAddr(const std::string &host, uint32_t *addr, char *errbuf)
@@ -452,8 +448,8 @@ static bool hostAddr(const std::string &host, uint32_t *addr, char *errbuf)
 
   int rc = getaddrinfo(host.c_str(), NULL, &hints, &ai);
   if (rc != 0) {
-    snprintf(errbuf, MAX_ERR_LEN, "getaddrinfo() error %s\n",
-             rc == EAI_SYSTEM ? strerror(errno) : gai_strerror(rc));
+    snprintf(errbuf, MAX_ERR_LEN, "getaddrinfo() %s error %s\n",
+             host.c_str(), rc == EAI_SYSTEM ? strerror(errno) : gai_strerror(rc));
     return false;
   }
 
@@ -467,7 +463,7 @@ static LuaCtx *loadLuaCtx(CnfCtx *cnfCtx, const char *file, char *errbuf)
 {
   int fd;
   LuaCtx *ctx = new LuaCtx;
-  
+
   lua_State *L;
   ctx->L = L = luaL_newstate();
   luaL_openlibs(L);
@@ -523,7 +519,7 @@ static LuaCtx *loadLuaCtx(CnfCtx *cnfCtx, const char *file, char *errbuf)
   }
   lua_settop(L, 0);
 
-  lua_getglobal(L, "paritition");
+  lua_getglobal(L, "partition");
   if (!lua_isnil(L, 1)) {
     if (!lua_isnumber(L, 1)) {
       snprintf(errbuf, MAX_ERR_LEN, "%s partition must be number", file);
@@ -591,7 +587,7 @@ static LuaCtx *loadLuaCtx(CnfCtx *cnfCtx, const char *file, char *errbuf)
     ctx->pkey = lua_tostring(L, 1);
   }
   lua_settop(L, 0);
-  
+
   if (!initLuaCtxFilter(ctx, file, errbuf)) goto error;
   if (!initLuaCtxAggregate(cnfCtx, ctx, file, errbuf)) goto error;
   if (!initLuaCtxGrep(cnfCtx, ctx, file, errbuf)) goto error;
@@ -619,7 +615,7 @@ void unloadCnfCtx(CnfCtx *ctx)
   }
   if (ctx->L) lua_close(ctx->L);
   if (ctx->wfd != -1) close(ctx->wfd);
-  
+
   uninitKafka(ctx);
   if (ctx->accept != -1) close(ctx->accept);
   if (ctx->server != -1) close(ctx->server);
@@ -646,7 +642,7 @@ bool shell(const char *cmd, std::string *output, char *errbuf)
   }
 
   return true;
-}  
+}
 
 CnfCtx *loadCnfCtx(const char *file, char *errbuf)
 {
@@ -759,7 +755,7 @@ CnfCtx *loadCnfCtx(const char *file, char *errbuf)
   lua_close(L);
   unloadCnfCtx(ctx);
   return 0;
-  
+
 }
 
 CnfCtx *loadCnf(const char *dir, char *errbuf)
@@ -821,15 +817,17 @@ CnfCtx *loadCnf(const char *dir, char *errbuf)
   }
   ctx->accept = fd[0];
   ctx->server = fd[1];
-  
+
   return ctx;
 }
 
-bool transform(LuaCtx *ctx, const char *line, size_t nline, std::string *result)
+bool transform(LuaCtx *ctx, const char *line, size_t nline, std::string **ptr)
 {
+  *ptr = 0;
+
   lua_State *L = ctx->transformFun.empty() ? ctx->L : ctx->main->L;
   lua_getglobal(L, ctx->transformFun.empty() ? "transform" : ctx->transformFun.c_str());
-  
+
   lua_pushlstring(L, line, nline);
   if (lua_pcall(L, 1, 1, 0) != 0) {
     fprintf(stderr, "%s transform error %s\n", ctx->file.c_str(), lua_tostring(L, -1));
@@ -838,26 +836,32 @@ bool transform(LuaCtx *ctx, const char *line, size_t nline, std::string *result)
   }
 
   if (lua_isnil(L, 1)) {
-    result->clear();
     lua_settop(L, 0);
     return true;
   }
-  
+
   if (!lua_isstring(L, 1)) {
     fprintf(stderr, "%s transform return #1 must be string(nil)\n", ctx->file.c_str());
     lua_settop(L, 0);
     return false;
   }
 
+  std::string *result = new std::string;
   if (ctx->withhost) result->assign(ctx->main->host).append(1, ' ');
-  else result->clear();
-  result->append(lua_tostring(L, 1));
+
+  const char *r = lua_tostring(L, 1);
+  if (*r) result->append(lua_tostring(L, 1));
+  else result->append(line, nline);
   lua_settop(L, 0);
+
+  *ptr = result;
   return true;
 }
 
-bool grep(LuaCtx *ctx, const StringList &fields, std::string *result)
+bool grep(LuaCtx *ctx, const StringList &fields, std::string **ptr)
 {
+  *ptr = 0;
+
   lua_State *L = ctx->grepFun.empty() ? ctx->L : ctx->main->L;
   lua_getglobal(L, ctx->grepFun.empty() ? "grep" : ctx->grepFun.c_str());
 
@@ -878,7 +882,6 @@ bool grep(LuaCtx *ctx, const StringList &fields, std::string *result)
 
   if (lua_isnil(L, 1)) {
     lua_settop(L, 0);
-    result->clear();
     return true;
   }
 
@@ -895,8 +898,8 @@ bool grep(LuaCtx *ctx, const StringList &fields, std::string *result)
     return false;
   }
 
+  std::string *result = new std::string;
   if (ctx->withhost) result->assign(ctx->main->host);
-  else result->clear();
 
   for (int i = 0; i < size; ++i) {
     if (!result->empty()) result->append(1, ' ');
@@ -905,14 +908,16 @@ bool grep(LuaCtx *ctx, const StringList &fields, std::string *result)
     if (!lua_isstring(L, -1) && !lua_isnumber(L, -1)) {
       fprintf(stderr, "%s grep return #1[%d] is not string", ctx->file.c_str(), i);
       lua_settop(L, 0);
+      delete result;
       return false;
     }
     result->append(lua_tostring(L, -1));
   }
 
   lua_settop(L, 0);
+  *ptr = result;
   return true;
-}  
+}
 
 inline int absidx(int idx, size_t total)
 {
@@ -933,7 +938,7 @@ inline std::string to_string(int i)
 
 void serializeCache(LuaCtx *ctx, StringPtrList *results)
 {
-  
+
   for (SSIHash::iterator ite = ctx->cache.begin(); ite != ctx->cache.end(); ++ite) {
     std::string *s = new std::string;
     if (ctx->withhost) s->append(ctx->main->host).append(1, ' ');
@@ -970,13 +975,16 @@ void flushCache(CnfCtx *ctx, bool timeout)
       lctx = lctx->next;
     }
   }
-}  
+}
 
-bool aggregate(LuaCtx *ctx, const StringList &fields, StringPtrList *results)
+bool aggregate(LuaCtx *ctx, const StringList &fields, StringPtrList **ptr)
 {
+  *ptr = 0;
+
   std::string curtime = fields[absidx(ctx->timeidx, fields.size())];
   if (!ctx->lasttime.empty() && curtime != ctx->lasttime) {
-    serializeCache(ctx, results);
+    *ptr = new StringPtrList;
+    serializeCache(ctx, *ptr);
     ctx->cache.clear();
   }
   ctx->lasttime = curtime;
@@ -986,7 +994,7 @@ bool aggregate(LuaCtx *ctx, const StringList &fields, StringPtrList *results)
 
   lua_newtable(L);
   int table = lua_gettop(L);
-  
+
   for (size_t i = 0; i < fields.size(); ++i) {
     lua_pushinteger(L, i+1);
     lua_pushstring(L, fields[i].c_str());
@@ -1016,7 +1024,7 @@ bool aggregate(LuaCtx *ctx, const StringList &fields, StringPtrList *results)
     lua_settop(L, 0);
     return false;
   }
-  lua_pushnil(L);  
+  lua_pushnil(L);
   while (lua_next(L, 2) != 0) {
     if (lua_type(L, -2) != LUA_TSTRING) {
       fprintf(stderr, "%s aggregate return #3 key must be string\n", ctx->file.c_str());
@@ -1041,21 +1049,21 @@ bool aggregate(LuaCtx *ctx, const StringList &fields, StringPtrList *results)
   return true;
 }
 
-bool filter(LuaCtx *ctx, const StringList &fields, std::string *result)
+bool filter(LuaCtx *ctx, const StringList &fields, std::string **ptr)
 {
-  std::string s;
-
+  std::string *result = new std::string;
   if (ctx->withhost) result->assign(ctx->main->host);
-  else result->clear();
-  
+
   for (IntList::iterator ite = ctx->filters.begin();
        ite != ctx->filters.end(); ++ite) {
     int idx = absidx(*ite, fields.size());
-    if (idx < 0 || (size_t) idx >= fields.size()) return false;
+    if (idx < 0 || (size_t) idx >= fields.size()) continue;
 
     if (!result->empty()) result->append(1, ' ');
     result->append(fields[idx]);
   }
+
+  *ptr = result;
   return true;
 }
 
@@ -1132,7 +1140,7 @@ void processLines(LuaCtx *ctx)
   } else {
     ctx->npos = 0;
   }
-}  
+}
 
 inline void propagateTailContent(LuaCtx *ctx, size_t size, uint64_t sn)
 {
@@ -1174,7 +1182,7 @@ bool tail2kafka(LuaCtx *ctx, uint64_t sn)
     ctx->stat |= FILE_TRUNCATED;
     return true;
   }
-  
+
   while (off < ctx->size) {
     size_t min = std::min(ctx->size - off, (off_t) (MAX_LINE_LEN - ctx->npos));
     assert(min > 0);
@@ -1204,7 +1212,7 @@ bool lineAlign(LuaCtx *ctx)
   if (read(ctx->fd, ctx->buffer, MAX_LINE_LEN) != min) {
     return false;
   }
-  
+
   LuaCtx *nxt = ctx->next;
   while (nxt) {
     memcpy(nxt->buffer, ctx->buffer, min);
@@ -1253,7 +1261,7 @@ bool addWatch(CnfCtx *ctx, char *errbuf)
       snprintf(errbuf, MAX_ERR_LEN, "%s open error", lctx->file.c_str());
       return false;
     }
-    
+
     struct stat st;
     fstat(lctx->fd, &st);
     lctx->size = st.st_size;
@@ -1290,7 +1298,7 @@ void tryReWatch(CnfCtx *ctx)
       fstat(lctx->fd, &st);
 
       printf("rewatch %s\n", lctx->file.c_str());
-        
+
       int wd = inotify_add_watch(ctx->wfd, lctx->file.c_str(), WATCH_EVENT);
       ctx->wch.insert(std::make_pair(wd, lctx));
       lctx->inode = st.st_ino;
@@ -1315,7 +1323,7 @@ void tryRmWatch(CnfCtx *ctx)
 {
   for (WatchCtxHash::iterator ite = ctx->wch.begin(); ite != ctx->wch.end(); ) {
     LuaCtx *lctx = ite->second;
-    
+
     struct stat st;
     fstat(lctx->fd, &st);
 
@@ -1350,7 +1358,7 @@ bool watchInit(CnfCtx *ctx, char *errbuf)
       snprintf(errbuf, MAX_ERR_LEN, "inotify_init error");
       return false;
     }
-    
+
     int nb = 1;
     ioctl(ctx->wfd, FIONBIO, &nb);
   }
@@ -1380,7 +1388,7 @@ bool watchLoop(CnfCtx *ctx)
     } else if (nfd == 0) {
       flushCache(ctx, true);
     } else {
-      ctx->sn++;    
+      ctx->sn++;
 
       ssize_t nn = read(ctx->wfd, eventBuffer, eventBufferSize);
       assert(nn > 0);
@@ -1460,7 +1468,7 @@ bool iso8601(const std::string &t, std::string *iso)
   enum { WaitYear, WaitMonth, WaitDay, WaitHour, WaitMin, WaitSec } status = WaitDay;
   int year, mon, day, hour, min, sec;
   year = mon = day = hour = min = sec = 0;
-  
+
   const char *p = t.c_str();
   while (*p && *p != ' ') {
     if (*p == '/') {
@@ -1510,34 +1518,31 @@ bool processLine(LuaCtx *ctx, char *line, size_t nline)
 
   OneTaskReq req = {ctx->idx, 0, 0};
   bool rc;
-  
+
   if (ctx->transform) {
-    req.data = new std::string;
-    rc = ctx->transform(ctx, line, nline-1, req.data);
+    rc = ctx->transform(ctx, line, nline-1, &req.data);
   } else if (ctx->aggregate || ctx->filter || ctx->grep) {
     StringList fields;
     split(line, nline, &fields);
-		
-		if (ctx->timeidx != UNSET_INT) {
-			int idx = absidx(ctx->timeidx, fields.size());
-			if (idx < 0 || (size_t) idx >= fields.size()) return false;
-			iso8601(fields[idx], &fields[idx]);
-		}
-		
+
+    if (ctx->timeidx != UNSET_INT) {
+      int idx = absidx(ctx->timeidx, fields.size());
+      if (idx < 0 || (size_t) idx >= fields.size()) return false;
+      iso8601(fields[idx], &fields[idx]);
+    }
+
     if (ctx->aggregate) {
-      req.datas = new StringPtrList;
-      rc = ctx->aggregate(ctx, fields, req.datas);
+      rc = ctx->aggregate(ctx, fields, &req.datas);
     } else {
-      req.data = new std::string;
-      rc = ctx->grep ? ctx->grep(ctx, fields, req.data) :
-				ctx->filter(ctx, fields, req.data);
+      rc = ctx->grep ? ctx->grep(ctx, fields, &req.data) :
+        ctx->filter(ctx, fields, &req.data);
     }
   } else {
     req.data = new std::string(line, nline);
     req.data->append(1, '\n');
     rc = true;
   }
-  
+
   if (req.data || (req.datas && !req.datas->empty())) {
     if (req.data) ++ctx->lines;
     else ctx->lines += req.datas->size();
@@ -1577,7 +1582,7 @@ static int32_t partitioner_cb (
 bool initKafka(CnfCtx *ctx, char *errbuf)
 {
   char errstr[512];
-  
+
   rd_kafka_conf_t *conf = rd_kafka_conf_new();
   for (SSHash::iterator ite = ctx->kafkaGlobal.begin();
        ite != ctx->kafkaGlobal.end(); ++ite) {
@@ -1624,7 +1629,7 @@ bool initKafka(CnfCtx *ctx, char *errbuf)
 
       rd_kafka_topic_conf_set_opaque(tconf, lctx);
       rd_kafka_topic_conf_set_partitioner_cb(tconf, partitioner_cb);
-      
+
       rd_kafka_topic_t *rkt;
       /* rd_kafka_topic_t will own tconf */
       rkt = rd_kafka_topic_new(ctx->rk, lctx->topic.c_str(), tconf);
@@ -1671,9 +1676,9 @@ void kafka_produce(rd_kafka_t *rk, rd_kafka_topic_t *rkt, std::string *data)
 
 void kafka_produce(rd_kafka_t *rk, rd_kafka_topic_t *rkt, StringPtrList *datas)
 {
-  std::vector<rd_kafka_message_t> rkmsgs;  
+  std::vector<rd_kafka_message_t> rkmsgs;
   rkmsgs.resize(datas->size());
-  
+
   size_t i = 0;
   for (StringPtrList::iterator ite = datas->begin(), end = datas->end();
        ite != end; ++ite, ++i) {
@@ -1684,7 +1689,7 @@ void kafka_produce(rd_kafka_t *rk, rd_kafka_topic_t *rkt, StringPtrList *datas)
     rkmsgs[i]._private = *ite;
     // printf("%s kafka produce '%s'\n", rd_kafka_topic_name(rkt), (*ite)->c_str());
   }
-    
+
   rd_kafka_produce_batch(rkt, RD_KAFKA_PARTITION_UA, 0,
                          &rkmsgs[0], rkmsgs.size());
 
@@ -1693,13 +1698,13 @@ void kafka_produce(rd_kafka_t *rk, rd_kafka_topic_t *rkt, StringPtrList *datas)
     if (ite->err) {
       fprintf(stderr, "%s kafka produce batch error %s\n", rd_kafka_topic_name(rkt),
               rd_kafka_message_errstr(&(*ite)));
-      
+
       rd_kafka_poll(rk, 10);
       kafka_produce(rk, rkt, (std::string *) ite->_private);
     }
   }
 }
-    
+
 void *routine(void *data)
 {
   CnfCtx *ctx = (CnfCtx *) data;
@@ -1732,7 +1737,7 @@ void *routine(void *data)
     delete req.datas;
     rd_kafka_poll(ctx->rk, 0);
   }
-  
+
   want = STOP;
   fprintf(stderr, "routine exit\n");
   return NULL;
@@ -1767,17 +1772,17 @@ int runForeGround(CnfCtx *ctx, char *errbuf)
   }
 
   want = WAIT;
-    
+
   sigset_t set;
   sigemptyset(&set);
   sigprocmask(SIG_SETMASK, &set, NULL);
-    
+
   /* initKafka startup librdkafka thread */
   if (!initKafka(ctx, errbuf)) {
     fprintf(stderr, "init kafka error %s\n", errbuf);
     exit(EXIT_FAILURE);
   }
-    
+
   pthread_t tid;
   pthread_create(&tid, NULL, routine, ctx);
   watchLoop(ctx);
@@ -1801,21 +1806,21 @@ pid_t spawn(CnfCtx *ctx, CnfCtx *octx, char *errbuf)
   int pid = fork();
   if (pid == 0) {
     want = WAIT;
-    
+
     sigset_t set;
     sigemptyset(&set);
     sigprocmask(SIG_SETMASK, &set, NULL);
-    
+
     /* initKafka startup librdkafka thread */
     if (!initKafka(ctx, errbuf)) {
       fprintf(stderr, "init kafka error %s\n", errbuf);
       exit(EXIT_FAILURE);
     }
-    
+
     pthread_t tid;
     pthread_create(&tid, NULL, routine, ctx);
     watchLoop(ctx);
-    terminateRoutine(ctx);    
+    terminateRoutine(ctx);
     pthread_join(tid, NULL);
     unloadCnfCtx(ctx);
     exit(EXIT_SUCCESS);
@@ -1831,10 +1836,14 @@ pid_t spawn(CnfCtx *ctx, CnfCtx *octx, char *errbuf)
 
 #define TEST(x) test_##x
 
+#define ETCDIR "blackboxtest/etc/"
+#define LUA(f) "blackboxtest/etc/"f
+#define LOG(f) "logs/"f
+
 void TEST(split)()
 {
   StringList list;
-  
+
   const char *s1 = "hello \"1 [] 2\"[world] [] [\"\"]  bj";
   split(s1, strlen(s1), &list);
   check(list.size() == 6, "%d", (int) list.size());
@@ -1870,17 +1879,17 @@ void TEST(loadLuaCtx)()
 
   CnfCtx cnf;
   cnf.host = "127.0.0.1";
-  
-  ctx = loadLuaCtx(&cnf, "./basic.lua", errbuf);
+
+  ctx = loadLuaCtx(&cnf, LUA("basic.lua"), errbuf);
   check(ctx, "%s", errbuf);
   check(ctx->fd == -1, "%d", ctx->fd);
-  check(ctx->file == "./basic.log", "%s", ctx->file.c_str());
+  check(ctx->file == "logs/basic.log", "%s", ctx->file.c_str());
   check(ctx->topic == "basic", "%s", ctx->topic.c_str());
   check(ctx->autoparti, "%s", (ctx->autoparti ? "TRUE" : "FALSE"));
   check(ctx->partition == RD_KAFKA_PARTITION_UA, "%d", ctx->partition);
   unloadLuaCtx(ctx);
 
-  ctx = loadLuaCtx(0, "./filter.lua", errbuf);
+  ctx = loadLuaCtx(0, LUA("filter.lua"), errbuf);
   check(ctx, "%s", errbuf);
   check(ctx->autosplit == false, "%s", (ctx->autosplit ? "TRUE" : "FALSE"));
   check(ctx->timeidx == 4, "%d", ctx->timeidx);
@@ -1892,7 +1901,7 @@ void TEST(loadLuaCtx)()
   check(ctx->filter, "%s", (ctx->filter ? "FUNC" : "NULL"));
   unloadLuaCtx(ctx);
 
-  ctx = loadLuaCtx(0, "./aggregate.lua", errbuf);
+  ctx = loadLuaCtx(0, LUA("aggregate.lua"), errbuf);
   check(ctx, "%s", errbuf);
   check(ctx->autosplit == true, "%s", (ctx->autosplit ? "TRUE" : "FALSE"));
   check(ctx->withhost == true, "%s", (ctx->withhost ? "TRUE" : "FALSE"));
@@ -1900,22 +1909,22 @@ void TEST(loadLuaCtx)()
   check(ctx->aggregate, "%s", (ctx->aggregate ? "FUNC" : "NULL"));
   unloadLuaCtx(ctx);
 
-  ctx = loadLuaCtx(0, "./transform.lua", errbuf);
+  ctx = loadLuaCtx(0, LUA("transform.lua"), errbuf);
   check(ctx, "%s", errbuf);
-  check(ctx->transform, "%s", (ctx->transform ? "FUNC" : "NULL"));  
+  check(ctx->transform, "%s", (ctx->transform ? "FUNC" : "NULL"));
 }
 
 void TEST(loadCnf)()
 {
   char errbuf[MAX_ERR_LEN];
   CnfCtx *ctx;
-  
-  ctx = loadCnf(".", errbuf);
+
+  ctx = loadCnf(ETCDIR, errbuf);
   check(ctx != 0, "loadCnf . %s", errbuf);
-  
+
   assert(ctx->rk == 0);
 
-  check(ctx->host == "zzyong.paas.user.vm", "%s", ctx->host.c_str());
+  check(ctx->host == "zzyong", "%s", ctx->host.c_str());
   check(ctx->brokers == "127.0.0.1:9092", "%s", ctx->brokers.c_str());
   check(ctx->partition == 1, "%d", ctx->partition);
   check(ctx->pollLimit == 300, "%d", ctx->pollLimit);
@@ -1923,7 +1932,7 @@ void TEST(loadCnf)()
         "%s", ctx->kafkaGlobal["client.id"].c_str());
   check(ctx->kafkaTopic["request.required.acks"] == "1",
         "%s", ctx->kafkaTopic["request.required.acks"].c_str());
-  
+
   check(ctx->count == 5, "%d", (int) ctx->count);
   for (LuaCtxPtrList::iterator ite = ctx->luaCtxs.begin(); ite != ctx->luaCtxs.end(); ++ite) {
     assert((*ite)->main == ctx);
@@ -1936,26 +1945,28 @@ void TEST(transform)()
   char errbuf[MAX_ERR_LEN];
   CnfCtx *main;
   LuaCtx *ctx;
-  std::string data;
+  std::string *data = 0;
 
-  main = loadCnf(".", errbuf);
+  main = loadCnf(ETCDIR, errbuf);
   assert(main != 0);
 
-  ctx = loadLuaCtx(0, "./transform.lua", errbuf);
+  ctx = loadLuaCtx(0, LUA("transform.lua"), errbuf);
   assert(ctx != 0);
   ctx->main = main;
 
   ctx->transform(ctx, "[error] this", sizeof("[error] this")-1, &data);
-  check(data == main->host + " [error] this", "'%s'", data.c_str());
+  check(*data == main->host + " [error] this", "'%s'", data->c_str());
+  delete data;
 
   ctx->withhost = false;
   ctx->transform(ctx, "[error] this", sizeof("[error] this")-1, &data);
-  check(data == "[error] this", "'%s'", data.c_str());  
+  check(*data == "[error] this", "'%s'", data->c_str());
+  delete data;
 
   ctx->transform(ctx, "[debug] that", sizeof("[debug] that")-1, &data);
-  check(data.empty() == true, "'%s'", data.empty() ? "TRUE" : "FALSE");
+  check(data == 0, "'%s'", data == 0 ? "TRUE" : "FALSE");
 
-  unloadLuaCtx(ctx);  
+  unloadLuaCtx(ctx);
 }
 
 void TEST(aggregate)()
@@ -1963,12 +1974,12 @@ void TEST(aggregate)()
   char errbuf[MAX_ERR_LEN];
   CnfCtx *main;
   LuaCtx *ctx;
-  StringPtrList datas;
-    
-  main = loadCnf(".", errbuf);
+  StringPtrList *datas = 0;
+
+  main = loadCnf(ETCDIR, errbuf);
   assert(main != 0);
 
-  ctx = loadLuaCtx(0, "./aggregate.lua", errbuf);
+  ctx = loadLuaCtx(0, LUA("aggregate.lua"), errbuf);
   assert(ctx != 0);
   ctx->main = main;
 
@@ -1979,16 +1990,16 @@ void TEST(aggregate)()
     "10086"};
 
   ctx->aggregate(ctx, StringList(fields1, fields1 + 16), &datas);
-  check(datas.empty() == true, "%s", datas.empty() ? "TRUE" : "FALSE");
+  check(datas == 0, "%s", datas == 0 ? "TRUE" : "FALSE");
 
   const char *fields2[] = {
     "-", "-", "-", "2015-04-02T12:05:04", "-",
     "-", "-", "-", "200", "270",
     "0.2", "-", "-", "-", "-",
     "10086"};
-  
+
   ctx->aggregate(ctx, StringList(fields2, fields2 + 16), &datas);
-  check(datas.empty() == true, "%s", datas.empty() ? "TRUE" : "FALSE");  
+  check(datas == 0, "%s", datas == 0 ? "TRUE" : "FALSE");
 
   const char *fields3[] = {
     "-", "-", "-", "2015-04-02T12:05:05", "-",
@@ -1996,13 +2007,14 @@ void TEST(aggregate)()
     "0.2", "-", "-", "-", "-",
     "95555"};
   ctx->aggregate(ctx, StringList(fields3, fields3 + 16), &datas);
-  check(datas.size() == 2, "%d", (int) datas.size());
+  check(datas->size() == 2, "%d", (int) datas->size());
   const char *msg = "2015-04-02T12:05:04 10086 reqt<0.1=1 reqt<0.3=1 size=500 status_200=2";
-  check((*datas[0]) == main->host + " " + msg, "%s", datas[0]->c_str());
+  check((*(*datas)[0]) == main->host + " " + msg, "%s", (*datas)[0]->c_str());
   msg = "2015-04-02T12:05:04 yuntu reqt<0.1=1 reqt<0.3=1 size=500 status_200=2";
-  check((*datas[1]) == main->host + " " + msg, "%s", datas[0]->c_str());  
-  
-  unloadLuaCtx(ctx);  
+  check((*(*datas)[1]) == main->host + " " + msg, "%s", (*datas)[0]->c_str());
+  delete datas;
+
+  unloadLuaCtx(ctx);
 }
 
 void TEST(grep)()
@@ -2010,22 +2022,23 @@ void TEST(grep)()
   char errbuf[MAX_ERR_LEN];
   CnfCtx *main;
   LuaCtx *ctx;
-  std::string data;
-    
-  main = loadCnf(".", errbuf);
+  std::string *data = 0;
+
+  main = loadCnf(ETCDIR, errbuf);
   assert(main != 0);
 
-  ctx = loadLuaCtx(main, "./grep.lua", errbuf);
+  ctx = loadLuaCtx(main, LUA("grep.lua"), errbuf);
   assert(ctx != 0);
   ctx->main = main;
-  
+
   const char *fields1[] = {
     "-", "-", "-", "2015-04-02T12:05:05", "GET / HTTP/1.0",
     "200", "-", "-", "95555"};
-  
+
   ctx->grep(ctx, StringList(fields1, fields1+9), &data);
-  check(data == main->host + " [2015-04-02T12:05:05] \"GET / HTTP/1.0\" 200 95555",
-        "%s", data.c_str());
+  check(*data == main->host + " [2015-04-02T12:05:05] \"GET / HTTP/1.0\" 200 95555",
+        "%s", data->c_str());
+  delete data;
 
   unloadLuaCtx(ctx);
 }
@@ -2035,24 +2048,24 @@ void TEST(filter)()
   char errbuf[MAX_ERR_LEN];
   CnfCtx *main;
   LuaCtx *ctx;
-  std::string data;
-    
-  main = loadCnf(".", errbuf);
+  std::string *data = 0;
+
+  main = loadCnf(ETCDIR, errbuf);
   assert(main != 0);
 
-  ctx = loadLuaCtx(main, "./filter.lua", errbuf);
+  ctx = loadLuaCtx(main, LUA("filter.lua"), errbuf);
   assert(ctx != 0);
   ctx->main = main;
-  
+
   const char *fields1[] = {
     "-", "-", "-", "2015-04-02T12:05:05", "GET / HTTP/1.0",
     "200", "-", "-", "95555"};
-  
-  ctx->filter(ctx, StringList(fields1, fields1+9), &data);
-  check(data == main->host + " 2015-04-02T12:05:05 GET / HTTP/1.0 200 95555",
-        "%s", data.c_str());
 
-  unloadLuaCtx(ctx);  
+  ctx->filter(ctx, StringList(fields1, fields1+9), &data);
+  check(*data == main->host + " 2015-04-02T12:05:05 GET / HTTP/1.0 200 95555",
+        "%s", data->c_str());
+
+  unloadLuaCtx(ctx);
 }
 
 void *TEST(watchLoop)(void *data)
@@ -2068,18 +2081,18 @@ void TEST(watchInit)()
   char errbuf[MAX_ERR_LEN];
   CnfCtx *ctx;
 
-  int fd = open("./basic.log", O_WRONLY);
+  int fd = open(LOG("basic.log"), O_WRONLY);
   assert(fd != -1);
   write(fd, "12\n456", 6);
 
-  ctx = loadCnf(".", errbuf);
+  ctx = loadCnf(ETCDIR, errbuf);
   rc = watchInit(ctx, errbuf);
   check(rc == true, "%s", errbuf);
 
   /* for test */
   ctx->pollLimit = 0;
 
-  LuaCtx *lctx;
+  LuaCtx *lctx = 0;
   for (LuaCtxPtrList::iterator ite = ctx->luaCtxs.begin(); ite != ctx->luaCtxs.end(); ++ite) {
     if ((*ite)->topic == "basic") {
       lctx = *ite;
@@ -2091,6 +2104,7 @@ void TEST(watchInit)()
       break;
     }
   }
+  check(lctx != 0, "%s", "topic basic not found");
 
   pthread_t tid;
   pthread_create(&tid, NULL, TEST(watchLoop), ctx);
@@ -2098,7 +2112,7 @@ void TEST(watchInit)()
   write(fd, "\n789\n", 5);
   close(fd);
   // unlink("./basic.log");
-  rename("./basic.log", "./basic.log.old");
+  rename(LOG("basic.log"), LOG("basic.log.old"));
 
   OneTaskReq req;
   read(ctx->accept, &req, sizeof(OneTaskReq));
@@ -2120,9 +2134,9 @@ void TEST(watchInit)()
 
   /* enable raw copy */
   ctx->pollLimit = 300;
-  
+
   /* test rewatch */
-  fd = open("./basic.log", O_CREAT | O_WRONLY, 0644);
+  fd = open(LOG("basic.log"), O_CREAT | O_WRONLY, 0644);
   assert(fd != -1);
   write(fd, "abcd\nefg\n", sizeof("abcd\nefg\n")-1);
   close(fd);
@@ -2140,19 +2154,19 @@ void TEST(initKafka)()
   char errbuf[MAX_ERR_LEN];
   CnfCtx *ctx;
 
-  ctx = loadCnf(".", errbuf);
+  ctx = loadCnf(ETCDIR, errbuf);
   rc = initKafka(ctx, errbuf);
   check(rc == true, "%s", errbuf);
 
   unloadCnfCtx(ctx);
-}  
+}
 
 static const char *files[] = {
-  "./basic.log",
-  "./filter.log",
-  "./aggregate.log",
-  "./grep.log",
-  "./transform.log",
+  LOG("basic.log"),
+  LOG("filter.log"),
+  LOG("aggregate.log"),
+  LOG("grep.log"),
+  LOG("transform.log"),
   0
 };
 
@@ -2171,17 +2185,17 @@ void TEST(clean)()
   }
   unlink("./basic.log.old");
 }
-  
-int main(int argc, char *argv[])
+
+int main()
 {
   TEST(prepare)();
-    
+
   TEST(split)();
   TEST(iso8601)();
-  
+
   TEST(loadLuaCtx)();
   TEST(loadCnf)();
-  
+
   TEST(transform)();
   TEST(aggregate)();
   TEST(grep)();

@@ -203,6 +203,11 @@ end
 
 如果 =true= ，会在发往kafka前添加机器名。
 
+*** autonl
+可选项 boolean 默认 ~autonl=true~
+
+如果 =true= ，会在发往kafka的行尾添加换行。
+
 * 性能
 15万行每秒。有需要可以继续优化。
 

@@ -124,6 +124,7 @@ struct LuaCtx {
   bool          withhost;
   bool          withtime;
   int           timeidx;
+  bool          autonl;
 
   uint32_t      addr;
   bool          autoparti;
@@ -168,6 +169,7 @@ LuaCtx::LuaCtx()
   autoparti = false;
   partition = RD_KAFKA_PARTITION_UA;
   timeidx   = UNSET_INT;
+  autonl    = true;
   rawcopy   = false;
 
   buffer = new char[MAX_LINE_LEN];
@@ -569,6 +571,16 @@ static LuaCtx *loadLuaCtx(CnfCtx *cnfCtx, const char *file, char *errbuf)
       goto error;
     }
     ctx->withtime = lua_toboolean(L, 1);
+  }
+  lua_settop(L, 0);
+
+  lua_getglobal(L, "autonl");
+  if (!lua_isnil(L, 1)) {
+    if (!lua_isboolean(L, 1)) {
+      snprintf(errbuf, MAX_ERR_LEN, "%s autonl must be boolean", file);
+      goto error;
+    }
+    ctx->autonl = lua_toboolean(L, 1);
   }
   lua_settop(L, 0);
 
@@ -1539,7 +1551,7 @@ bool processLine(LuaCtx *ctx, char *line, size_t nline)
     }
   } else {
     req.data = new std::string(line, nline);
-    req.data->append(1, '\n');
+    if (ctx->autonl) req.data->append(1, '\n');
     rc = true;
   }
 

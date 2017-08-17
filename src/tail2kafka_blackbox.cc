@@ -317,8 +317,10 @@ void *consumer_routine(void *data)
 
 void basic_consumer(rd_kafka_message_t *rkm)
 {
-  // printf("%.*s\n", (int) rkm->len, (char *) rkm->payload);
+  // printf("%.*s", (int) rkm->len, (char *) rkm->payload);
   const char *ptr = basicPro();
+	check(rkm->len == strlen(ptr),
+        "length(%.*s) != length(%s)", (int) rkm->len, (char *) rkm->payload, ptr);
   check(memcmp(rkm->payload, ptr, rkm->len) == 0,
         "%.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
 }

@@ -1899,6 +1899,7 @@ void TEST(loadLuaCtx)()
   check(ctx->topic == "basic", "%s", ctx->topic.c_str());
   check(ctx->autoparti, "%s", (ctx->autoparti ? "TRUE" : "FALSE"));
   check(ctx->partition == RD_KAFKA_PARTITION_UA, "%d", ctx->partition);
+  check(ctx->autonl, "%s", (ctx->autonl ? "TRUE" : "FALSE"));
   unloadLuaCtx(ctx);
 
   ctx = loadLuaCtx(0, LUA("filter.lua"), errbuf);

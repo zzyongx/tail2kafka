@@ -2,23 +2,14 @@ CC      = gcc
 CXX     = g++
 INSTALL = install
 LDFLAGS = -lrt -ldl -lpthread -lz
-PREDEF  =
 ARLIBS  = ./deps/librdkafka.a ./deps/libluajit-5.1.a
-CFLAGS  = -I/usr/local/include/luajit-2.0
+CFLAGS  += -I/usr/local/include/luajit-2.0
+WARN    = -Werror -Wall -Wshadow -Wextra -Wno-comment
 
 ifeq ($(DEBUG), 1)
 	CFLAGS += -O0 -g
-	WARN   += -Wall -Wextra -Wno-comment -Wformat -Wimplicit \
-            -Wparentheses -Wswitch -Wunused
-	PREDEF += -DDEBUG
 else
 	CFLAGS += -O2 -g
-	WARN   += -Wall -Wextra -Wno-comment -Wformat -Wimplicit \
-            -Wparentheses -Wswitch -Wuninitialized -Wunused
-endif
-
-ifeq ($(UNITTEST), 1)
-	PREDEF += -DUNITTEST -DNO_LOGER
 endif
 
 ifndef ($(INSTALLDIR))
@@ -27,10 +18,17 @@ endif
 
 VPATH = .:./libs
 
-default: configure tail2kafka kafka2file
+OBJ = build/common.o build/cnfctx.o build/luactx.o \
+	    build/filereader.o build/inotifyctx.o build/fileoff.o \
+      build/luafunction.o build/kafkactx.o build/sys.o
+
+default: configure tail2kafka kafka2file tail2kafka_unittest
 	@echo finished
 
-tail2kafka: build/tail2kafka.o
+tail2kafka: build/tail2kafka.o $(OBJ)
+	$(CXX) $(CFLAGS) -o $@ $^ $(ARLIBS) $(LDFLAGS)
+
+tail2kafka_unittest: build/tail2kafka_unittest.o $(OBJ)
 	$(CXX) $(CFLAGS) -o $@ $^ $(ARLIBS) $(LDFLAGS)
 
 kafka2file: build/kafka2file.o
@@ -69,10 +67,6 @@ build/%.o: src/%.cc
 build/mix/%.o: mix/%.cc
 	$(CXX) -o $@ $(WARN) $(CXXWARN) $(CFLAGS) $(PREDEF) -c $<
 
-.PHONY: debug
-debug:
-	make DEBUG=1
-
 tail2kafka_blackbox: build/tail2kafka_blackbox.o
 	$(CXX) $(CFLAGS) -o $@ $^ $(ARLIBS) $(LDFLAGS)
 
@@ -81,19 +75,20 @@ test:
 	mkdir -p logs
 
 	@echo "unit test"
-	make clean &&	make UNITTEST=1
-	./tail2kafka
+	find logs -type f -name "*.log" -delete
+	make clean &&	make PREDEF="-DNO_LOGGER" DEBUG=1
+	./tail2kafka_unittest
 
 	@echo "blackbox test"
+	find logs -type f -name "*.log" -delete
 	make clean && make &&	make tail2kafka_blackbox
 	./blackboxtest/blackbox_test.sh
 
-	rm -rf logs
-
 .PHONY: install
 install:
-	$(INSTALL) -D tail2kafka           $(INSTALLDIR)/bin
-	mkdir -p /etc/tail2kafka
+	$(INSTALL) -D tail2kafka $(RPM_BUILD_ROOT)$(INSTALLDIR)/bin
+	mkdir -p $(RPM_BUILD_ROOT)/etc/tail2kafka
+	mkdir -p $(RPM_BUILD_ROOT)/var/lib/
 
 .PHONY: clean
 clean:

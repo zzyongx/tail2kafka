@@ -23,7 +23,7 @@ cd -
 
 (test -f $PIDF && test -d /proc/$(cat $PIDF)) && kill $(cat $PIDF)
 sleep 1
-./tail2kafka $CFGDIR &>logs/tail2kafka.log
+./tail2kafka $CFGDIR || exit $?
 
 sleep 1
 ./tail2kafka_blackbox

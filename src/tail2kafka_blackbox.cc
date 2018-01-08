@@ -10,6 +10,9 @@
 #include <unistd.h>
 #include <librdkafka/rdkafka.h>
 
+#include "sys.h"
+#include "unittesthelper.h"
+
 typedef std::vector<std::string> StringList;
 static const char *hostname = "zzyong";
 
@@ -25,15 +28,6 @@ int main()
   start_consumer();
 	printf("OK\n");
   return EXIT_SUCCESS;
-}
-
-#define check(r, fmt, arg...)                                           \
-  do { if (!(r)) { fprintf(stderr, "%04d %s -> "fmt"\n", __LINE__, #r, ##arg); exit(1); } } while(0)
-
-void sleep_ms(int ms)
-{
-  struct timespec to = {0, ms * 1000};
-  nanosleep(&to, NULL);
 }
 
 class BasicProducer {
@@ -67,11 +61,11 @@ void *basic_routine(void *)
     fprintf(fp, "%s", basicPro());
   }
   fflush(fp);
-  sleep_ms(100000);
+  sys::nanosleep(100000);
 
   for (int i = 0; i < 100; ++i) {
     fprintf(fp, "%s", basicPro());
-    sleep_ms(1000);
+    sys::nanosleep(1000);
   }
   fclose(fp);
 
@@ -110,7 +104,7 @@ void *filter_routine(void *)
   }
 
   fflush(fp);
-  sleep_ms(1000);
+  sys::nanosleep(1000);
 
   for (int i = 0; i < 100; ++i) {
     fprintf(fp, "%s\n", filterPro());
@@ -152,7 +146,7 @@ void *grep_routine(void *)
   }
 
   fflush(fp);
-  sleep_ms(1000);
+  sys::nanosleep(1000);
 
   for (int i = 0; i < 100; ++i) {
     fprintf(fp, "%s\n", grepPro());

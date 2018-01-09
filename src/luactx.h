@@ -10,6 +10,8 @@
 #include "luafunction.h"
 #include "cnfctx.h"
 
+struct rk_kafka_topic_t;
+
 class LuaCtx {
   template<class T> friend class UNITTEST_HELPER;
 public:
@@ -20,6 +22,9 @@ public:
 
   bool initFileReader(char *errbuf);
   FileReader *getFileReader() { return fileReader_; }
+
+  void setRkt(rd_kafka_topic_t *rktopic) { rkt_ = rktopic; }
+  rd_kafka_topic_t *rkt() { return rkt_; }
 
   void setNext(LuaCtx* nxt) { next_ = nxt; }
   LuaCtx *next() { return next_; }
@@ -91,6 +96,8 @@ private:
   LuaCtx       *next_;
   CnfCtx       *cnf_;
   LuaHelper    *helper_;
+
+  rd_kafka_topic_t *rkt_;
 };
 
 #endif

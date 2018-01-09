@@ -14,6 +14,16 @@ inline void nanosleep(int ms)
   nanosleep(&spec, 0);
 }
 
+inline std::string timeFormat(time_t time, const char *format)
+{
+  struct tm ltm;
+  localtime_r(&time, &ltm);
+
+  char buffer[64];
+  int n = strftime(buffer, 64, format, &ltm);
+  return std::string(buffer, n);
+}
+
 class SignalHelper {
 public:
   static RunStatus       *runStatusPtr;

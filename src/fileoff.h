@@ -11,9 +11,10 @@ class CnfCtx;
 
 struct FileOffRecord {
   ino_t  inode;
-  size_t off;
+  off_t  off;
+
   FileOffRecord() {}
-  FileOffRecord(ino_t inode_, size_t off_) : inode(inode_), off(off_) {}
+  FileOffRecord(ino_t inode_, off_t off_) : inode(inode_), off(off_) {}
 
 //  char   file[FileOff::MAX_FILENAME_LENGTH];
 };
@@ -25,7 +26,6 @@ public:
 
   FileOff();
   ~FileOff();
-
 
   bool init(CnfCtx *cnf, char *errbuf);
   bool reinit();
@@ -41,7 +41,7 @@ private:
   std::string  file_;
   void        *addr_;
   size_t      length_;
-  std::map<ino_t, FileOffRecord*> map_;
+  std::map<ino_t, off_t> map_;
 };
 
 #endif

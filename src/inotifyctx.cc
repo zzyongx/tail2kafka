@@ -66,7 +66,7 @@ bool InotifyCtx::tryReWatch()
       int wd = inotify_add_watch(wfd_, ctx->file().c_str(), WATCH_EVENT);
       fdToCtx_.insert(std::make_pair(wd, ctx));
 
-      ctx->getFileReader()->tail2kafka();
+      ctx->getFileReader()->tail2kafka(FileReader::NIL, 0);
     }
   }
   return true;
@@ -126,25 +126,26 @@ void InotifyCtx::loop()
         struct inotify_event *event = (struct inotify_event *) p;
         if (event->mask & IN_MODIFY) {
           LuaCtx *ctx = getLuaCtx(event->wd);
-          log_debug(0, "%s modify", ctx->file().c_str());
-          ctx->getFileReader()->tail2kafka();
+          log_debug(0, "inotify %s was modified", ctx->file().c_str());
+          ctx->getFileReader()->tail2kafka(FileReader::NIL, 0);
         }
         if (event->mask & IN_MOVE_SELF) {
           LuaCtx *ctx = getLuaCtx(event->wd);
-          log_info(0, "%s move", ctx->file().c_str());
+          log_info(0, "inotify %s was moved", ctx->file().c_str());
           tryRmWatch(ctx, event->wd);
 
         }
         p += sizeof(struct inotify_event) + event->len;
       }
     }
+
     if (sn != savedSn) {
       globalCheck();
       savedSn = sn;
+    }
 
     tryRmWatch();
     tryReWatch();
-    }
     if (cnf_->getPollLimit()) sys::nanosleep(cnf_->getPollLimit());
   }
 

@@ -7,11 +7,16 @@
 #include "luactx.h"
 #include "kafkactx.h"
 
-static void dr_cb(
-  rd_kafka_t *, void *, size_t, rd_kafka_resp_err_t, void *, void *data)
+static void dr_msg_cb(rd_kafka_t *, const rd_kafka_message_t *rkmsg, void *)
 {
-  std::string *p = (std::string *) data;
-  delete p;
+  FileRecord *record = (FileRecord *) rkmsg->_private;
+
+  if (record->off != (off_t) -1) {
+    LuaCtx *ctx = record->ctx;
+    ctx->getFileReader()->updateFileOffRecord(record);
+  }
+
+  FileRecord::destroy(record);
 }
 
 static int32_t partitioner_cb (
@@ -33,11 +38,12 @@ bool KafkaCtx::initKafka(const char *brokers, const std::map<std::string, std::s
     res = rd_kafka_conf_set(conf, ite->first.c_str(), ite->second.c_str(), errstr, sizeof(errstr));
     if (res != RD_KAFKA_CONF_OK) {
       snprintf(errbuf, MAX_ERR_LEN, "kafka conf %s=%s %s", ite->first.c_str(), ite->second.c_str(), errstr);
+
       rd_kafka_conf_destroy(conf);
       return false;
     }
   }
-  rd_kafka_conf_set_dr_cb(conf, dr_cb);
+  rd_kafka_conf_set_dr_msg_cb(conf, dr_msg_cb);
 
   /* rd_kafka_t will own conf */
   if (!(rk_ = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr, sizeof(errstr)))) {
@@ -78,7 +84,8 @@ bool KafkaCtx::initKafkaTopic(LuaCtx *ctx, const std::map<std::string, std::stri
     return false;
   }
 
-  rkts_[ctx->idx()] = rkt;
+  ctx->setRkt(rkt);
+  rkts_.push_back(rkt);
   return true;
 }
 
@@ -86,7 +93,6 @@ bool KafkaCtx::init(CnfCtx *cnf, char *errbuf)
 {
   if (!initKafka(cnf->getBrokers(), cnf->getKafkaGlobalConf(), errbuf)) return false;
 
-  rkts_.resize(cnf->getLuaCtxSize());
   for (LuaCtxPtrList::iterator ite = cnf->getLuaCtxs().begin(); ite != cnf->getLuaCtxs().end(); ++ite) {
     LuaCtx *ctx = (*ite);
     while (ctx) {
@@ -106,14 +112,15 @@ KafkaCtx::~KafkaCtx()
   if (rk_) rd_kafka_destroy(rk_);
 }
 
-void KafkaCtx::produce(size_t idx, std::string *data)
+void KafkaCtx::produce(LuaCtx *ctx, FileRecord *record)
 {
-  rd_kafka_topic_t *rkt = rkts_[idx];
+  rd_kafka_topic_t *rkt = ctx->rkt();
+  record->ctx = ctx;
 
   int i = 0;
   again:
-  int rc = rd_kafka_produce(rkt, RD_KAFKA_PARTITION_UA, 0, (void *) data->c_str(), data->size(),
-                            0, 0, data);
+  int rc = rd_kafka_produce(rkt, RD_KAFKA_PARTITION_UA, 0, (void *) record->data->c_str(),
+                            record->data->size(), 0, 0, record);
   if (rc != 0) {
     if (errno == ENOBUFS) {
       log_error(0, "%s kafka produce error(#%d) %s", rd_kafka_topic_name(rkt), ++i, strerror(errno));
@@ -121,39 +128,43 @@ void KafkaCtx::produce(size_t idx, std::string *data)
       goto again;
     } else {
       log_error(0, "%s kafka produce error %d:%s\n", rd_kafka_topic_name(rkt), errno, strerror(errno));
-      delete data;
+      FileRecord::destroy(record);
     }
   }
 }
 
-void KafkaCtx::produce(size_t idx, std::vector<std::string *> *datas)
+void KafkaCtx::produce(LuaCtx *ctx, std::vector<FileRecord *> *datas)
 {
   assert(!datas->empty());
-  rd_kafka_topic_t *rkt = rkts_[idx];
+  rd_kafka_topic_t *rkt = ctx->rkt();
 
   std::vector<rd_kafka_message_t> rkmsgs;
   rkmsgs.resize(datas->size());
 
   size_t i = 0;
-  for (std::vector<std::string *>::iterator ite = datas->begin(), end = datas->end();
+  for (std::vector<FileRecord *>::iterator ite = datas->begin(), end = datas->end();
        ite != end; ++ite, ++i) {
-    rkmsgs[i].payload  = (void *) (*ite)->c_str();
-    rkmsgs[i].len      = (*ite)->size();
+    FileRecord *record = (*ite);
+    record->ctx = ctx;
+
+    rkmsgs[i].payload  = (void *) record->data->c_str();
+    rkmsgs[i].len      = record->data->size();
     rkmsgs[i].key      = 0;
     rkmsgs[i].key_len  = 0;
-    rkmsgs[i]._private = *ite;
+    rkmsgs[i]._private = record;
   }
 
-  rd_kafka_produce_batch(rkt, RD_KAFKA_PARTITION_UA, 0, &rkmsgs[0], rkmsgs.size());
+  int n = rd_kafka_produce_batch(rkt, RD_KAFKA_PARTITION_UA, 0, &rkmsgs[0], rkmsgs.size());
+  if (n != (int) rkmsgs.size()) {
+    for (std::vector<rd_kafka_message_t>::iterator ite = rkmsgs.begin(), end = rkmsgs.end();
+         ite != end; ++ite) {
+      if (ite->err) {
+        log_error(0, "%s kafka produce batch error %s\n", rd_kafka_topic_name(rkt),
+                  rd_kafka_message_errstr(&(*ite)));
 
-  for (std::vector<rd_kafka_message_t>::iterator ite = rkmsgs.begin(), end = rkmsgs.end();
-       ite != end; ++ite) {
-    if (ite->err) {
-      log_error(0, "%s kafka produce batch error %s\n", rd_kafka_topic_name(rkt),
-                rd_kafka_message_errstr(&(*ite)));
-
-      rd_kafka_poll(rk_, 10);
-      produce(idx, (std::string *) ite->_private);
+        rd_kafka_poll(rk_, 10);
+        produce(ctx, (FileRecord *) ite->_private);
+      }
     }
   }
 }

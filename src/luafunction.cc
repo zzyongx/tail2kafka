@@ -50,7 +50,7 @@ LuaFunction *LuaFunction::create(LuaCtx *ctx, LuaHelper *helper)
   return function.release();
 }
 
-bool LuaFunction::filter(const std::vector<std::string> &fields, std::vector<std::string *> *lines)
+int LuaFunction::filter(const std::vector<std::string> &fields, std::vector<std::string *> *lines)
 {
   std::string *result = new std::string;
   if (ctx_->withhost()) result->assign(ctx_->host());
@@ -65,47 +65,48 @@ bool LuaFunction::filter(const std::vector<std::string> &fields, std::vector<std
   }
 
   lines->push_back(result);
-  return true;
+  return 1;
 }
 
-bool LuaFunction::grep(const std::vector<std::string> &fields, std::vector<std::string *> *lines)
+int LuaFunction::grep(const std::vector<std::string> &fields, std::vector<std::string *> *lines)
 {
-  if (!helper_->call(funName_.c_str(), fields, 1)) return false;
-  if (helper_->callResultNil()) return true;
+  if (!helper_->call(funName_.c_str(), fields, 1)) return -1;
+  if (helper_->callResultNil()) return 0;
 
   std::string *result = new std::string;
   if (ctx_->withhost()) result->assign(ctx_->host());
 
   if (helper_->callResultListAsString(funName_.c_str(), result)) {
     lines->push_back(result);
-    return true;
+    return 1;
   } else {
     delete result;
-    return false;
+    return -1;
   }
 }
 
-bool LuaFunction::transform(const char *line, size_t nline, std::vector<std::string *> *lines)
+int LuaFunction::transform(const char *line, size_t nline, std::vector<std::string *> *lines)
 {
-  if (!helper_->call(funName_.c_str(), line, nline)) return false;
-  if (helper_->callResultNil()) return true;
+  if (!helper_->call(funName_.c_str(), line, nline)) return -1;
+  if (helper_->callResultNil()) return 0;
 
   std::string *result = new std::string;
   if (ctx_->withhost()) result->assign(ctx_->host()).append(1, ' ');
 
   if (helper_->callResultString(funName_.c_str(), result)) {
     lines->push_back(result);
-    return true;
+    return 1;
   } else {
     delete result;
-    return false;
+    return -1;
   }
 }
 
-bool LuaFunction::serializeCache(std::vector<std::string*> *lines)
+int LuaFunction::serializeCache(std::vector<std::string*> *lines)
 {
-  if (aggregateCache_.empty()) return true;
+  if (aggregateCache_.empty()) return 0;
 
+  int n = 0;
   for (std::map<std::string, std::map<std::string, int> >::iterator ite = aggregateCache_.begin();
        ite != aggregateCache_.end(); ++ite) {
     std::string *s = new std::string;
@@ -117,16 +118,18 @@ bool LuaFunction::serializeCache(std::vector<std::string*> *lines)
       s->append(1, ' ').append(jte->first).append(1, '=').append(to_string(jte->second));
     }
     lines->push_back(s);
+    ++n;
   }
   aggregateCache_.clear();
-  return true;
+  return n;
 }
 
-bool LuaFunction::aggregate(const std::vector<std::string> &fields, std::vector<std::string *> *lines)
+int LuaFunction::aggregate(const std::vector<std::string> &fields, std::vector<std::string *> *lines)
 {
+  int n = 0;
   std::string curtime = fields[absidx(ctx_->timeidx(), fields.size())];
   if (!lasttime_.empty() && curtime != lasttime_) {
-    serializeCache(lines);
+    n = serializeCache(lines);
   }
   lasttime_ = curtime;
 
@@ -142,10 +145,10 @@ bool LuaFunction::aggregate(const std::vector<std::string> &fields, std::vector<
     if (!ctx_->pkey().empty()) aggregateCache_[ctx_->pkey()][ite->first] += ite->second;
   }
 
-  return true;
+  return n;
 }
 
-bool LuaFunction::process(const char *line, size_t nline, std::vector<std::string *> *lines)
+int LuaFunction::process(const char *line, size_t nline, std::vector<std::string *> *lines)
 {
   if (type_ == TRANSFORM) {
     return transform(line, nline-1, lines);
@@ -166,12 +169,16 @@ bool LuaFunction::process(const char *line, size_t nline, std::vector<std::strin
     } else if (type_ == FILTER) {
       return filter(fields, lines);
     } else {
-      return true;
+      return 0;
     }
   } else {
-    std::string *ptr = new std::string(line, nline);
+    std::string *ptr = new std::string;
+
+    if (ctx_->withhost()) ptr->append(1, '*').append(ctx_->cnf()->host()).append(1, ' ');
+    ptr->append(line, nline);
     if (ctx_->autonl()) ptr->append(1, '\n');
+
     lines->push_back(ptr);
-    return true;
+    return 1;
   }
 }

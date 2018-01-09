@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+
 #include "cnfctx.h"
 #include "luactx.h"
 #include "fileoff.h"
@@ -20,19 +21,7 @@ FileOff::FileOff()
 
 FileOff::~FileOff()
 {
-  if (addr_ == MAP_FAILED) {
-    deleteMallocPtr();
-  } else {
-    munmap(addr_, length_);
-  }
-}
-
-void FileOff::deleteMallocPtr()
-{
-  for (std::map<ino_t, FileOffRecord *>::iterator ite = map_.begin(); ite != map_.end(); ++ite) {
-    delete ite->second;
-  }
-  map_.clear();
+  if (addr_ != MAP_FAILED) munmap(addr_, length_);
 }
 
 bool FileOff::loadFromFile(char *errbuf)
@@ -50,8 +39,7 @@ bool FileOff::loadFromFile(char *errbuf)
   FileOffRecord record;
   while (fread(&record, sizeof(record), 1, fp) != 1) {
     if (record.inode == 0 && record.off == 0) break;
-    FileOffRecord *ptr = new FileOffRecord(record.inode, record.off);
-    map_.insert(std::make_pair(record.inode, ptr));
+    map_.insert(std::make_pair(record.inode, record.off));
   }
 
   fclose(fp);
@@ -70,11 +58,9 @@ bool FileOff::init(CnfCtx *cnf, char *errbuf)
 
 bool FileOff::reinit()
 {
-  length_ = sizeof(FileOffRecord) * cnf_->getLuaCtxSize();
+  length_ = sizeof(FileOffRecord) * cnf_->getLuaCtxs().size();
 
-  if (addr_ == MAP_FAILED) {
-    deleteMallocPtr();
-  } else {
+  if (addr_ != MAP_FAILED) {
     munmap(addr_, length_);
     addr_ = MAP_FAILED;
   }
@@ -100,10 +86,7 @@ bool FileOff::reinit()
 
   char *ptr = (char *) addr_;
   for (std::vector<LuaCtx *>::iterator ite = cnf_->getLuaCtxs().begin(); ite != cnf_->getLuaCtxs().end(); ++ite) {
-    FileOffRecord *record = (FileOffRecord *) ptr;
-    record->inode = (*ite)->getFileReader()->getInode();
-    record->off   = (*ite)->getFileReader()->getPos();
-    map_.insert(std::make_pair(record->inode, record));
+    (*ite)->getFileReader()->initFileOffRecord((FileOffRecord *) ptr);
     ptr += sizeof(FileOffRecord);
   }
   memset(ptr, 0x00, (length_ - (ptr - (char *) addr_)));
@@ -112,17 +95,17 @@ bool FileOff::reinit()
 
 off_t FileOff::getOff(ino_t inode) const
 {
-  std::map<ino_t, FileOffRecord *>::const_iterator pos = map_.find(inode);
+  std::map<ino_t, off_t>::const_iterator pos = map_.find(inode);
   if (pos == map_.end()) return -1;
-  else return pos->second->off;
-  return 0;
+  else return pos->second;
+  return (off_t) -1;
 }
 
 bool FileOff::setOff(ino_t inode, off_t off)
 {
-  std::map<ino_t, FileOffRecord*>::iterator pos = map_.find(inode);
+  std::map<ino_t, off_t>::iterator pos = map_.find(inode);
   if (pos == map_.end()) return false;
 
-  pos->second->off = off;
+  pos->second = off;
   return true;
 }

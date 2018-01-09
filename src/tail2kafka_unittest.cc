@@ -268,22 +268,21 @@ DEFINE(initFileReader)
   check(ctx->fileReader_->size_ == 7, "%d", (int) ctx->fileReader_->size_);
   SAFE_DELETE(ctx->fileReader_);
 
-  FileOffRecord *record = new FileOffRecord(st.st_ino, 3);
-  cnf->fileOff_->map_.insert(std::make_pair(st.st_ino, record));
+  cnf->fileOff_->map_.insert(std::make_pair(st.st_ino, 3));
 
   check(ctx->initFileReader(cnf->errbuf()), "%s", cnf->errbuf());
   check(ctx->fileReader_->npos_ == 0, "%d", (int) ctx->fileReader_->npos_);
   check(ctx->fileReader_->size_ == 3, "%d", (int) ctx->fileReader_->size_);
   SAFE_DELETE(ctx->fileReader_);
 
-  record->off = 7;
+  cnf->fileOff_->map_[st.st_ino] = 7;
   ctx->startPosition_ = "LOG_START";
   check(ctx->initFileReader(cnf->errbuf()), "%s", cnf->errbuf());
   check(ctx->fileReader_->size_ == 7, "%d", (int) ctx->fileReader_->size_);
   SAFE_DELETE(ctx->fileReader_);
 
   cnf->fileOff_->map_.clear();
-  delete record;
+
   ctx->startPosition_ = "START";
   check(ctx->initFileReader(cnf->errbuf()), "%s", cnf->errbuf());
   check(ctx->fileReader_->size_ == 0, "%d", (int) ctx->fileReader_->size_);
@@ -315,19 +314,22 @@ DEFINE(watchLoop)
   runStatus->set(RunStatus::WAIT);
   cnf->setRunStatus(runStatus);
 
+  LuaCtx *ctx = getLuaCtx("basic");
+  ctx->withhost_ = true;
+
   InotifyCtx inotify(cnf);
   check(inotify.init(), "%s", cnf->errbuf());
 
   pthread_t tid;
   pthread_create(&tid, NULL, watchLoop, &inotify);
 
+  check(ctx->getFileReader()->size_ == 0, "%d", (int) ctx->getFileReader()->size_);
+
   const char *s1 = "456";
   int fd = open(LOG("basic.log"), O_WRONLY);
   write(fd, s1, strlen(s1));
 
   cnf->pollLimit_ = 0;
-  LuaCtx *ctx = getLuaCtx("basic");
-//  ctx->rawcopy_ = true;
   ctx->rawcopy_ = false;
   check(ctx->autonl(), "%s", BTOS(ctx->autonl()));
 
@@ -340,10 +342,25 @@ DEFINE(watchLoop)
   OneTaskReq req;
   read(cnf->accept, &req, sizeof(OneTaskReq));
 
-  check(req.idx == ctx->idx(), "%s %d = %d", PTRS(ctx->file()), req.idx, ctx->idx());
-  check(*(req.datas->at(0)) == "456\n", "%s", PTRS(*(req.datas->at(0))));
-  check(*(req.datas->at(1)) == "789\n", "%s", PTRS(*(req.datas->at(1))));
-  delete req.datas->at(0); delete req.datas->at(1); delete req.datas;
+  // ignore memory leak
+  std::vector<FileRecord *> *records = req.records;
+  const std::string *ptr;
+
+  check(records->size() == 3, "%d", (int) records->size());
+
+  ptr = records->at(0)->data;
+  check(ptr->substr(ptr->size() - 6) == "Start\n", "%s", PTRS(*ptr));
+  ptr = records->at(1)->data;
+  check(*ptr == "*zzyong 456\n", "%s", PTRS(*ptr));
+  ptr = records->at(2)->data;
+  check(*ptr == "*zzyong 789\n", "%s", PTRS(*ptr));
+
+  read(cnf->accept, &req, sizeof(OneTaskReq));
+  records = req.records;
+
+  check(records->size() == 1, "%d", (int) records->size());
+  ptr = records->at(0)->data;
+  check(ptr->find("End") != std::string::npos, "%s", PTRS(*ptr));
 
   sleep(2);
   for (std::map<int, LuaCtx*>::iterator ite = inotify.fdToCtx_.begin(); ite != inotify.fdToCtx_.end(); ++ite) {
@@ -359,8 +376,13 @@ DEFINE(watchLoop)
   close(fd);
 
   read(cnf->accept, &req, sizeof(OneTaskReq));
-  check(*(req.datas->at(0)) == "abcd\nefg\n", "%s", PTRS(*(req.datas->at(0))));
-  delete req.datas->at(0); delete req.datas;
+  records = req.records;
+
+  check(records->size() == 2, "%d", (int) records->size());
+  ptr = records->at(0)->data;
+  check(ptr->substr(ptr->size() - 6) == "Start\n", "%s", PTRS(*ptr));
+  ptr = records->at(1)->data;
+  check(*ptr == "*zzyong abcd\nefg\n", "%s", PTRS(*ptr));
 
   runStatus->set(RunStatus::STOP);
   pthread_join(tid, 0);

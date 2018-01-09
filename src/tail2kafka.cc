@@ -153,9 +153,9 @@ void *routine(void *data)
 
     assert(nn == sizeof(OneTaskReq));
 
-    if (!req.datas) break;  // terminate task
-    kafka->produce(req.idx, req.datas);
-    delete req.datas;
+    if (!req.records) break;  // terminate task
+    kafka->produce(req.ctx, req.records);
+    delete req.records;
 
     kafka->poll(0);
   }

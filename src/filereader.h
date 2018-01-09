@@ -6,14 +6,17 @@
 #include <stdint.h>
 #include <sys/types.h>
 
+#include "filerecord.h"
+class LuaCtx;
+class FileOffRecord;
+
 #define FILE_MOVED     0x01
 #define FILE_TRUNCATED 0x02
-
-class LuaCtx;
+#define FILE_DELETED   0x04
 
 struct OneTaskReq {
-  int                         idx;
-  std::vector<std::string *> *datas;
+  LuaCtx *ctx;
+  std::vector<FileRecord *> *records;
 };
 
 class FileReader {
@@ -31,40 +34,47 @@ public:
   void tagRemove() { flags_ |= FILE_MOVED; }
   bool remove();
 
-  bool tail2kafka();
+  bool tail2kafka(StartPosition pos, struct stat *stPtr);
+  bool checkCache();
 
-  bool checkCache() {
-    std::vector<std::string *> *lines = new std::vector<std::string *>;
-    processLine(0, -1, lines);
-    return sendLines(lines);
-  }
-
-  off_t getPos() const { return size_; }
-  ino_t getInode() const { return inode_; }
+  void initFileOffRecord(FileOffRecord * fileOffRecord);
+  void updateFileOffRecord(const FileRecord *record);
 
 private:
   void propagateTailContent(size_t size);
-  void propagateProcessLines();
-  void processLines();
-  bool processLine(char *line, size_t nline, std::vector<std::string *> *lines);
-  bool sendLines(std::vector<std::string *> *lines);
+  void propagateProcessLines(ino_t inode, off_t *off);
+  void processLines(ino_t inode, off_t *off);
+  int processLine(char *line, size_t nline, std::vector<std::string *> *lines);
+  void propagateSendLines();
+  bool sendLines();
 
   bool tryOpen(char *errbuf);
   bool setStartPosition(off_t fileSize, char *errbuf);
   bool setStartPositionEnd(off_t fileSize, char *errbuf);
 
+  void cacheFileStartRecord();
+  void cacheFileEndRecord(off_t size);
+  void propagateRawData(const std::string &line, off_t size);
+  void cacheFileRecord(ino_t inode, off_t off, const std::vector<std::string *> &lines, size_t n);
+
 private:
   int    fd_;
   off_t  size_;
   ino_t  inode_;
-  int    lines_;
   uint32_t flags_;
-  time_t start_;
+
+  FileOffRecord *fileOffRecord_;
+
+  size_t line_;
+  size_t dline_;  // send line
+  off_t  dsize_;  // send size
 
   char         *buffer_;
   size_t        npos_;
   std::string   file_;
   LuaCtx       *ctx_;
+
+  std::vector<FileRecord*> *fileRecordsCache_;
 };
 
 #endif

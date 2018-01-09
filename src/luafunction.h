@@ -11,16 +11,11 @@ public:
   enum Type { FILTER, GREP, TRANSFORM, AGGREGATE, NIL };
 
   static LuaFunction *create(LuaCtx *ctx, LuaHelper *helper);
-  bool process(const char *line, size_t nline, std::vector<std::string *> *lines);
-  bool serializeCache(std::vector<std::string*> *lines);
+  int process(const char *line, size_t nline, std::vector<std::string *> *lines);
+  int serializeCache(std::vector<std::string*> *lines);
 
-  bool empty() const {
-    return type_ == NIL;
-  }
-
-  Type getType() const {
-    return type_;
-  }
+  bool empty() const { return type_ == NIL; }
+  Type getType() const { return type_; }
 
 private:
   static const char *typeToString(Type type);
@@ -32,10 +27,10 @@ private:
     type_    = type;
   }
 
-  bool filter(const std::vector<std::string> &fields, std::vector<std::string *> *lines);
-  bool grep(const std::vector<std::string> &fields, std::vector<std::string *> *lines);
-  bool transform(const char *line, size_t nline, std::vector<std::string *> *lines);
-  bool aggregate(const std::vector<std::string> &fields, std::vector<std::string *> *lines);
+  int filter(const std::vector<std::string> &fields, std::vector<std::string *> *lines);
+  int grep(const std::vector<std::string> &fields, std::vector<std::string *> *lines);
+  int transform(const char *line, size_t nline, std::vector<std::string *> *lines);
+  int aggregate(const std::vector<std::string> &fields, std::vector<std::string *> *lines);
 
 private:
   LuaCtx      *ctx_;

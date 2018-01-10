@@ -29,6 +29,8 @@ FileReader::FileReader(LuaCtx *ctx)
   npos_   = 0;
   flags_  = 0;
 
+  size_ = dsize_ = 0;
+  line_ = dline_ = 0;
   fileRecordsCache_ = 0;
 }
 
@@ -75,6 +77,7 @@ bool FileReader::reinit()
     struct stat st;
     fstat(fd_, &st);
     size_ = 0;
+    line_ = 0;
     npos_ = 0;
     inode_ = st.st_ino;
 
@@ -117,10 +120,14 @@ void FileReader::updateFileOffRecord(const FileRecord *record)
   if (record->inode != fileOffRecord_->inode) {
     fileOffRecord_->inode = record->inode;
     fileOffRecord_->off   = record->off;
+    dline_ = 1;
+    dsize_ = record->data->size();
     log_info(0, "%s change inode from %ld to %ld", ctx_->file().c_str(),
              (long) fileOffRecord_->inode, (long) record->inode);
   } else if (record->off > fileOffRecord_->off) {
     fileOffRecord_->off   = record->off;
+    dline_++;
+    dsize_ += record->data->size() - ctx_->function()->extraSize();
   } else {
     log_fatal(0, "%s off change smaller, from %ld to %ld", ctx_->file().c_str(),
               (long) fileOffRecord_->off, (long) record->off);
@@ -155,16 +162,16 @@ bool FileReader::remove()
 
   bool rc = false;
   if (flags_ & FILE_MOVED) {
-    log_info(0, "%d %s size(%lu) send(%lu) moved to %s", fd_, ctx_->file().c_str(),
-             size_, st.st_size, getFileNameFromFd(fd_).c_str());
+    log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) moved to %s", fd_, ctx_->file().c_str(),
+             size_, dsize_, line_, dline_, getFileNameFromFd(fd_).c_str());
     rc = true;
   } else if (flags_ & FILE_DELETED) {
-    log_info(0, "%d %s size(%lu) send(%lu) deleted %s", fd_, ctx_->file().c_str(),
-             size_, st.st_size, getFileNameFromFd(fd_).c_str());
+    log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) deleted %s", fd_, ctx_->file().c_str(),
+             size_, dsize_, line_, dline_, getFileNameFromFd(fd_).c_str());
     rc = true;
   } else if (flags_ & FILE_TRUNCATED) {
-    log_info(0, "%d %s size(%lu) send(%lu) truncated", fd_, ctx_->file().c_str(),
-             size_, st.st_size);
+    log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) truncated", fd_, ctx_->file().c_str(),
+             size_, dsize_, line_, dline_);
     rc = true;
   } else if (st.st_ino != inode_) {
     log_info(0, "%d %s inode changed", fd_, ctx_->file().c_str());
@@ -360,7 +367,7 @@ void FileReader::processLines(ino_t inode, off_t *offPtr)
       if (offPtr) *offPtr += pos - buffer_ + 1;
       cacheFileRecord(inode, offPtr ? *offPtr : -1, lines, np);
 
-      line_++;
+      if (np > 0) line_++;
       n = (pos+1) - buffer_;
     }
   } else {
@@ -370,9 +377,7 @@ void FileReader::processLines(ino_t inode, off_t *offPtr)
       if (offPtr) *offPtr += pos - (buffer_ + n) + 1;
       cacheFileRecord(inode, offPtr ? *offPtr : -1, lines, np);
 
-      dsize_ += pos - (buffer_ + n) + 1;
       if (np > 0) line_++;
-
       n = (pos+1) - buffer_;
       if (n == npos_) break;
     }

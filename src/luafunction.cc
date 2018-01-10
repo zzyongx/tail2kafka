@@ -47,6 +47,12 @@ LuaFunction *LuaFunction::create(LuaCtx *ctx, LuaHelper *helper)
     return 0;
   }
 
+  if (function->type_ == NIL && ctx->withhost()) {
+    function->extraSize_ = 2 + ctx->cnf()->host().size();
+  } else {
+    function->extraSize_ = 0;
+  }
+
   return function.release();
 }
 

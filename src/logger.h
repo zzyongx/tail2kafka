@@ -115,7 +115,11 @@ private:
   Logger(const std::string &file, Rotate rotate, time_t *nowPtr)
     : rotate_(rotate), reopen_(false), nowPtr_(nowPtr),
       bindStdout_(false), bindStderr_(false), handle_(-1), file_(file) {
+#if _DEBUG_
+    setLevel(DEBUG);
+#else
     setLevel(INFO);
+#endif
   }
 
   bool init() {

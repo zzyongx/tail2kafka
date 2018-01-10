@@ -76,11 +76,11 @@ test:
 
 	@echo "unit test"
 	find logs -type f -name "*.log" -delete
-	make clean &&	make PREDEF="-DNO_LOGGER" DEBUG=1
+	make clean && make PREDEF="-DNO_LOGGER" DEBUG=1
 	./tail2kafka_unittest
 
 	@echo "blackbox test"
-	make clean && make &&	make tail2kafka_blackbox
+	make clean && make PREDEF="-D_DEBUG_" && make tail2kafka_blackbox
 	./blackboxtest/blackbox_test.sh
 
 .PHONY: install

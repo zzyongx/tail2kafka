@@ -16,6 +16,7 @@ public:
 
   bool empty() const { return type_ == NIL; }
   Type getType() const { return type_; }
+  size_t extraSize() const { return extraSize_; }
 
 private:
   static const char *typeToString(Type type);
@@ -37,6 +38,7 @@ private:
   LuaHelper   *helper_;
   std::string funName_;
   Type        type_;
+  size_t      extraSize_;
 
   std::vector<int> filters_;
 

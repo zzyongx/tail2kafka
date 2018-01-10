@@ -37,8 +37,13 @@ public:
   void reset() {
     i = j = 0;
   }
-  char *operator()() {
-    snprintf(buffer, 256, "basic.%d.%d\n", i, j);
+  char *operator()(bool t = false) {
+    if (t) {
+      snprintf(buffer, 256, "*%s basic.%d.%d\n", hostname, i, j);
+    } else {
+      snprintf(buffer, 256, "basic.%d.%d\n", i, j);
+    }
+
     if (++i == 100) {
       j++;
       i = 0;
@@ -119,11 +124,12 @@ class GrepProducer {
 public:
   GrepProducer() : i(0) {}
   void reset() { i = 0; }
-  char *operator()(bool grep = false) {
-    if (grep) {
-      snprintf(buffer, 256, "%s [02/Apr/2015:12:05:%02d] \"GET /%d HTTP/1.0\" 200 %d\n",
+  char *operator()(bool t = false) {
+    if (t) {
+      snprintf(buffer, 256, "%s [02/Apr/2015:12:05:%02d] \"GET /%d HTTP/1.0\" 200 %d",
                hostname, i/2, i%2, i%10);
     } else {
+      // test empty line
       snprintf(buffer, 256, "grep - - [02/Apr/2015:12:05:%02d] \"GET /%d HTTP/1.0\" 200 - - %d\n",
                i/2, i%2, i%10);
     }
@@ -311,44 +317,57 @@ void *consumer_routine(void *data)
 
 void basic_consumer(rd_kafka_message_t *rkm)
 {
-  // printf("%.*s", (int) rkm->len, (char *) rkm->payload);
-  const char *ptr = basicPro();
+  if (memcmp(rkm->payload, "#", 1) == 0) return;   // skip comment line
+
+  const char *ptr = basicPro(true);
 	check(rkm->len == strlen(ptr),
-        "length(%.*s) != length(%s)", (int) rkm->len, (char *) rkm->payload, ptr);
+        "basic: length(%.*s) != length(%s)", (int) rkm->len, (char *) rkm->payload, ptr);
   check(memcmp(rkm->payload, ptr, rkm->len) == 0,
-        "%.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
+        "basic: %.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
 }
 
 void filter_consumer(rd_kafka_message_t *rkm)
 {
-  // printf("%.*s\n", (int) rkm->len, (char *) rkm->payload);
+  if (memcmp(rkm->payload, "#", 1) == 0) return;   // skip comment line
+
   const char *ptr = filterPro(true);
+	check(rkm->len == strlen(ptr),
+        "filter: length(%.*s) != length(%s)", (int) rkm->len, (char *) rkm->payload, ptr);
   check(memcmp(rkm->payload, ptr, rkm->len) == 0,
-        "%.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
+        "filter: %.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
 }
 
 void grep_consumer(rd_kafka_message_t *rkm)
 {
-  // printf("%.*s\n", (int) rkm->len, (char *) rkm->payload);
+  if (memcmp(rkm->payload, "#", 1) == 0) return;   // skip comment line
+
   const char *ptr = grepPro(true);
+	check(rkm->len == strlen(ptr),
+        "grep: length(%.*s) != length(%s)", (int) rkm->len, (char *) rkm->payload, ptr);
   check(memcmp(rkm->payload, ptr, rkm->len) == 0,
-        "%.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
+        "grep: %.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
 }
 
 void aggregate_consumer(rd_kafka_message_t *rkm)
 {
-  // printf("%.*s\n", (int) rkm->len, (char *) rkm->payload);
+  if (memcmp(rkm->payload, "#", 1) == 0) return;   // skip comment line
+
   const char *ptr = aggregatePro(true);
+	check(rkm->len == strlen(ptr),
+        "aggregate: length(%.*s) != length(%s)", (int) rkm->len, (char *) rkm->payload, ptr);
   check(memcmp(rkm->payload, ptr, rkm->len) == 0,
-        "%.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
+        "aggregate: %.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
 }
 
 void transform_consumer(rd_kafka_message_t *rkm)
 {
-  // printf("%.*s\n", (int) rkm->len, (char *) rkm->payload);
+  if (memcmp(rkm->payload, "#", 1) == 0) return;   // skip comment line
+
   const char *ptr = transformPro(true);
+	check(rkm->len == strlen(ptr),
+        "transform: length(%.*s) != length(%s)", (int) rkm->len, (char *) rkm->payload, ptr);
   check(memcmp(rkm->payload, ptr, rkm->len) == 0,
-        "%.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
+        "transform: %.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
 }
 
 void start_consumer()

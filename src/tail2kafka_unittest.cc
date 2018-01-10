@@ -333,7 +333,7 @@ DEFINE(watchLoop)
   ctx->rawcopy_ = false;
   check(ctx->autonl(), "%s", BTOS(ctx->autonl()));
 
-  const char *s2 = "\n789\n";
+  const char *s2 = "\n\n789\n";   // test empty line
   write(fd, s2, strlen(s2));
   close(fd);
 

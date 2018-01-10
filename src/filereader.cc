@@ -358,7 +358,7 @@ void FileReader::processLines(ino_t inode, off_t *offPtr)
       int np = processLine(buffer_, pos - buffer_, &lines);
 
       if (offPtr) *offPtr += pos - buffer_ + 1;
-      cacheFileRecord(inode, offPtr ? *offPtr : (off_t) -1, lines, np);
+      cacheFileRecord(inode, offPtr ? *offPtr : -1, lines, np);
 
       line_++;
       n = (pos+1) - buffer_;
@@ -368,10 +368,10 @@ void FileReader::processLines(ino_t inode, off_t *offPtr)
       int np = processLine(buffer_ + n, pos - (buffer_ + n), &lines);
 
       if (offPtr) *offPtr += pos - (buffer_ + n) + 1;
-      cacheFileRecord(inode, offPtr ? *offPtr : (off_t) -1, lines, np);
+      cacheFileRecord(inode, offPtr ? *offPtr : -1, lines, np);
 
       dsize_ += pos - (buffer_ + n) + 1;
-      line_++;
+      if (np > 0) line_++;
 
       n = (pos+1) - buffer_;
       if (n == npos_) break;
@@ -395,7 +395,7 @@ void FileReader::processLines(ino_t inode, off_t *offPtr)
 int FileReader::processLine(char *line, size_t nline, std::vector<std::string *> *lines)
 {
   /* ignore empty line */
-  if (nline == 0) return true;
+  if (nline == 0) return 0;
 
   int n;
   if (line == 0 && nline == (size_t)-1) {
@@ -413,7 +413,7 @@ bool FileReader::checkCache()
     std::vector<std::string *> lines;
     int n = processLine(0, -1, &lines);
     if (n > 0) {
-      cacheFileRecord(-1, (off_t)-1, lines, n);
+      cacheFileRecord(-1, -1, lines, n);
       ctx->getFileReader()->sendLines();
     }
     ctx = ctx->next();

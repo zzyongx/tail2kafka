@@ -151,7 +151,7 @@ int LuaFunction::aggregate(const std::vector<std::string> &fields, std::vector<s
 int LuaFunction::process(const char *line, size_t nline, std::vector<std::string *> *lines)
 {
   if (type_ == TRANSFORM) {
-    return transform(line, nline-1, lines);
+    return transform(line, nline, lines);
   } else if (type_ == AGGREGATE || type_ == GREP || type_ == FILTER) {
     std::vector<std::string> fields;
     split(line, nline, &fields);

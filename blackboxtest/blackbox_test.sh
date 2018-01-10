@@ -13,6 +13,8 @@ fi
 
 # delete.topic.enable=true
 
+find logs -type f -name "*.log" -delete
+
 cd /opt/kafka
 for TOPIC in "basic" "filter" "grep" "aggregate" "transform"; do
   bin/kafka-topics.sh --delete --zookeeper localhost:2181 --topic $TOPIC

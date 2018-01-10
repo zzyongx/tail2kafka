@@ -80,7 +80,6 @@ test:
 	./tail2kafka_unittest
 
 	@echo "blackbox test"
-	find logs -type f -name "*.log" -delete
 	make clean && make &&	make tail2kafka_blackbox
 	./blackboxtest/blackbox_test.sh
 

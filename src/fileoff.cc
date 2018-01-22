@@ -35,10 +35,9 @@ bool FileOff::loadFromFile(char *errbuf)
       return true;
     }
   }
-
   FileOffRecord record;
-  while (fread(&record, sizeof(record), 1, fp) != 1) {
-    if (record.inode == 0 && record.off == 0) break;
+  while (fread(&record, sizeof(record), 1, fp) == 1) {
+    if (record.inode == 0 && record.off == 0) continue;
     map_.insert(std::make_pair(record.inode, record.off));
   }
 
@@ -77,7 +76,7 @@ bool FileOff::reinit()
     return false;
   }
 
-  addr_ = mmap(NULL, length_, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+  addr_ = mmap(NULL, length_, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
   if (addr_ == MAP_FAILED) {
     snprintf(cnf_->errbuf(), MAX_ERR_LEN, "mmap %s error %s", file_.c_str(), strerror(errno));
     close(fd);

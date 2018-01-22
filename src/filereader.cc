@@ -94,12 +94,18 @@ bool FileReader::setStartPosition(off_t fileSize, char *errbuf)
   StartPosition startPosition = stringToStartPosition(ctx_->getStartPosition());
   if (startPosition == FileReader::LOG_START) {
     size_ = ctx_->cnf()->getFileOff()->getOff(inode_);
-    if (size_ == (off_t) -1 || size_ > fileSize) size_ = 0;
+    if (size_ == (off_t) -1 || size_ > fileSize) {
+      size_ = 0;
+      log_error(0, "%s fileoff notfound, set to start", file_.c_str());
+    }
   } else if (startPosition == FileReader::START) {
     size_ = 0;
   } else if (startPosition == FileReader::LOG_END) {
     size_ = ctx_->cnf()->getFileOff()->getOff(inode_);
-    if (size_ == (off_t) -1 || size_ > fileSize) return setStartPositionEnd(fileSize, errbuf);
+    if (size_ == (off_t) -1 || size_ > fileSize) {
+      log_error(0, "%s fileoff notfound, set to end", file_.c_str());
+      return setStartPositionEnd(fileSize, errbuf);
+    }
   } else if (startPosition == FileReader::END) {
     return setStartPositionEnd(fileSize, errbuf);
   }

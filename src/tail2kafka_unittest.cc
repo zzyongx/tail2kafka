@@ -247,6 +247,16 @@ DEFINE(reinitFileOff)
 {
   check(cnf->getFileOff()->reinit(), "%s", cnf->errbuf());
   check(cnf->fileOff_->length_ == cnf->getLuaCtxSize() * sizeof(FileOffRecord), "%d", (int) cnf->fileOff_->length_);
+
+  LuaCtx *ctx = getLuaCtx("basic");
+  ino_t inode = ctx->fileReader_->fileOffRecord_->inode;
+  off_t off = ctx->fileReader_->fileOffRecord_->off;
+  ctx->fileReader_->fileOffRecord_->off += 100;
+
+  check(cnf->getFileOff()->loadFromFile(cnf->errbuf()), "fileoff load");
+  check(cnf->getFileOff()->map_[inode] == off+100, "mmap not work");
+
+  ctx->fileReader_->fileOffRecord_->off = off;
 }
 
 DEFINE(initFileReader)
@@ -400,6 +410,7 @@ static const char *files[] = {
 DEFINE(prepare)
 {
   mkdir(LOG(""), 0755);
+  unlink("/var/lib/tail2kafka/fileoff");
 
   for (int i = 0; files[i]; ++i) {
     int fd = creat(files[i], 0644);

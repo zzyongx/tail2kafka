@@ -43,8 +43,8 @@ get-deps:
 
 	@echo "compile librdkafka" && \
 	  cd deps && \
-    (test -f v0.9.2 || wget https://github.com/edenhill/librdkafka/archive/v0.9.2.tar.gz) && \
-	  rm -rf librdkafka-0.9.2 && tar xzf v0.9.2 && cd librdkafka-0.9.2 && \
+    (test -f v0.11.3 || wget https://github.com/edenhill/librdkafka/archive/v0.11.3.tar.gz) && \
+	  rm -rf librdkafka-0.11.3 && tar xzf v0.11.3 && cd librdkafka-0.11.3 && \
     ./configure --disable-ssl --disable-sasl && make -j2 && make install
 	cp /usr/local/lib/librdkafka.a ./deps
 

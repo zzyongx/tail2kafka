@@ -136,8 +136,7 @@ bool initKafka(
       if (n < ctx->iid) ctx->iid = n;
 
       if (rd_kafka_consume_start_queue(ctx->rkt, n, offset, ctx->rkqu) == -1) {
-        fprintf(stderr, "%s:%d failed to start consuming: %s\n", topic, n,
-                rd_kafka_err2str(rd_kafka_errno2err(errno)));
+        fprintf(stderr, "%s:%d failed to start consuming: %s\n", topic, n, rd_kafka_err2name(rd_kafka_last_error()));
         return false;
       }
       if (!*p) break;

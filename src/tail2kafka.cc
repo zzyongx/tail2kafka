@@ -142,6 +142,7 @@ void *routine(void *data)
 
   OneTaskReq req;
 
+  int timeout = 0;
   while (runStatus->get() == RunStatus::WAIT) {
     ssize_t nn = read(cnf->accept, &req, sizeof(OneTaskReq));
     if (nn == -1) {
@@ -154,10 +155,14 @@ void *routine(void *data)
     assert(nn == sizeof(OneTaskReq));
 
     if (!req.records) break;  // terminate task
-    kafka->produce(req.ctx, req.records);
+    if (kafka->produce(req.ctx, req.records)) {
+      timeout = 0;
+    } else if (timeout < 1600) {
+      timeout = timeout == 0 ? 100 : timeout * 2;
+    }
     delete req.records;
 
-    kafka->poll(0);
+    kafka->poll(timeout);
   }
 
   runStatus->set(RunStatus::STOP);

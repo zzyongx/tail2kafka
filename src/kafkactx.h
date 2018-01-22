@@ -15,7 +15,7 @@ class KafkaCtx {
 public:
   ~KafkaCtx();
   bool init(CnfCtx *cnf, char *errbuf);
-  void produce(LuaCtx *ctx, std::vector<FileRecord *> *datas);
+  bool produce(LuaCtx *ctx, std::vector<FileRecord *> *datas);
   void poll(int timeout) { rd_kafka_poll(rk_, timeout); }
 
 private:

@@ -439,6 +439,13 @@ bool FileReader::sendLines()
     fileRecordsCache_ = 0;
 
     ssize_t nn = write(ctx_->cnf()->server, &req, sizeof(OneTaskReq));
+    if (nn == -1) {
+      if (errno != EINTR) {
+        log_fatal(errno, "write onetaskrequest error");
+        return false;
+      }
+    }
+
     assert(nn != -1 && nn == sizeof(OneTaskReq));
     return true;
   }

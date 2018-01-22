@@ -117,23 +117,22 @@ void KafkaCtx::produce(LuaCtx *ctx, FileRecord *record)
   rd_kafka_topic_t *rkt = ctx->rkt();
   record->ctx = ctx;
 
+  int rc;
   int i = 0;
-  again:
-  int rc = rd_kafka_produce(rkt, RD_KAFKA_PARTITION_UA, 0, (void *) record->data->c_str(),
-                            record->data->size(), 0, 0, record);
-  if (rc != 0) {
+  while ((rc = rd_kafka_produce(rkt, RD_KAFKA_PARTITION_UA, 0, (void *) record->data->c_str(),
+                                record->data->size(), 0, 0, record)) != 0) {
     if (errno == ENOBUFS) {
       log_error(0, "%s kafka produce error(#%d) %s", rd_kafka_topic_name(rkt), ++i, strerror(errno));
-      rd_kafka_poll(rk_, i < 10 ? 10 * i : 100);
-      goto again;
+      rd_kafka_poll(rk_, i < 1000 ? 100 * i : 1000);
     } else {
-      log_error(0, "%s kafka produce error %d:%s\n", rd_kafka_topic_name(rkt), errno, strerror(errno));
+      log_fatal(0, "%s kafka produce error %d:%s", rd_kafka_topic_name(rkt), errno, strerror(errno));
       FileRecord::destroy(record);
+      break;
     }
   }
 }
 
-void KafkaCtx::produce(LuaCtx *ctx, std::vector<FileRecord *> *datas)
+bool KafkaCtx::produce(LuaCtx *ctx, std::vector<FileRecord *> *datas)
 {
   assert(!datas->empty());
   rd_kafka_topic_t *rkt = ctx->rkt();
@@ -154,17 +153,20 @@ void KafkaCtx::produce(LuaCtx *ctx, std::vector<FileRecord *> *datas)
     rkmsgs[i]._private = record;
   }
 
+  bool rc = true;
+
   int n = rd_kafka_produce_batch(rkt, RD_KAFKA_PARTITION_UA, 0, &rkmsgs[0], rkmsgs.size());
   if (n != (int) rkmsgs.size()) {
     for (std::vector<rd_kafka_message_t>::iterator ite = rkmsgs.begin(), end = rkmsgs.end();
          ite != end; ++ite) {
       if (ite->err) {
-        log_error(0, "%s kafka produce batch error %s\n", rd_kafka_topic_name(rkt),
-                  rd_kafka_message_errstr(&(*ite)));
-
-        rd_kafka_poll(rk_, 10);
+        log_info(0, "%s kafka produce batch error %s", rd_kafka_topic_name(rkt), rd_kafka_err2str(ite->err));
+        rd_kafka_poll(rk_, 100);
         produce(ctx, (FileRecord *) ite->_private);
       }
     }
+    rc = false;
   }
+
+  return rc;
 }

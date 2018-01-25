@@ -8,6 +8,7 @@
 #include <map>
 #include <errno.h>
 #include <signal.h>
+#include <limits.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -39,7 +40,22 @@ struct FdCache {
   std::string file;
   std::vector<struct iovec> iovs;
 
-  FdCache() : fd(-1) {}
+  size_t rkmSize;
+  rd_kafka_message_t **rkms;
+
+  FdCache() : fd(-1), rkmSize(0), rkms(0) {}
+
+  ~FdCache() {
+    assert(rkmSize == 0);
+    if (fd != -1) close(fd);
+    if (rkms) delete[] rkms;
+  }
+
+  void clear() {
+    for (size_t i = 0; i < rkmSize; ++i) rd_kafka_message_destroy(rkms[i]);
+    rkmSize = 0;
+    iovs.clear();
+  }
 };
 
 class KafkaConsumer {
@@ -47,8 +63,6 @@ public:
   static KafkaConsumer *create(const char *wdir, const char *brokers, const char *topic, int partition);
 
   ~KafkaConsumer() {
-    if (rkmCache_) delete[] rkmCache_;
-
     if (rkqu_) rd_kafka_queue_destroy(rkqu_);
     if (rkt_)  rd_kafka_topic_destroy(rkt_);
     if (rk_)   rd_kafka_destroy(rk_);
@@ -57,12 +71,10 @@ public:
   bool loop(RunStatus *runStatus);
 
 private:
-  KafkaConsumer() : rk_(0), rkt_(0), rkqu_(0), rkmCacheSize_(0) {
-    rkmCache_ = new rd_kafka_message_t*[rkmCacheMax_];
-  }
+  KafkaConsumer() : rk_(0), rkt_(0), rkqu_(0) {}
 
   bool addToCache(rd_kafka_message_t *rkm, std::string *host, std::string *file);
-  bool flushCache(uint64_t off, const std::string &host, std::string *ofile);
+  bool flushCache(bool force, uint64_t off, bool eof, const std::string &host, std::string *ofile);
   bool write(rd_kafka_message_t *rkm, uint64_t off);
 
 private:
@@ -75,11 +87,6 @@ private:
   rd_kafka_queue_t *rkqu_;
 
   Offset offset_;
-
-  size_t                rkmCacheSize_;
-  rd_kafka_message_t  **rkmCache_;
-  static const size_t   rkmCacheMax_ = 10000;
-
   std::map<std::string, FdCache> fdCache_;
 };
 
@@ -122,10 +129,10 @@ int main(int argc, char *argv[])
   bool rc = ctx->loop(runStatus);
   delete ctx;
 
+  log_info(0, "exit");
   return rc ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
-//  mkdir(OFFDIR, 0755);
 bool Offset::init(const char *wdir, const char *topic, int partition)
 {
   char path[512];
@@ -202,13 +209,15 @@ bool KafkaConsumer::addToCache(rd_kafka_message_t *rkm, std::string *host, std::
     *sp = ' ';
 
     if (flag == '*') {
-      struct iovec iov = { sp+1, rkm->len - (sp+1 - (char *) rkm->payload) };
-      fdCache_[*host].iovs.push_back(iov);
+      FdCache &fdCache = fdCache_[*host];
 
-      rkmCache_[rkmCacheSize_] = rkm;
-      rkmCacheSize_++;
+      if (!fdCache.rkms) fdCache.rkms = new rd_kafka_message_t*[IOV_MAX];
+
+      struct iovec iov = { sp+1, rkm->len - (sp+1 - (char *) rkm->payload) };
+      fdCache.iovs.push_back(iov);
+      fdCache.rkms[fdCache.rkmSize++] = rkm;
     } else {
-      log_info(0, "META %.*s", (int) rkm->len, (char *) rkm->payload);
+      log_info(0, "META %llu %.*s", rkm->offset, (int) rkm->len, (char *) rkm->payload);
 
       std::string s((char *)rkm->payload, rkm->len);
       if (s.find("End") != std::string::npos) {
@@ -226,47 +235,42 @@ bool KafkaConsumer::addToCache(rd_kafka_message_t *rkm, std::string *host, std::
   return eof;
 }
 
-bool KafkaConsumer::flushCache(uint64_t off, const std::string &host, std::string *ofile)
+bool KafkaConsumer::flushCache(bool force, uint64_t off, bool eof, const std::string &host, std::string *ofile)
 {
-  bool rc = true;
-  for (std::map<std::string, FdCache>::iterator ite = fdCache_.begin(); ite != fdCache_.end(); /**/) {
-    if (ite->second.fd < 0) {
+  bool flush = false;
+  for (std::map<std::string, FdCache>::iterator ite = fdCache_.begin(); ite != fdCache_.end(); ++ite) {
+    FdCache &fdCache = ite->second;
+    if (!(force || fdCache.rkmSize == IOV_MAX || (eof && host == ite->first))) continue;
+
+    flush = true;
+    if (fdCache.fd < 0) {
       char path[1024];
       snprintf(path, 1024, "%s/%s/%s", wdir_, topic_, ite->first.c_str());
-      int fd = open(path, O_CREAT | O_WRONLY, 0644);
+      int fd = open(path, O_CREAT | O_WRONLY | O_APPEND, 0644);
       if (fd == -1) {
         log_fatal(errno, "open %s error", path);
-        rc = false;
-        continue;
+        exit(EXIT_FAILURE);
       }
-      ite->second.fd = fd;
-      ite->second.file = path;
+      fdCache.fd = fd;
+      fdCache.file = path;
     }
 
     ssize_t wantn = 0;
-    for (size_t i = 0; i < ite->second.iovs.size(); ++i) wantn += ite->second.iovs[i].iov_len;
+    for (size_t i = 0; i < fdCache.iovs.size(); ++i) wantn += fdCache.iovs[i].iov_len;
 
     if (wantn > 0) {
-      ssize_t n = writev(ite->second.fd, &(ite->second.iovs[0]), ite->second.iovs.size());
+      ssize_t n = writev(fdCache.fd, &(fdCache.iovs[0]), fdCache.iovs.size());
       if (n != wantn) {
         log_fatal(errno, "%s:%d %s writev error", topic_, partition_, ite->first.c_str());
-        rc = false;
+        exit(EXIT_FAILURE);
       }
     }
 
-    if (ite->first == host && ofile) {
-      ofile->assign(ite->second.file);
-      fdCache_.erase(ite++);
-    } else {
-      ite->second.iovs.clear();
-      ++ite;
-    }
+    if (ite->first == host && ofile) ofile->assign(ite->second.file);
+    fdCache.clear();
   }
 
-  for (size_t i = 0; i < rkmCacheSize_; ++i) rd_kafka_message_destroy(rkmCache_[i]);
-  rkmCacheSize_ = 0;
-
-  offset_.update(off);
+  if (flush) offset_.update(off);
   return true;
 }
 
@@ -276,18 +280,18 @@ bool KafkaConsumer::write(rd_kafka_message_t *rkm, uint64_t off)
   std::string host, ofile, nfile;
 
   bool eof = addToCache(rkm, &host, &nfile);
-  if (!eof && rkmCacheSize_ != rkmCacheMax_) return true;
-
-  rc = flushCache(off, host, &ofile);
+  rc = flushCache(false, off, eof, host, &ofile);
 
   if (eof) {
+    fdCache_.erase(host);
+
     size_t slash = nfile.rfind('/');
     if (slash == std::string::npos) nfile = ofile + "_" + nfile;
     else nfile = ofile + "_" + nfile.substr(slash+1);
 
     if (rename(ofile.c_str(), nfile.c_str()) == -1) {
       log_fatal(errno, "%s:%d rename %s to %s error", topic_, partition_, ofile.c_str(), nfile.c_str());
-      rc = false;
+      exit(EXIT_FAILURE);
     } else {
       log_info(0, "%s:%d rename %s to %s", topic_, partition_, ofile.c_str(), nfile.c_str());
     }
@@ -310,12 +314,13 @@ bool KafkaConsumer::loop(RunStatus *runStatus)
       continue;
     }
 
-    log_debug(0, "data %.*s\n", (int) rkm->len, (char *) rkm->payload);
     off = rkm->offset;
+    log_debug(0, "data @%llu %.*s\n", off, (int) rkm->len, (char *) rkm->payload);
+
     write(rkm, off);
   }
 
-  if (off != (uint64_t)-1) flushCache(off, "", 0);
+  if (off != (uint64_t)-1) flushCache(true, off, false, "", 0);
   return true;
 }
 

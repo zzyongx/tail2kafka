@@ -1,0 +1,21 @@
+#!/bin/bash
+set -e
+
+SPECFILE=tail2kafka.spec
+
+RPMNAM=$(grep "Name:"    $SPECFILE | awk '{print $2}')
+RPMVER=$(grep "Version:" $SPECFILE | awk '{print $2}')
+RPMREL=$(grep "Release:" $SPECFILE | awk '{print $2}')
+
+TMPDIR=/tmp/$RPMNAM-$RPMVER
+rm -rf $TMPDIR && mkdir $TMPDIR
+
+cp . $TMPDIR -a
+
+cd /tmp
+tar czf $RPMNAM-$RPMVER.tar.gz $RPMNAM-$RPMVER
+mv -f $RPMNAM-$RPMVER.tar.gz /root/rpmbuild/SOURCES/
+cd -
+
+rpmbuild -bb $SPECFILE
+mv /root/rpmbuild/RPMS/x86_64/$RPMNAM-$RPMVER-$RPMREL.x86_64.rpm .

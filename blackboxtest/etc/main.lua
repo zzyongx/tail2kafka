@@ -7,7 +7,9 @@ brokers   = "127.0.0.1:9092"
 
 kafka_global = {
   ["client.id"] = "tail2kafka",
-  ["broker.version.fallback"] = "0.8.2.1"
+  ["broker.version.fallback"] = "0.8.2.1",
+  ["compression.codec"] = "snappy",
+  ["message.send.max.retries"] = 10,
 }
 
 kafka_topic  = {

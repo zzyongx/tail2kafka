@@ -74,6 +74,8 @@ void *basic_routine(void *)
   }
   fclose(fp);
 
+  rename(LOG("basic.log"), LOG("basic.log.old"));
+
   basicPro.reset();
   return NULL;
 }
@@ -288,7 +290,7 @@ void *consumer_routine(void *data)
   if (rd_kafka_consume_start(rkt, 0,
                              RD_KAFKA_OFFSET_BEGINNING) == -1) {
     fprintf(stderr, "%s failed to start consuming: %s\n", ctx->topic,
-            rd_kafka_err2str(rd_kafka_errno2err(errno)));
+            rd_kafka_err2name(rd_kafka_last_error()));
     return THREAD_FAILURE;
   }
 

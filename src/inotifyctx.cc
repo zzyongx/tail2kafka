@@ -51,6 +51,7 @@ bool InotifyCtx::init()
       return false;
     }
     fdToCtx_.insert(std::make_pair(wd, ctx));
+    log_info(0, "add watch %s @%d", ctx->file().c_str(), wd);
   }
   return true;
 }
@@ -61,12 +62,11 @@ bool InotifyCtx::tryReWatch()
     LuaCtx *ctx = *ite;
 
     if (ctx->getFileReader()->reinit()) {
-      log_info(0, "rewatch %s", ctx->file().c_str());
-
       int wd = inotify_add_watch(wfd_, ctx->file().c_str(), WATCH_EVENT);
       fdToCtx_.insert(std::make_pair(wd, ctx));
 
-      ctx->getFileReader()->tail2kafka(FileReader::NIL, 0);
+      log_info(0, "rewatch %s @%d", ctx->file().c_str(), wd);
+      ctx->getFileReader()->tail2kafka();
     }
   }
   return true;
@@ -86,7 +86,7 @@ void InotifyCtx::tryRmWatch()
     LuaCtx *ctx = ite->second;
 
     if (ctx->getFileReader()->remove()) {
-      log_info(0, "remove watch %s", ctx->file().c_str());
+      log_info(0, "remove watch %s @%d", ctx->file().c_str(), ite->first);
 
       inotify_rm_watch(wfd_, ite->first);
       fdToCtx_.erase(ite++);
@@ -126,14 +126,21 @@ void InotifyCtx::loop()
         struct inotify_event *event = (struct inotify_event *) p;
         if (event->mask & IN_MODIFY) {
           LuaCtx *ctx = getLuaCtx(event->wd);
-          log_debug(0, "inotify %s was modified", ctx->file().c_str());
-          ctx->getFileReader()->tail2kafka(FileReader::NIL, 0);
+          if (ctx) {
+            log_debug(0, "inotify %s was modified", ctx->file().c_str());
+            ctx->getFileReader()->tail2kafka(FileReader::NIL, 0);
+          } else {
+            log_fatal(0, "@%d could not found ctx", event->wd);
+          }
         }
         if (event->mask & IN_MOVE_SELF) {
           LuaCtx *ctx = getLuaCtx(event->wd);
-          log_info(0, "inotify %s was moved", ctx->file().c_str());
-          tryRmWatch(ctx, event->wd);
-
+          if (ctx) {
+            log_info(0, "inotify %s was moved", ctx->file().c_str());
+            tryRmWatch(ctx, event->wd);
+          } else {
+            log_fatal(0, "@%d could not found ctx", event->wd);
+          }
         }
         p += sizeof(struct inotify_event) + event->len;
       }

@@ -23,9 +23,30 @@ done
 bin/kafka-topics.sh --list --zookeeper localhost:2181
 cd -
 
+OLDFILE=kafka2filedir/basic/zzyong_basic.log.old
+test -d kafka2filedir || mkdir kafka2filedir
+rm -f kafka2filedir/basic.0.offset $OLDFILE
+
+./kafka2file 127.0.0.1:9092 basic 0 kafka2filedir &
+KAFKA2FILE_ID=$!
+
 (test -f $PIDF && test -d /proc/$(cat $PIDF)) && kill $(cat $PIDF)
 sleep 1
 ./tail2kafka $CFGDIR || exit $?
 
 sleep 1
 ./tail2kafka_blackbox
+
+echo "WAIT kafka2file ... "; sleep 20
+kill $KAFKA2FILE_ID
+
+if [ ! -f $OLDFILE ]; then
+  echo "kafka2file rotate error, expect $OLDFILE"
+  exit 1
+fi
+
+NUM=$(wc -l $OLDFILE | cut -d' ' -f 1)
+if [ "$NUM" != 200 ]; then
+  echo "line of $OLDFILE is $NUM should be 200"
+  exit 1
+fi

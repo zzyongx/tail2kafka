@@ -34,7 +34,7 @@ public:
   void tagRemove() { flags_ |= FILE_MOVED; }
   bool remove();
 
-  bool tail2kafka(StartPosition pos, struct stat *stPtr);
+  bool tail2kafka(StartPosition pos = NIL, struct stat *stPtr = 0, const char *oldFileName = 0);
   bool checkCache();
 
   void initFileOffRecord(FileOffRecord * fileOffRecord);
@@ -53,7 +53,7 @@ private:
   bool setStartPositionEnd(off_t fileSize, char *errbuf);
 
   void cacheFileStartRecord();
-  void cacheFileEndRecord(off_t size);
+  void cacheFileEndRecord(off_t size, const char *oldFileName);
   void propagateRawData(const std::string &line, off_t size);
   void cacheFileRecord(ino_t inode, off_t off, const std::vector<std::string *> &lines, size_t n);
 

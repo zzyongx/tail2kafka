@@ -167,9 +167,11 @@ bool FileReader::remove()
   else if (st.st_size < size_) flags_ |= FILE_TRUNCATED;
 
   bool rc = false;
+  std::string oldFileName;
   if (flags_ & FILE_MOVED) {
+    oldFileName = getFileNameFromFd(fd_);
     log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) moved to %s", fd_, ctx_->file().c_str(),
-             size_, dsize_, line_, dline_, getFileNameFromFd(fd_).c_str());
+             size_, dsize_, line_, dline_, oldFileName.c_str());
     rc = true;
   } else if (flags_ & FILE_DELETED) {
     log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) deleted %s", fd_, ctx_->file().c_str(),
@@ -185,7 +187,8 @@ bool FileReader::remove()
   }
 
   if (rc) {
-    tail2kafka(END, &st);
+    if (oldFileName.empty()) oldFileName = ctx_->file() + "." + sys::timeFormat(time(0), "%Y-%m-%d_%H:%M:%S");
+    tail2kafka(END, &st, oldFileName.c_str());
 
     close(fd_);
     fd_ = -1;
@@ -220,7 +223,7 @@ bool FileReader::setStartPositionEnd(off_t fileSize, char *errbuf)
   return true;
 }
 
-bool FileReader::tail2kafka(StartPosition pos, struct stat *stPtr)
+bool FileReader::tail2kafka(StartPosition pos, struct stat *stPtr, const char *oldFileName)
 {
   struct stat stat;
   if (stPtr == 0) {
@@ -266,7 +269,7 @@ bool FileReader::tail2kafka(StartPosition pos, struct stat *stPtr)
     propagateSendLines();
   }
 
-  if (pos == END) cacheFileEndRecord(size_);
+  if (pos == END) cacheFileEndRecord(size_, oldFileName);
   propagateSendLines();
   return true;
 }
@@ -314,10 +317,11 @@ void FileReader::cacheFileStartRecord()
   propagateRawData(line, -1);
 }
 
-void FileReader::cacheFileEndRecord(off_t size)
+void FileReader::cacheFileEndRecord(off_t size, const char *oldFileName)
 {
   std::string line;
   line.append(1, '#').append(ctx_->cnf()->host()).append(1, ' ');
+  if (oldFileName) line.append(1, '@').append(oldFileName).append(1, ' ');
   line.append(sys::timeFormat(time(0), "[%Y-%m-%d %H-%M-%S]")).append(1, ' ');
   line.append("End");
 

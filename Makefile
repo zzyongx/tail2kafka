@@ -31,7 +31,7 @@ tail2kafka: build/tail2kafka.o $(OBJ)
 tail2kafka_unittest: build/tail2kafka_unittest.o $(OBJ)
 	$(CXX) $(CFLAGS) -o $@ $^ $(ARLIBS) $(LDFLAGS)
 
-kafka2file: build/kafka2file.o
+kafka2file: build/kafka2file.o $(OBJ)
 	$(CXX) $(CFLAGS) -o $@ $^ $(ARLIBS) $(LDFLAGS)
 
 speedlimit: build/mix/speedlimit.o

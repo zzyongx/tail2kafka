@@ -110,7 +110,7 @@ bool initSingleton(const char *pidfile, char *errbuf)
     write(fd, buffer, len);
     return true;
   } else {
-    snprintf(errbuf, MAX_ERR_LEN, "lock %s failed", pidfile);
+    if (errbuf) snprintf(errbuf, MAX_ERR_LEN, "lock %s failed", pidfile);
     return false;
   }
 }

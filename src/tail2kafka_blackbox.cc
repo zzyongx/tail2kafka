@@ -14,7 +14,7 @@
 #include "util.h"
 #include "unittesthelper.h"
 
-#define PADDING_LEN 11
+#define PADDING_LEN 13
 
 typedef std::vector<std::string> StringList;
 static const char *hostname = "zzyong";

@@ -16,7 +16,7 @@
 #include "filereader.h"
 #include "inotifyctx.h"
 
-#define PADDING_LEN 11
+#define PADDING_LEN 13
 
 LOGGER_INIT();
 

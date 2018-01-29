@@ -4,7 +4,7 @@
 #include "luactx.h"
 #include "luafunction.h"
 
-#define PADDING_LEN 11
+#define PADDING_LEN 13
 
 const char *LuaFunction::typeToString(Type type)
 {

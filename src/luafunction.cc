@@ -1,6 +1,10 @@
 #include <memory>
+
+#include "util.h"
 #include "luactx.h"
 #include "luafunction.h"
+
+#define PADDING_LEN 11
 
 const char *LuaFunction::typeToString(Type type)
 {
@@ -47,8 +51,12 @@ LuaFunction *LuaFunction::create(LuaCtx *ctx, LuaHelper *helper)
     return 0;
   }
 
-  if (function->type_ == NIL && ctx->withhost()) {
-    function->extraSize_ = 2 + ctx->cnf()->host().size();
+  if (ctx->withhost()) {
+    if (function->type_ == NIL || function->type_ == FILTER || function->type_ == GREP || function->type_ == TRANSFORM) {
+      function->extraSize_ = 1 + ctx->cnf()->host().size() + 1 + PADDING_LEN + 1;  // *host@off
+    } else {
+      function->extraSize_ = ctx->cnf()->host().size() + 1; // host
+    }
   } else {
     function->extraSize_ = 0;
   }
@@ -56,10 +64,17 @@ LuaFunction *LuaFunction::create(LuaCtx *ctx, LuaHelper *helper)
   return function.release();
 }
 
-int LuaFunction::filter(const std::vector<std::string> &fields, std::vector<std::string *> *lines)
+inline std::string *addHost(std::string *ptr, const std::string &host, off_t off, bool space) {
+  ptr->append(1, '*').append(host);
+  if (off != (off_t) -1) ptr->append(1, '@').append(util::toStr(off, 11));
+  if (space) ptr->append(1, ' ');
+  return ptr;
+}
+
+int LuaFunction::filter(off_t off, const std::vector<std::string> &fields, std::vector<std::string *> *lines)
 {
   std::string *result = new std::string;
-  if (ctx_->withhost()) result->assign(ctx_->host());
+  if (ctx_->withhost()) result = addHost(result, ctx_->cnf()->host(), off, false);
 
   for (std::vector<int>::iterator ite = filters_.begin(), end = filters_.end();
        ite != end; ++ite) {
@@ -74,13 +89,13 @@ int LuaFunction::filter(const std::vector<std::string> &fields, std::vector<std:
   return 1;
 }
 
-int LuaFunction::grep(const std::vector<std::string> &fields, std::vector<std::string *> *lines)
+int LuaFunction::grep(off_t off, const std::vector<std::string> &fields, std::vector<std::string *> *lines)
 {
   if (!helper_->call(funName_.c_str(), fields, 1)) return -1;
   if (helper_->callResultNil()) return 0;
 
   std::string *result = new std::string;
-  if (ctx_->withhost()) result->assign(ctx_->host());
+  if (ctx_->withhost()) result = addHost(result, ctx_->cnf()->host(), off, true);
 
   if (helper_->callResultListAsString(funName_.c_str(), result)) {
     lines->push_back(result);
@@ -91,13 +106,13 @@ int LuaFunction::grep(const std::vector<std::string> &fields, std::vector<std::s
   }
 }
 
-int LuaFunction::transform(const char *line, size_t nline, std::vector<std::string *> *lines)
+int LuaFunction::transform(off_t off, const char *line, size_t nline, std::vector<std::string *> *lines)
 {
   if (!helper_->call(funName_.c_str(), line, nline)) return -1;
   if (helper_->callResultNil()) return 0;
 
   std::string *result = new std::string;
-  if (ctx_->withhost()) result->assign(ctx_->host()).append(1, ' ');
+  if (ctx_->withhost()) result = addHost(result, ctx_->cnf()->host(), off, true);
 
   if (helper_->callResultString(funName_.c_str(), result)) {
     lines->push_back(result);
@@ -121,7 +136,7 @@ int LuaFunction::serializeCache(std::vector<std::string*> *lines)
 
     s->append(ite->first);
     for (std::map<std::string, int>::iterator jte = ite->second.begin(); jte != ite->second.end(); ++jte) {
-      s->append(1, ' ').append(jte->first).append(1, '=').append(to_string(jte->second));
+      s->append(1, ' ').append(jte->first).append(1, '=').append(util::toStr(jte->second));
     }
     lines->push_back(s);
     ++n;
@@ -154,10 +169,10 @@ int LuaFunction::aggregate(const std::vector<std::string> &fields, std::vector<s
   return n;
 }
 
-int LuaFunction::process(const char *line, size_t nline, std::vector<std::string *> *lines)
+int LuaFunction::process(off_t off, const char *line, size_t nline, std::vector<std::string *> *lines)
 {
   if (type_ == TRANSFORM) {
-    return transform(line, nline, lines);
+    return transform(off, line, nline, lines);
   } else if (type_ == AGGREGATE || type_ == GREP || type_ == FILTER) {
     std::vector<std::string> fields;
     split(line, nline, &fields);
@@ -171,16 +186,16 @@ int LuaFunction::process(const char *line, size_t nline, std::vector<std::string
     if (type_ == AGGREGATE) {
       return aggregate(fields, lines);
     } else if (type_ == GREP) {
-      return grep(fields, lines);
+      return grep(off, fields, lines);
     } else if (type_ == FILTER) {
-      return filter(fields, lines);
+      return filter(off, fields, lines);
     } else {
       return 0;
     }
   } else {
     std::string *ptr = new std::string;
 
-    if (ctx_->withhost()) ptr->append(1, '*').append(ctx_->cnf()->host()).append(1, ' ');
+    if (ctx_->withhost()) addHost(ptr, ctx_->cnf()->host(), off, true);
     ptr->append(line, nline);
     if (ctx_->autonl()) ptr->append(1, '\n');
 

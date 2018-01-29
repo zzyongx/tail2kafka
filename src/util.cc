@@ -1,4 +1,4 @@
-#inlude <vector>
+#include <vector>
 #include "util.h"
 
 namespace util {
@@ -6,7 +6,7 @@ namespace util {
 bool split(const char *str, char sp, std::vector<int> *list)
 {
   int n = 0;
-  for (const char *p = partition; /* */; ++p) {
+  for (const char *p = str; /* */; ++p) {
     if (!*p || *p == sp) {
       list->push_back(n);
       if (!*p) break;

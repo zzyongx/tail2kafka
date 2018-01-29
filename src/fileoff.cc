@@ -9,6 +9,7 @@
 
 #include "cnfctx.h"
 #include "luactx.h"
+#include "filereader.h"
 #include "fileoff.h"
 
 const size_t FileOff::MAX_FILENAME_LENGTH = 256;

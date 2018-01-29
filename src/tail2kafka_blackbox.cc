@@ -11,7 +11,10 @@
 #include <librdkafka/rdkafka.h>
 
 #include "sys.h"
+#include "util.h"
 #include "unittesthelper.h"
+
+#define PADDING_LEN 11
 
 typedef std::vector<std::string> StringList;
 static const char *hostname = "zzyong";
@@ -32,28 +35,33 @@ int main()
 
 class BasicProducer {
 public:
-  BasicProducer()
-    : i(0), j(0) {}
-  void reset() {
-    i = j = 0;
+  BasicProducer() : i_(0), j_(0), offset_(1, 0), result_(false) {}
+  void reset(bool result = true) {
+    i_ = j_ = 0;
+    result_ = result;
+    if (!result_) offset_ = std::vector<int>(1, 0);
   }
-  char *operator()(bool t = false) {
-    if (t) {
-      snprintf(buffer, 256, "*%s basic.%d.%d\n", hostname, i, j);
+
+  char *operator()() {
+    if (result_) {
+      std::string id = util::toStr(offset_[100 * j_ + i_], PADDING_LEN);
+      snprintf(buffer_, 256, "*%s@%s basic.%d.%d\n", hostname, id.c_str(),  i_, j_);
     } else {
-      snprintf(buffer, 256, "basic.%d.%d\n", i, j);
+      int n = snprintf(buffer_, 256, "basic.%d.%d", i_, j_);
+      offset_.push_back(offset_.back() + n+1);
     }
 
-    if (++i == 100) {
-      j++;
-      i = 0;
+    if (++i_ == 100) {
+      j_++;
+      i_ = 0;
     }
-    return buffer;
+    return buffer_;
   }
 private:
-  int i;
-  int j;
-  char buffer[256];
+  int i_, j_;
+  std::vector<int> offset_;
+  bool result_;
+  char buffer_[256];
 };
 BasicProducer basicPro;
 
@@ -63,13 +71,13 @@ void *basic_routine(void *)
   assert(fp);
 
   for (int i = 0; i < 100; ++i) {
-    fprintf(fp, "%s", basicPro());
+    fprintf(fp, "%s\n", basicPro());
   }
   fflush(fp);
   sys::nanosleep(100000);
 
   for (int i = 0; i < 100; ++i) {
-    fprintf(fp, "%s", basicPro());
+    fprintf(fp, "%s\n", basicPro());
     sys::nanosleep(1000);
   }
   fclose(fp);
@@ -82,22 +90,31 @@ void *basic_routine(void *)
 
 class FilterProducer {
 public:
-  FilterProducer() : i(0) {}
-  void reset() { i = 0; }
-  char *operator()(bool filter = false) {
-    if (filter) {
-      snprintf(buffer, 256, "%s 2015-04-02T12:05:%02d /%d 200 %d",
-               hostname, i/2, i%2, i%10);
+  FilterProducer() : i_(0), offset_(1, 0), result_(false) {}
+  void reset(bool result = true) {
+    i_ = 0;
+    result_ = result;
+    if (!result_) offset_ = std::vector<int>(1, 0);
+  }
+
+  char *operator()() {
+    if (result_) {
+      std::string id = util::toStr(offset_[i_], PADDING_LEN);
+      snprintf(buffer_, 256, "*%s@%s 2015-04-02T12:05:%02d /%d 200 %d",
+               hostname, id.c_str(), i_/2, i_%2, i_%10);
     } else {
-      snprintf(buffer, 256, "filter - - [02/Apr/2015:12:05:%02d +0800] \"/%d\" 200 - - %d",
-               i/2, i%2, i%10);
+      int n = snprintf(buffer_, 256, "filter - - [02/Apr/2015:12:05:%02d +0800] \"/%d\" 200 - - %d",
+                       i_/2, i_%2, i_%10);
+      offset_.push_back(offset_.back() + n+1);
     }
-    i++;
-    return buffer;
+    i_++;
+    return buffer_;
   }
 private:
-  int i;
-  char buffer[256];
+  int i_;
+  std::vector<int> offset_;
+  bool result_;
+  char buffer_[256];
 };
 FilterProducer filterPro;
 
@@ -124,23 +141,32 @@ void *filter_routine(void *)
 
 class GrepProducer {
 public:
-  GrepProducer() : i(0) {}
-  void reset() { i = 0; }
-  char *operator()(bool t = false) {
-    if (t) {
-      snprintf(buffer, 256, "%s [02/Apr/2015:12:05:%02d] \"GET /%d HTTP/1.0\" 200 %d",
-               hostname, i/2, i%2, i%10);
+  GrepProducer() : i_(0), offset_(1, 0) {}
+  void reset(bool result = true) {
+    i_ = 0;
+    result_ = result;
+    if (!result_) offset_ = std::vector<int>(1, 0);
+  }
+
+  char *operator()() {
+    if (result_) {
+      std::string id = util::toStr(offset_[i_], PADDING_LEN);
+      snprintf(buffer_, 256, "*%s@%s [02/Apr/2015:12:05:%02d] \"GET /%d HTTP/1.0\" 200 %d",
+                       hostname, id.c_str(), i_/2, i_%2, i_%10);
     } else {
       // test empty line
-      snprintf(buffer, 256, "grep - - [02/Apr/2015:12:05:%02d] \"GET /%d HTTP/1.0\" 200 - - %d\n",
-               i/2, i%2, i%10);
+      int n = snprintf(buffer_, 256, "grep - - [02/Apr/2015:12:05:%02d] \"GET /%d HTTP/1.0\" 200 - - %d\n",
+                       i_/2, i_%2, i_%10);
+      offset_.push_back(offset_.back() + n+1);
     }
-    i++;
-    return buffer;
+    i_++;
+    return buffer_;
   }
 private:
-  int i;
-  char buffer[256];
+  int i_;
+  std::vector<int> offset_;
+  bool result_;
+  char buffer_[256];
 };
 GrepProducer grepPro;
 
@@ -214,20 +240,34 @@ void *aggregate_routine(void *)
 
 class TransformProducer {
 public:
-  TransformProducer() : i(0) {}
-  void reset() { i = 0; }
-  char *operator()(bool t = false) {
-    if (t) {
-      snprintf(buffer, 256, "%s [error] message", hostname);
+  TransformProducer() : i_(0), offset_(1, 0) {}
+  void reset(bool result = true) {
+    result_ = result;
+    if (result_) {
+      i_ = 1;
     } else {
-      snprintf(buffer, 256, "[%s] message", (i % 2 == 0 ? "info" : "error"));
+      i_ = 0;
+      offset_ = std::vector<int>(1, 0);
     }
-    i++;
-    return buffer;
+  }
+
+  char *operator()() {
+    if (result_) {
+      std::string id = util::toStr(offset_[i_], PADDING_LEN);
+      snprintf(buffer_, 256, "*%s@%s [error] message", hostname, id.c_str());
+      i_ += 2;
+    } else {
+      int n = snprintf(buffer_, 256, "[%s] message", (i_ % 2 == 0 ? "info" : "error"));
+      offset_.push_back(offset_.back() + n+1);
+      i_++;
+    }
+    return buffer_;
   }
 private:
-  int i;
-  char buffer[256];
+  int i_;
+  std::vector<int> offset_;
+  bool result_;
+  char buffer_[256];
 };
 TransformProducer transformPro;
 
@@ -321,7 +361,7 @@ void basic_consumer(rd_kafka_message_t *rkm)
 {
   if (memcmp(rkm->payload, "#", 1) == 0) return;   // skip comment line
 
-  const char *ptr = basicPro(true);
+  const char *ptr = basicPro();
 	check(rkm->len == strlen(ptr),
         "basic: length(%.*s) != length(%s)", (int) rkm->len, (char *) rkm->payload, ptr);
   check(memcmp(rkm->payload, ptr, rkm->len) == 0,
@@ -332,7 +372,7 @@ void filter_consumer(rd_kafka_message_t *rkm)
 {
   if (memcmp(rkm->payload, "#", 1) == 0) return;   // skip comment line
 
-  const char *ptr = filterPro(true);
+  const char *ptr = filterPro();
 	check(rkm->len == strlen(ptr),
         "filter: length(%.*s) != length(%s)", (int) rkm->len, (char *) rkm->payload, ptr);
   check(memcmp(rkm->payload, ptr, rkm->len) == 0,
@@ -343,7 +383,7 @@ void grep_consumer(rd_kafka_message_t *rkm)
 {
   if (memcmp(rkm->payload, "#", 1) == 0) return;   // skip comment line
 
-  const char *ptr = grepPro(true);
+  const char *ptr = grepPro();
 	check(rkm->len == strlen(ptr),
         "grep: length(%.*s) != length(%s)", (int) rkm->len, (char *) rkm->payload, ptr);
   check(memcmp(rkm->payload, ptr, rkm->len) == 0,
@@ -365,7 +405,7 @@ void transform_consumer(rd_kafka_message_t *rkm)
 {
   if (memcmp(rkm->payload, "#", 1) == 0) return;   // skip comment line
 
-  const char *ptr = transformPro(true);
+  const char *ptr = transformPro();
 	check(rkm->len == strlen(ptr),
         "transform: length(%.*s) != length(%s)", (int) rkm->len, (char *) rkm->payload, ptr);
   check(memcmp(rkm->payload, ptr, rkm->len) == 0,

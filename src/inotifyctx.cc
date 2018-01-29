@@ -15,6 +15,7 @@
 #include "runstatus.h"
 #include "cnfctx.h"
 #include "luactx.h"
+#include "filereader.h"
 #include "inotifyctx.h"
 
 #define MAX_ERR_LEN 512

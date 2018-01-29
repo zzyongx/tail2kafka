@@ -6,11 +6,11 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 
-#include "filereader.h"
 #include "luafunction.h"
 #include "cnfctx.h"
 
 struct rk_kafka_topic_t;
+class FileReader;
 
 class LuaCtx {
   template<class T> friend class UNITTEST_HELPER;

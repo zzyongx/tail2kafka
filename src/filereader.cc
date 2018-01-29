@@ -168,11 +168,26 @@ bool FileReader::remove()
 
   bool rc = false;
   std::string oldFileName;
-  if (flags_ & FILE_MOVED) {
-    oldFileName = getFileNameFromFd(fd_);
-    log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) moved to %s", fd_, ctx_->file().c_str(),
-             size_, dsize_, line_, dline_, oldFileName.c_str());
-    rc = true;
+  if (flags_ & FILE_MOVED) {  // when mv x to x.old, the process may still write to x.old untill reopen x
+    if (true) { // if config reopen timeout
+      if (flags_ & FILE_LOGGED) {
+        if (time(0) - fileRotateTime_ > 10) rc = true;   // wait reopen timeout
+      } else {
+        flags_ |= FILE_LOGGED;
+        fileRotateTime_ = time(0);
+      }
+    } else if (access(ctx_->file().c_str(), F_OK) == 0) {     // reopen x success
+      rc = true;
+    } else if (!(flags_ & FILE_LOGGED)) {
+      flags_ |= FILE_LOGGED;
+      log_info(0, "inotify %s moved, but is not reopen", ctx_->file().c_str());
+    }
+
+    if (rc) {
+      oldFileName = getFileNameFromFd(fd_);
+      log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) moved to %s", fd_, ctx_->file().c_str(),
+               size_, dsize_, line_, dline_, getFileNameFromFd(fd_).c_str());
+    }
   } else if (flags_ & FILE_DELETED) {
     log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) deleted %s", fd_, ctx_->file().c_str(),
              size_, dsize_, line_, dline_, getFileNameFromFd(fd_).c_str());
@@ -372,7 +387,7 @@ void FileReader::processLines(ino_t inode, off_t *offPtr)
   std::vector<std::string *> lines;
   if (ctx_->copyRawRequired()) {
     if ((pos = (char *) memrchr(buffer_, NL, npos_))) {
-      int np = processLine(buffer_, pos - buffer_, &lines);
+      int np = processLine(offPtr ? *offPtr : -1, buffer_, pos - buffer_, &lines);
 
       if (offPtr) *offPtr += pos - buffer_ + 1;
       cacheFileRecord(inode, offPtr ? *offPtr : -1, lines, np);
@@ -382,7 +397,7 @@ void FileReader::processLines(ino_t inode, off_t *offPtr)
     }
   } else {
     while ((pos = (char *) memchr(buffer_ + n, NL, npos_ - n))) {
-      int np = processLine(buffer_ + n, pos - (buffer_ + n), &lines);
+      int np = processLine(offPtr ? *offPtr : -1, buffer_ + n, pos - (buffer_ + n), &lines);
 
       if (offPtr) *offPtr += pos - (buffer_ + n) + 1;
       cacheFileRecord(inode, offPtr ? *offPtr : -1, lines, np);
@@ -407,7 +422,7 @@ void FileReader::processLines(ino_t inode, off_t *offPtr)
 }
 
 /* line without NL */
-int FileReader::processLine(char *line, size_t nline, std::vector<std::string *> *lines)
+int FileReader::processLine(off_t off, char *line, size_t nline, std::vector<std::string *> *lines)
 {
   /* ignore empty line */
   if (nline == 0) return 0;
@@ -416,7 +431,7 @@ int FileReader::processLine(char *line, size_t nline, std::vector<std::string *>
   if (line == 0 && nline == (size_t)-1) {
     n = ctx_->function()->serializeCache(lines);
   } else {
-    n = ctx_->function()->process(line, nline, lines);
+    n = ctx_->function()->process(off, line, nline, lines);
   }
   return n;
 }
@@ -426,7 +441,7 @@ bool FileReader::checkCache()
   LuaCtx *ctx = ctx_;
   while (ctx) {
     std::vector<std::string *> lines;
-    int n = processLine(0, -1, &lines);
+    int n = processLine(-1, 0, -1, &lines);
     if (n > 0) {
       cacheFileRecord(-1, -1, lines, n);
       ctx->getFileReader()->sendLines();

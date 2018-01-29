@@ -10,9 +10,13 @@
 #include "unittesthelper.h"
 #include "runstatus.h"
 #include "sys.h"
+#include "util.h"
 #include "luactx.h"
 #include "cnfctx.h"
+#include "filereader.h"
 #include "inotifyctx.h"
+
+#define PADDING_LEN 11
 
 LOGGER_INIT();
 
@@ -145,9 +149,9 @@ DEFINE(filter)
     "200", "-", "-", "95555"};
 
   LuaFunction *function = getLuaCtx("filter")->function();
-  function->filter(std::vector<std::string>(fields1, fields1+9), &datas);
+  function->filter(0, std::vector<std::string>(fields1, fields1+9), &datas);
   check(datas.size() == 1, "datas size %d", (int) datas.size());
-  check(*datas[0] == cnf->host() + " 2015-04-02T12:05:05 GET / HTTP/1.0 200 95555", "%s", PTRS(*datas[0]));
+  check(*datas[0] == "*" + cnf->host() + "@" + std::string(PADDING_LEN, '0') + " 2015-04-02T12:05:05 GET / HTTP/1.0 200 95555", "%s", PTRS(*datas[0]));
   delete datas[0];
 }
 
@@ -159,9 +163,9 @@ DEFINE(grep)
     "200", "-", "-", "95555"};
 
   LuaFunction *function = getLuaCtx("grep")->function();
-  function->grep(std::vector<std::string>(fields1, fields1+9), &datas);
+  function->grep(0, std::vector<std::string>(fields1, fields1+9), &datas);
   check(datas.size() == 1, "data size %d", (int) datas.size());
-  check(*datas[0] == cnf->host() + " [2015-04-02T12:05:05] \"GET / HTTP/1.0\" 200 95555", "%s", PTRS(*datas[0]));
+  check(*datas[0] == "*" + cnf->host() + "@" + std::string(PADDING_LEN, '0') + " [2015-04-02T12:05:05] \"GET / HTTP/1.0\" 200 95555", "%s", PTRS(*datas[0]));
   delete datas[0];
 }
 
@@ -172,18 +176,18 @@ DEFINE(transform)
   LuaCtx *ctx = getLuaCtx("transform");
   LuaFunction *function = ctx->function();
 
-  function->transform("[error] this", sizeof("[error] this")-1, &datas);
+  function->transform(0, "[error] this", sizeof("[error] this")-1, &datas);
   check(datas.size() == 1, "data size %d", (int) datas.size());
-  check(*datas[0] == cnf->host() + " [error] this", "'%s'", PTRS(*datas[0]));
+  check(*datas[0] == "*" + cnf->host() + "@" + std::string(PADDING_LEN, '0') + " [error] this", "'%s'", PTRS(*datas[0]));
   delete datas[0]; datas.clear();
 
   ctx->withhost_ = false;
-  function->transform("[error] this", sizeof("[error] this")-1, &datas);
+  function->transform(0, "[error] this", sizeof("[error] this")-1, &datas);
   check(datas.size() == 1, "data size %d", (int) datas.size());
-  check(*datas[0] == "[error] this", "'%s'", PTRS(*datas[0]));
+  check("[error] this", "'%s'", PTRS(*datas[0]));
   delete datas[0]; datas.clear();
 
-  function->transform("[debug] that", sizeof("[debug] that")-1, &datas);
+  function->transform(0, "[debug] that", sizeof("[debug] that")-1, &datas);
   check(datas.empty(), "data size %d", (int) datas.size());
 }
 
@@ -361,9 +365,9 @@ DEFINE(watchLoop)
   ptr = records->at(0)->data;
   check(ptr->substr(ptr->size() - 6) == "Start\n", "%s", PTRS(*ptr));
   ptr = records->at(1)->data;
-  check(*ptr == "*zzyong 456\n", "%s", PTRS(*ptr));
+  check(*ptr == "*" + cnf->host() + "@" + std::string(PADDING_LEN, '0') + " 456\n", "%s", PTRS(*ptr));
   ptr = records->at(2)->data;
-  check(*ptr == "*zzyong 789\n", "%s", PTRS(*ptr));
+  check(*ptr == "*" + cnf->host() + "@" + util::toStr(sizeof("456\n"), PADDING_LEN) + " 789\n", "%s", PTRS(*ptr));
 
   read(cnf->accept, &req, sizeof(OneTaskReq));
   records = req.records;
@@ -392,7 +396,7 @@ DEFINE(watchLoop)
   ptr = records->at(0)->data;
   check(ptr->substr(ptr->size() - 6) == "Start\n", "%s", PTRS(*ptr));
   ptr = records->at(1)->data;
-  check(*ptr == "*zzyong abcd\nefg\n", "%s", PTRS(*ptr));
+  check(*ptr == "*" + cnf->host() + "@" + std::string(PADDING_LEN, '0') + " abcd\nefg\n", "%s", PTRS(*ptr));
 
   runStatus->set(RunStatus::STOP);
   pthread_join(tid, 0);

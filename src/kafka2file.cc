@@ -18,6 +18,7 @@
 #include "sys.h"
 #include "runstatus.h"
 #include "logger.h"
+#include "transform.h"
 
 LOGGER_INIT();
 
@@ -68,7 +69,7 @@ public:
     if (rk_)   rd_kafka_destroy(rk_);
   }
 
-  bool loop(RunStatus *runStatus);
+  bool loop(RunStatus *runStatus, Transform *transform);
 
 private:
   KafkaConsumer() : rk_(0), rkt_(0), rkqu_(0) {}
@@ -94,8 +95,8 @@ static bool initSingleton(const char *datadir, const char *topic, int partition)
 
 int main(int argc, char *argv[])
 {
-  if (argc != 5) {
-    fprintf(stderr, "%s kafka-broker topic partition datadir\n", argv[0]);
+  if (argc < 5) {
+    fprintf(stderr, "%s kafka-broker topic partition datadir [notify] [informat:lua:outformat:interval:delay]\n", argv[0]);
     return EXIT_FAILURE;
   }
 
@@ -104,12 +105,21 @@ int main(int argc, char *argv[])
   int         partition = atoi(argv[3]);
   const char *datadir   = argv[4];
 
+  const char *notify = argc >= 5 ? argv[5] : 0;
+  const char *output = argc >= 6 ? argv[6] : "raw::raw";
+
   char buffer[1024];
   snprintf(buffer, 1024, "%s/%s.%d.log", datadir, topic, partition);
   Logger::create(buffer, Logger::DAY, true);
 
   snprintf(buffer, 1024, "%s/%s", datadir, topic);
   mkdir(buffer, 0755);
+
+  Transform *transform = Transform::create(datadir, topic, partition, notify, output, buffer);
+  if (transform == 0) {
+    fprintf(stderr, "create transform error %s\n", buffer);
+    //  return EXIT_FAILURE;
+  }
 
   RunStatus *runStatus = RunStatus::create();
   sys::SignalHelper signalHelper(buffer);
@@ -126,7 +136,7 @@ int main(int argc, char *argv[])
   KafkaConsumer *ctx = KafkaConsumer::create(datadir, brokers, topic, partition);
   if (!ctx) return EXIT_FAILURE;
 
-  bool rc = ctx->loop(runStatus);
+  bool rc = ctx->loop(runStatus, transform);
   delete ctx;
 
   log_info(0, "exit");
@@ -217,7 +227,7 @@ bool KafkaConsumer::addToCache(rd_kafka_message_t *rkm, std::string *host, std::
       fdCache.iovs.push_back(iov);
       fdCache.rkms[fdCache.rkmSize++] = rkm;
     } else {
-      log_info(0, "META %llu %.*s", rkm->offset, (int) rkm->len, (char *) rkm->payload);
+      log_info(0, "META %ld %.*s", rkm->offset, (int) rkm->len, (char *) rkm->payload);
 
       std::string s((char *)rkm->payload, rkm->len);
       if (s.find("End") != std::string::npos) {
@@ -300,7 +310,7 @@ bool KafkaConsumer::write(rd_kafka_message_t *rkm, uint64_t off)
   return rc;
 }
 
-bool KafkaConsumer::loop(RunStatus *runStatus)
+bool KafkaConsumer::loop(RunStatus *runStatus, Transform *)
 {
   uint64_t off = -1;
   while (runStatus->get() != RunStatus::STOP) {
@@ -315,7 +325,7 @@ bool KafkaConsumer::loop(RunStatus *runStatus)
     }
 
     off = rkm->offset;
-    log_debug(0, "data @%llu %.*s\n", off, (int) rkm->len, (char *) rkm->payload);
+    log_debug(0, "data @%ld %.*s\n", off, (int) rkm->len, (char *) rkm->payload);
 
     write(rkm, off);
   }

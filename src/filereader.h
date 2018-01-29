@@ -13,6 +13,7 @@ class FileOffRecord;
 #define FILE_MOVED     0x01
 #define FILE_TRUNCATED 0x02
 #define FILE_DELETED   0x04
+#define FILE_LOGGED    0x08
 
 struct OneTaskReq {
   LuaCtx *ctx;
@@ -44,7 +45,7 @@ private:
   void propagateTailContent(size_t size);
   void propagateProcessLines(ino_t inode, off_t *off);
   void processLines(ino_t inode, off_t *off);
-  int processLine(char *line, size_t nline, std::vector<std::string *> *lines);
+  int processLine(off_t off, char *line, size_t nline, std::vector<std::string *> *lines);
   void propagateSendLines();
   bool sendLines();
 
@@ -58,10 +59,11 @@ private:
   void cacheFileRecord(ino_t inode, off_t off, const std::vector<std::string *> &lines, size_t n);
 
 private:
-  int    fd_;
-  off_t  size_;
-  ino_t  inode_;
+  int      fd_;
+  off_t    size_;
+  ino_t    inode_;
   uint32_t flags_;
+  time_t   fileRotateTime_;
 
   FileOffRecord *fileOffRecord_;
 

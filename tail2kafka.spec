@@ -32,12 +32,19 @@ mkdir -p $RPM_BUILD_ROOT/etc/tail2kafka
 mkdir -p $RPM_BUILD_ROOT/usr/share/tail2kafka/etc
 cp blackboxtest/etc/*.lua  $RPM_BUILD_ROOT/usr/share/tail2kafka/etc
 
+mkdir -p $RPM_BUILD_ROOT/var/lib/tail2kafka
+mkdir -p $RPM_BUILD_ROOT/var/log/tail2kafka
+
 %files
 %defattr(-,root,root)
 /usr/local/bin
 /usr/share/tail2kafka/etc
+
 /etc/tail2kafka
 /etc/rc.d/init.d
+
+/var/lib/tail2kafka
+/var/log/tail2kafka
 
 %config
 

@@ -221,7 +221,7 @@ public:
     }
 
     for (int i = 0; i < size; ++i) {
-      if (!result->empty()) result->append(1, ' ');
+      if (i > 0) result->append(1, ' ');
       lua_pushinteger(L_, i+1);
       lua_gettable(L_, 1);
       if (!lua_isstring(L_, -1) && !lua_isnumber(L_, -1)) {

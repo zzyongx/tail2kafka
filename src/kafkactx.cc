@@ -5,6 +5,7 @@
 #include "logger.h"
 #include "cnfctx.h"
 #include "luactx.h"
+#include "filereader.h"
 #include "kafkactx.h"
 
 static void dr_msg_cb(rd_kafka_t *, const rd_kafka_message_t *rkmsg, void *)

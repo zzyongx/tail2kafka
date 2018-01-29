@@ -18,9 +18,9 @@ endif
 
 VPATH = .:./libs
 
-OBJ = build/common.o build/cnfctx.o build/luactx.o \
+OBJ = build/common.o build/cnfctx.o build/luactx.o build/transform.o \
 	    build/filereader.o build/inotifyctx.o build/fileoff.o \
-      build/luafunction.o build/kafkactx.o build/sys.o
+      build/luafunction.o build/kafkactx.o build/sys.o build/util.o
 
 default: configure tail2kafka kafka2file tail2kafka_unittest
 	@echo finished

@@ -18,6 +18,7 @@
 #include "luactx.h"
 #include "cnfctx.h"
 #include "inotifyctx.h"
+#include "filereader.h"
 #include "common.h"
 
 LOGGER_INIT();

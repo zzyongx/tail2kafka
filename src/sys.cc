@@ -44,7 +44,11 @@ bool SignalHelper::signal(RunStatus *runStatus, int count, int *signos, RunStatu
   struct sigaction sa;
   for (int i = 0; i < count; ++i) {
     memset(&sa, 0x00, sizeof(sa));
-    sa.sa_handler = sigHandle;
+    if (wants[i] == RunStatus::IGNORE) {
+      sa.sa_handler = SIG_IGN;
+    } else {
+      sa.sa_handler = sigHandle;
+    }
     sigemptyset(&sa.sa_mask);
     if (sigaction(signos[i], &sa, NULL) == -1) {
       if (errbuf_) snprintf(errbuf_, MAX_ERR_LEN, "sigaction error %d:%s", errno, strerror(errno));

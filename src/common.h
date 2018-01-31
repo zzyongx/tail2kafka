@@ -4,6 +4,7 @@
 #include <climits>
 #include <cassert>
 #include <stdint.h>
+#include <time.h>
 #include <map>
 #include <string>
 #include <vector>
@@ -19,8 +20,9 @@ typedef std::vector<LuaCtx *>              LuaCtxPtrList;
 bool shell(const char *cmd, std::string *output, char *errbuf);
 bool hostAddr(const std::string &host, uint32_t *addr, char *errbuf);
 void split(const char *line, size_t nline, std::vector<std::string> *items);
-bool iso8601(const std::string &t, std::string *iso);
+bool iso8601(const std::string &t, std::string *iso, time_t *timestamp = 0);
 
+bool parseRequest(const char *ptr, std::string *method, std::string *path, std::map<std::string, std::string> *query);
 
 inline int absidx(int idx, size_t total)
 {

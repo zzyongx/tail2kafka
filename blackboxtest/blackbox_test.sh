@@ -50,3 +50,9 @@ if [ "$NUM" != 200 ]; then
   echo "line of $OLDFILE is $NUM should be 200"
   exit 1
 fi
+
+# kafka2file
+# current/last file was deleted after kill
+# if current/last file exists, start failed
+# current/last appear at the same time
+# lost message plus.pingback.storage.1_2018-01-31_05-07-00 plus.pingback.storage.1_2018-01-31_05-20-00.current

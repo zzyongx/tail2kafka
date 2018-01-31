@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <netdb.h>
 
+#include "util.h"
 #include "common.h"
 
 bool shell(const char *cmd, std::string *output, char *errbuf)
@@ -94,7 +95,7 @@ static const char *MonthAlpha[12] = {
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
 
 // 28/Feb/2015:12:30:23 +0800 -> 2015-03-30T16:31:53
-bool iso8601(const std::string &t, std::string *iso)
+bool iso8601(const std::string &t, std::string *iso, time_t *time)
 {
   enum { WaitYear, WaitMonth, WaitDay, WaitHour, WaitMin, WaitSec } status = WaitDay;
   int year, mon, day, hour, min, sec;
@@ -138,5 +139,76 @@ bool iso8601(const std::string &t, std::string *iso)
   sprintf((char *) iso->data(), "%04d-%02d-%02dT%02d:%02d:%02d",
           year, mon, day, hour, min, sec);
 
+  if (time) {
+    struct tm tm;
+    tm.tm_sec  = sec;
+    tm.tm_min  = min;
+    tm.tm_hour = hour;
+    tm.tm_mday = day;
+    tm.tm_mon  = mon-1;
+    tm.tm_year = year-1900;
+
+    *time = mktime(&tm);
+  }
+
   return true;
+}
+
+bool parseQuery(const char *r, size_t len, std::string *path, std::map<std::string, std::string> *query)
+{
+  size_t i = 0;
+  const char *ptr = r;
+
+  while (i++ < len && *ptr && *ptr != '?') ++ptr;
+  path->assign(r, ptr - r);
+
+  if (i >= len || !*ptr) return true;
+
+  ++i;
+  ptr++;
+
+  std::string key, value;
+  bool wantKey = true;
+  while (i++ < len && *ptr) {
+    if (*ptr == '&') {
+      if (!key.empty() && !value.empty()) (*query)[key] = value;
+      key.clear();
+      value.clear();
+      wantKey = true;
+    } else if (*ptr == '=') {
+      wantKey = false;
+    } else {
+      if (wantKey) {
+        key.append(1, *ptr);
+      } else {
+        if (*ptr == '%' && (i+2 < len && *(ptr+2))) {
+          int val;
+          if (util::hexToInt(ptr+1, &val)) {
+            value.append(1, val);
+            len += 2;
+            ptr += 2;
+          } else {
+            value.append(1, *ptr);
+          }
+        } else {
+          value.append(1, *ptr);
+        }
+      }
+    }
+    ++ptr;
+  }
+
+  return true;
+}
+
+// GET /path[?k=v] HTTP/1.1
+bool parseRequest(const char *r, std::string *method, std::string *path, std::map<std::string, std::string> *query)
+{
+  const char *fsp = strchr(r, ' ');
+  const char *lsp = strrchr(r, ' ');
+
+  if (!fsp || !lsp || lsp <= fsp+1) return false;
+  method->assign(r, fsp - r);
+
+  return parseQuery(fsp+1, lsp-(fsp+1), path, query);
 }

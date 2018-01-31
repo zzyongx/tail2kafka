@@ -165,6 +165,36 @@ public:
     return rc;
   }
 
+  bool getArray(const char *name, std::vector<std::string> *value, bool required = true) {
+    bool rc = true;
+    lua_getglobal(L_, name);
+
+    if (lua_isnil(L_, 1)) {
+      if (required) {
+        snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be array", file_, name);
+        rc = false;
+      }
+    } else if (lua_istable(L_, 1)) {
+      int size = luaL_getn(L_, 1);
+      for (int i = 0; rc && i < size; ++i) {
+        lua_pushinteger(L_, i+1);
+        lua_gettable(L_, 1);
+				if (lua_type(L_, -1) == LUA_TSTRING || lua_type(L_, -1) == LUA_TNUMBER) {
+					value->push_back(lua_tostring(L_, -1));
+        } else {
+          snprintf(errbuf_, MAX_ERR_LEN, "%s %s element must be string", file_, name);
+          rc = false;
+        }
+      }
+    } else {
+      snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be array", file_, name);
+      rc = false;
+    }
+
+    lua_settop(L_, 0);
+    return rc;
+  }
+
   bool getFunction(const char *name, std::string *value, const std::string &def) {
     bool rc = true;
     lua_getglobal(L_, name);

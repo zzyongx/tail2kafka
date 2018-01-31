@@ -5,7 +5,7 @@
 
 class RunStatus {
 public:
-  enum Want {WAIT, START1, START2, RELOAD, STOP};
+  enum Want {WAIT, START1, START2, RELOAD, STOP, IGNORE};
   static RunStatus *create() {
     RunStatus *runStatus = new RunStatus;
     runStatus->want_ = START1;

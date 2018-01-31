@@ -2,7 +2,7 @@ CC      = gcc
 CXX     = g++
 INSTALL = install
 LDFLAGS = -lrt -ldl -lpthread -lz
-ARLIBS  = ./deps/librdkafka.a ./deps/libluajit-5.1.a
+ARLIBS  = ./deps/librdkafka.a ./deps/libluajit-5.1.a ./deps/libjsoncpp.a
 CFLAGS  += -I/usr/local/include/luajit-2.0
 WARN    = -Werror -Wall -Wshadow -Wextra -Wno-comment
 
@@ -40,6 +40,14 @@ speedlimit: build/mix/speedlimit.o
 .PHONY: get-deps
 get-deps:
 	@mkdir -p deps
+
+	@echo "compile jsoncpp" && \
+	  cd deps && \
+	  (test -f 0.10.4.tar.gz || wget https://github.com/open-source-parsers/jsoncpp/archive/0.10.4.tar.gz) && \
+		rm -rf jsoncpp-0.10.4 && tar xzf 0.10.4.tar.gz &&   \
+	  mkdir -p jsoncpp-0.10.4/build && cd jsoncpp-0.10.4/build && \
+	  cmake -DCMAKE_BUILD_TYPE=debug -DBUILD_STATIC_LIBS=ON -DBUILD_SHARED_LIBS=OFF \
+	    -DARCHIVE_INSTALL_DIR=../.. -G "Unix Makefiles" .. && make install
 
 	@echo "compile librdkafka" && \
 	  cd deps && \

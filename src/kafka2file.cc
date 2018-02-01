@@ -64,8 +64,8 @@ int main(int argc, char *argv[])
   const char *offsetstr = argv[4];
   const char *datadir   = argv[5];
 
-  const char *notify = argc >= 6 ? argv[6] : 0;
-  const char *output = argc >= 7 ? argv[7] : "raw::raw";
+  const char *notify = argc > 6 ? argv[6] : 0;
+  const char *output = argc > 7 ? argv[7] : "raw::raw";
 
   bool defaultStart;
   if (strcmp(offsetstr, "offset-begining") == 0) {

@@ -8,6 +8,22 @@
 #include "filereader.h"
 #include "kafkactx.h"
 
+static int stats_cb(rd_kafka_t *, char *json, size_t json_len, void *)
+{
+  log_info(0, "kafka stats %.*s", json_len, json);
+  return 0;
+}
+
+static void error_cb(rd_kafka_t *, int err, const char *reason, void *)
+{
+  log_error(0, "kafka error level %d reason %s", err, reason);
+}
+
+static void log_cb(const rd_kafka_t *, int level, const char *fac, const char *buf)
+{
+  log_info(0, "kafka error level %d fac %s buf %s", level, fac, buf);
+}
+
 static void dr_msg_cb(rd_kafka_t *, const rd_kafka_message_t *rkmsg, void *)
 {
   FileRecord *record = (FileRecord *) rkmsg->_private;
@@ -44,7 +60,11 @@ bool KafkaCtx::initKafka(const char *brokers, const std::map<std::string, std::s
       return false;
     }
   }
+
   rd_kafka_conf_set_dr_msg_cb(conf, dr_msg_cb);
+  rd_kafka_conf_set_stats_cb(conf, stats_cb);
+  rd_kafka_conf_set_error_cb(conf, error_cb);
+  rd_kafka_conf_set_log_cb(conf, log_cb);
 
   /* rd_kafka_t will own conf */
   if (!(rk_ = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr, sizeof(errstr)))) {

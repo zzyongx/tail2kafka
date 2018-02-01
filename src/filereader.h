@@ -14,6 +14,7 @@ class FileOffRecord;
 #define FILE_TRUNCATED 0x02
 #define FILE_DELETED   0x04
 #define FILE_LOGGED    0x08
+#define FILE_ICHANGE   0x10
 
 struct OneTaskReq {
   LuaCtx *ctx;

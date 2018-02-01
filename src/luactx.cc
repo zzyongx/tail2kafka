@@ -59,6 +59,7 @@ LuaCtx *LuaCtx::loadFile(CnfCtx *cnf, const char *file)
   if (!helper->getBool("withtime", &ctx->withtime_, true)) return 0;
   if (!helper->getBool("autonl", &ctx->autonl_, true)) return 0;
   if (!helper->getBool("withhost", &ctx->withhost_, true)) return 0;
+  if (!helper->getInt("rotateDelay_", &ctx->rotateDelay_, -1)) return 0;
   if (!helper->getString("pkey", &ctx->pkey_, "")) return 0;
 
   if (!(ctx->function_ = LuaFunction::create(ctx.get(), helper.get()))) return 0;

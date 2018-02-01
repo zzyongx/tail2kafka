@@ -13,7 +13,6 @@ class CnfCtx {
 public:
   int                    accept;
   int                    server;
-  uint64_t               sn;
 
 public:
 
@@ -49,6 +48,8 @@ public:
   std::vector<LuaCtx *> &getLuaCtxs() { return luaCtxs_; }
 
   int getPollLimit() const { return pollLimit_; }
+  int getRotateDelay() const { return rotateDelay_; }
+  const std::string &getPingbackUrl() const { return pingbackUrl_; }
 
   uint32_t addr() const { return addr_; }
   int partition() const { return partition_; }
@@ -66,19 +67,19 @@ private:
   uint32_t    addr_;
   int         partition_;
   int         pollLimit_;
+  int         rotateDelay_;
+  std::string pingbackUrl_;
   std::string logdir_;
   std::string libdir_;
 
   size_t                 count;
   std::vector<LuaCtx *>  luaCtxs_;
 
-private:
   std::string                         brokers_;
   std::map<std::string, std::string>  kafkaGlobal_;
   std::map<std::string, std::string>  kafkaTopic_;
   KafkaCtx                           *kafka_;
 
-private:
   char        *errbuf_;
   RunStatus   *runStatus_;
 

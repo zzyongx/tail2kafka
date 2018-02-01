@@ -63,6 +63,8 @@ public:
   const char *getStartPosition() const { return startPosition_.c_str(); }
   const std::string &host() const { return cnf_->host(); }
 
+  int getRotateDelay() const { return rotateDelay_ <= 0 ? cnf_->getRotateDelay() : rotateDelay_; }
+
   const std::string &file() const { return file_; }
   const std::string &topic() const { return topic_; }
 
@@ -81,6 +83,7 @@ private:
   bool          withtime_;
   int           timeidx_;
   bool          autonl_;
+  int           rotateDelay_;
   std::string   pkey_;
 
   uint32_t      addr_;

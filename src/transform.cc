@@ -135,12 +135,7 @@ bool MirrorTransform::addToCache(rd_kafka_message_t *rkm, std::string *host, std
       host->assign((char *) rkm->payload + 1, sp - (char *) rkm->payload -1);
     }
 
-    *sp = '\0';
-    host->assign((char *) rkm->payload + 1);
-    *sp = ' ';
-
     if (flag == '*') {
-      assert(pos != -1);
       FdCache &fdCache = fdCache_[*host];
 
       if (fdCache.pos != -1) {
@@ -441,7 +436,10 @@ Transform::Idempotent LuaTransform::write(rd_kafka_message_t *rkm, uint64_t *off
   const char *ptr = (char *) rkm->payload;
   size_t len = rkm->len;
 
+  if (ptr[len-1] == '\n') --len;
+
   if (*ptr == '#') {
+    log_info(0, "%s:%d META %.*s", topic_, partition_, len, ptr);
     rd_kafka_message_destroy(rkm);
     return IGNORE;
   }
@@ -453,8 +451,6 @@ Transform::Idempotent LuaTransform::write(rd_kafka_message_t *rkm, uint64_t *off
       ptr = sp + 1;
     }
   }
-
-  if (ptr[len-1] == '\n') --len;
 
   std::vector<std::string> fields;
   split(ptr, len, &fields);

@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include "gnuatomic.h"
 #include "logger.h"
 #include "sys.h"
 #include "luactx.h"
@@ -121,19 +122,22 @@ void FileReader::initFileOffRecord(FileOffRecord * fileOffRecord)
   fileOffRecord_->off   = size_;
 }
 
+// FileOffRecord should be called in only one thread
 void FileReader::updateFileOffRecord(const FileRecord *record)
 {
   if (record->inode != fileOffRecord_->inode) {
     fileOffRecord_->inode = record->inode;
     fileOffRecord_->off   = record->off;
+
     dline_ = 1;
     dsize_ = record->data->size();
     log_info(0, "%s change inode from %ld to %ld", ctx_->file().c_str(),
              (long) fileOffRecord_->inode, (long) record->inode);
   } else if (record->off > fileOffRecord_->off) {
     fileOffRecord_->off   = record->off;
-    dline_++;
-    dsize_ += record->data->size() - ctx_->function()->extraSize();
+
+    util::atomic_inc(&dline_);
+    util::atomic_inc(&dsize_, record->data->size() - ctx_->function()->extraSize());
   } else {
     log_fatal(0, "%s off change smaller, from %ld to %ld", ctx_->file().c_str(),
               (long) fileOffRecord_->off, (long) record->off);
@@ -155,6 +159,15 @@ static std::string getFileNameFromFd(int fd)
   }
 }
 
+inline const char *flagsToAction(uint32_t flags)
+{
+  if (flags & FILE_MOVED) return "moved";
+  else if (flags & FILE_DELETED) return "deleted";
+  else if (flags & FILE_TRUNCATED) return "truncated";
+  else if (flags & FILE_ICHANGE) return "inodechanged";
+  else return 0;
+}
+
 bool FileReader::remove()
 {
   struct stat st;
@@ -165,43 +178,33 @@ bool FileReader::remove()
 
   if (st.st_nlink == 0) flags_ |= FILE_DELETED;
   else if (st.st_size < size_) flags_ |= FILE_TRUNCATED;
+  else if (st.st_ino != inode_) flags_ |= FILE_ICHANGE;
 
-  bool rc = false;
+  const char *action = flagsToAction(flags_);
+  bool rc = action ? true : false;
   std::string oldFileName;
-  if (flags_ & FILE_MOVED) {  // when mv x to x.old, the process may still write to x.old untill reopen x
-    if (true) { // if config reopen timeout
-      if (flags_ & FILE_LOGGED) {
-        if (time(0) - fileRotateTime_ > 10) rc = true;   // wait reopen timeout
-      } else {
-        flags_ |= FILE_LOGGED;
-        fileRotateTime_ = time(0);
-      }
-    } else if (access(ctx_->file().c_str(), F_OK) == 0) {     // reopen x success
+
+// when mv x to x.old, the process may still write to x.old untill reopen x
+  if (rc && (flags_ & FILE_MOVED || flags_ & FILE_DELETED)) {
+    rc = false;
+    if (ctx_->getRotateDelay() > 0) {  // if config rotate delay
+      if (time(0) - fileRotateTime_ >= ctx_->getRotateDelay()) rc = true;  // rotate delay timeout
+    } else if (flags_ & FILE_MOVED && access(ctx_->file().c_str(), F_OK) == 0) {  // if file reopened
       rc = true;
-    } else if (!(flags_ & FILE_LOGGED)) {
-      flags_ |= FILE_LOGGED;
-      log_info(0, "inotify %s moved, but is not reopen", ctx_->file().c_str());
     }
 
-    if (rc) {
-      oldFileName = getFileNameFromFd(fd_);
-      log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) moved to %s", fd_, ctx_->file().c_str(),
-               size_, dsize_, line_, dline_, getFileNameFromFd(fd_).c_str());
+    if (!rc && !(flags_ & FILE_LOGGED)) {
+      flags_ |= FILE_LOGGED;
+      fileRotateTime_ = time(0);
+      log_info(0, "inotify %s %s, wait rotatedelay timeout or wait reopen", ctx_->file().c_str(), action);
     }
-  } else if (flags_ & FILE_DELETED) {
-    log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) deleted %s", fd_, ctx_->file().c_str(),
-             size_, dsize_, line_, dline_, getFileNameFromFd(fd_).c_str());
-    rc = true;
-  } else if (flags_ & FILE_TRUNCATED) {
-    log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) truncated", fd_, ctx_->file().c_str(),
-             size_, dsize_, line_, dline_);
-    rc = true;
-  } else if (st.st_ino != inode_) {
-    log_info(0, "%d %s inode changed", fd_, ctx_->file().c_str());
-    rc = true;
   }
 
   if (rc) {
+    if ((flags_ & FILE_MOVED) || (flags_ & FILE_DELETED)) oldFileName = getFileNameFromFd(fd_);
+    log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) %s %s", fd_, ctx_->file().c_str(),
+             size_, dsize_, line_, dline_, action, getFileNameFromFd(fd_).c_str());
+
     if (oldFileName.empty()) oldFileName = ctx_->file() + "." + sys::timeFormat(time(0), "%Y-%m-%d_%H:%M:%S");
     tail2kafka(END, &st, oldFileName.c_str());
 

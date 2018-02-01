@@ -1,0 +1,100 @@
+#! /bin/bash
+
+# chkconfig: - 58 74
+
+ETCDIR=/etc/tail2kafka
+PIDFILE=/var/run/tail2kafka.pid
+BIN=/usr/local/bin/tail2kafka
+PNAME=$(basename $BIN)
+
+CFG=/etc/sysconfig/tail2kafka
+test -f $CFG && source $CFG
+
+proc_exists() {
+  if [ -f $PIDFILE ]; then
+    PID=$(cat $PIDFILE)
+    if [ -d "/proc/$PID" ]; then
+      EXE=$(readlink "/proc/$PID/exe" | awk '{print $1}')
+      if [ "$EXE" == "$BIN" ]; then
+        return 0
+      fi
+    fi
+  fi
+  return 1
+}
+
+proc_start() {
+  $BIN $ETCDIR
+  for ((i=0; i<3; ++i)); do
+    proc_exists
+    if [ $? == 0 ]; then
+      echo "Start $PNAME success."
+      exit 0
+    fi
+    sleep 1
+  done
+  echo "Start $PNAME failed."
+  exit 1
+}
+
+proc_stop() {
+  proc_exists
+  if [ $? == 0 ]; then
+    kill $(cat $PIDFILE)
+  fi
+  echo "Stop $PNAME ok."
+  exit 0
+}
+
+proc_reload() {
+  proc_exists
+  if [ $? == 0 ]; then
+    kill -HUP $(cat $PIDFILE)
+    echo "reload $PNAME ok."
+  else
+    echo "$PNAME is not running"
+  fi
+}
+
+proc_restart() {
+  proc_exists
+  if [ $? == 0 ]; then
+    kill $(cat $PIDFILE)
+  fi
+  echo "Stop $PNAME ok."
+  proc_start
+}
+
+proc_status() {
+  proc_exists
+  if [ $? == 0 ]; then
+    echo "$PNAME is running."
+    exit 0
+  fi
+  echo "$PNAME is stoped."
+  exit 1
+}
+
+case "$1" in
+  start)
+    proc_start
+    ;;
+  stop)
+    proc_stop
+    ;;
+  reload)
+    proc_reload
+    ;;
+  restart)
+    proc_restart
+    ;;
+  status)
+    proc_status
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|reload|restart|status}" >&2
+    exit 1
+  ;;
+esac
+
+exit 0

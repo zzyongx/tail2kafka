@@ -7,3 +7,4 @@ tail2kafka
 kafka2file
 speedlimit
 tail2kafka_blackbox
+tail2kafka_unittest

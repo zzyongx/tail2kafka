@@ -16,7 +16,7 @@ public:
 
   static Transform *create(const char *wdir, const char *topic, int partition,
                            const char *notify, const char *format, char *errbuf);
-  virtual ~Transform() {}
+  virtual ~Transform();
 
   enum Idempotent { GLOBAL, LOCAL, IGNORE };
 

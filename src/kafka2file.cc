@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <memory>
 #include <errno.h>
 #include <signal.h>
 #include <sys/types.h>
@@ -83,8 +84,8 @@ int main(int argc, char *argv[])
   snprintf(buffer, 1024, "%s/%s", datadir, topic);
   mkdir(buffer, 0755);
 
-  Transform *transform = Transform::create(datadir, topic, partition, notify, output, buffer);
-  if (transform == 0) {
+  std::auto_ptr<Transform> transform(Transform::create(datadir, topic, partition, notify, output, buffer));
+  if (transform.get() == 0) {
     fprintf(stderr, "create transform error %s\n", buffer);
     return EXIT_FAILURE;
   }
@@ -101,10 +102,10 @@ int main(int argc, char *argv[])
 
   if (!initSingleton(datadir, topic, partition)) return EXIT_FAILURE;
 
-  KafkaConsumer *ctx = KafkaConsumer::create(datadir, brokers, topic, partition, defaultStart);
-  if (!ctx) return EXIT_FAILURE;
+  std::auto_ptr<KafkaConsumer> ctx(KafkaConsumer::create(datadir, brokers, topic, partition, defaultStart));
+  if (!ctx.get()) return EXIT_FAILURE;
 
-  bool rc = ctx->loop(runStatus, transform);
+  bool rc = ctx->loop(runStatus, transform.get());
 
   log_info(0, "exit");
   return rc ? EXIT_SUCCESS : EXIT_FAILURE;

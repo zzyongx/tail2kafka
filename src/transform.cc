@@ -12,10 +12,8 @@
 #include "sys.h"
 #include "transform.h"
 
-Transform::Idempotent Transform::timeout(uint64_t * /*offsetPtr*/)
-{
-  return IGNORE;
-}
+Transform::~Transform() {}
+Transform::Idempotent Transform::timeout(uint64_t * /*offsetPtr*/) { return IGNORE; }
 
 enum FormatToken {INFORMAT, LUA, OUTFORMAT, INTERVAL, DELAY};
 static FormatToken FORMAT_TOKENS[] = {INFORMAT, LUA, OUTFORMAT, INTERVAL, DELAY};
@@ -251,7 +249,8 @@ Transform::Idempotent MirrorTransform::write(rd_kafka_message_t *rkm, uint64_t *
   return ide;
 }
 
-LuaTransform::~LuaTransform() {
+LuaTransform::~LuaTransform()
+{
   if (helper_) delete helper_;
 
   if (currentIntervalFd_ > 0) {

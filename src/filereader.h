@@ -34,6 +34,7 @@ public:
   bool init(char *errbuf);
   bool reinit();
 
+  std::string getFileName();
   void tagRemove() { flags_ |= FILE_MOVED; }
   bool remove();
 

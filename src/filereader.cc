@@ -103,6 +103,12 @@ bool FileReader::reinit()
   }
 }
 
+std::string FileReader::getFileName()
+{
+  if (ctx_->fileWithTimeFormat()) return ctx_->file();
+  else return timeFormatFile_;
+}
+
 bool FileReader::setStartPosition(off_t fileSize, char *errbuf)
 {
   StartPosition startPosition = stringToStartPosition(ctx_->getStartPosition());
@@ -231,6 +237,10 @@ bool FileReader::remove()
 
     if (oldFileName.empty()) oldFileName = ctx_->file() + "." + sys::timeFormat(time(0), "%Y-%m-%d_%H:%M:%S");
     tail2kafka(END, &st, oldFileName.c_str());
+
+    /* if file rotate happen, but kafka
+
+     */
 
     close(fd_);
     fd_ = -1;

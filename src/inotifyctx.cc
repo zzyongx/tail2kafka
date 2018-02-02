@@ -46,13 +46,15 @@ bool InotifyCtx::init()
 
   for (std::vector<LuaCtx *>::iterator ite = cnf_->getLuaCtxs().begin(); ite != cnf_->getLuaCtxs().end(); ++ite) {
     LuaCtx *ctx = *ite;
-    int wd = inotify_add_watch(wfd_, ctx->file().c_str(), WATCH_EVENT);
+    const std::string &file = ctx->getFileReader()->getFileName();
+
+    int wd = inotify_add_watch(wfd_, file.c_str(), WATCH_EVENT);
     if (wd == -1) {
-      snprintf(cnf_->errbuf(), MAX_ERR_LEN, "%s add watch error %d:%s", ctx->file().c_str(), errno, strerror(errno));
+      snprintf(cnf_->errbuf(), MAX_ERR_LEN, "%s add watch error %d:%s", file.c_str(), errno, strerror(errno));
       return false;
     }
     fdToCtx_.insert(std::make_pair(wd, ctx));
-    log_info(0, "add watch %s @%d", ctx->file().c_str(), wd);
+    log_info(0, "add watch %s @%d", file.c_str(), wd);
   }
   return true;
 }
@@ -63,10 +65,11 @@ bool InotifyCtx::tryReWatch()
     LuaCtx *ctx = *ite;
 
     if (ctx->getFileReader()->reinit()) {
-      int wd = inotify_add_watch(wfd_, ctx->file().c_str(), WATCH_EVENT);
+      const std::string &file = ctx->getFileReader()->getFileName();
+      int wd = inotify_add_watch(wfd_, file.c_str(), WATCH_EVENT);
       fdToCtx_.insert(std::make_pair(wd, ctx));
 
-      log_info(0, "rewatch %s @%d", ctx->file().c_str(), wd);
+      log_info(0, "rewatch %s @%d", file.c_str(), wd);
       ctx->getFileReader()->tail2kafka();
     }
   }

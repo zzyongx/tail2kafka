@@ -60,14 +60,7 @@ LuaCtx *LuaCtx::loadFile(CnfCtx *cnf, const char *file)
   if (!helper->getBool("autonl", &ctx->autonl_, true)) return 0;
   if (!helper->getBool("withhost", &ctx->withhost_, true)) return 0;
   if (!helper->getInt("rotateDelay_", &ctx->rotateDelay_, -1)) return 0;
-
-  if (!helper->getInt("filetimeformat_", &ctx->fileTimeFormat_, FILE_TIMEFORMAT_NIL)) return 0;
-  if (ctx->fileTimeFormat_ != FILE_TIMEFORMAT_NIL && ctx->fileTimeFormat_ != FILE_TIMEFORMAT_DAY &&
-      ctx->fileTimeFormat_ != FILE_TIMEFORMAT_HOUR && ctx->fileTimeFormat_ != FILE_TIMEFORMAT_MIN) {
-    snprintf(cnf->errbuf(), MAX_ERR_LEN, "%s unknow filetimeformat %d", file, ctx->fileTimeFormat_);
-    return false;
-  }
-
+  if (!helper->getBool("fileWithTimeFormat_", &ctx->fileWithTimeFormat_, false)) return 0;
   if (!helper->getString("pkey", &ctx->pkey_, "")) return 0;
 
   if (!(ctx->function_ = LuaFunction::create(ctx.get(), helper.get()))) return 0;

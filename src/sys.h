@@ -14,14 +14,22 @@ inline void nanosleep(int ms)
   nanosleep(&spec, 0);
 }
 
-inline std::string timeFormat(time_t time, const char *format)
+inline std::string timeFormat(time_t time, const char *format, int len = -1)
 {
   struct tm ltm;
   localtime_r(&time, &ltm);
 
-  char buffer[64];
-  int n = strftime(buffer, 64, format, &ltm);
-  return std::string(buffer, n);
+  if (len > 0) {
+    char *buffer = new char[len + 64];
+    int n = strftime(buffer, len + 64, format, &ltm);
+    std::string s(buffer, n);
+    delete[] buffer;
+    return s;
+  } else {
+    char buffer[64];
+    int n = strftime(buffer, 64, format, &ltm);
+    return std::string(buffer, n);
+  }
 }
 
 class SignalHelper {

@@ -108,10 +108,10 @@ void InotifyCtx::loop()
     {wfd_, POLLIN, 0 }
   };
 
-  long savedSn = time(0);
+  long savedTime = cnf_->fasttime(true);
   while (runStatus->get() == RunStatus::WAIT) {
     int nfd = poll(fds, 1, 500);
-    long sn = time(0);
+    cnf_->fasttime(true);
 
     if (nfd == -1) {
       if (errno != EINTR) return;
@@ -129,7 +129,7 @@ void InotifyCtx::loop()
           LuaCtx *ctx = getLuaCtx(event->wd);
           if (ctx) {
             log_debug(0, "inotify %s was modified", ctx->file().c_str());
-            ctx->getFileReader()->tail2kafka(FileReader::NIL, 0);
+            ctx->getFileReader()->tail2kafka();
           } else {
             log_fatal(0, "@%d could not found ctx", event->wd);
           }
@@ -147,9 +147,9 @@ void InotifyCtx::loop()
       }
     }
 
-    if (sn != savedSn) {
+    if (cnf_->fasttime() != savedTime) {
       globalCheck();
-      savedSn = sn;
+      savedTime = cnf_->fasttime();
     }
 
     tryRmWatch();

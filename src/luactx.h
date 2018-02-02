@@ -67,7 +67,7 @@ public:
   const std::string &host() const { return cnf_->host(); }
 
   int getRotateDelay() const { return rotateDelay_ <= 0 ? cnf_->getRotateDelay() : rotateDelay_; }
-  int getFileTimeFormat() const { return fileTimeFormat_; }
+  bool fileWithTimeFormat() const { return fileWithTimeFormat_; }
 
   const std::string &file() const { return file_; }
   const std::string &topic() const { return topic_; }
@@ -88,7 +88,7 @@ private:
   int           timeidx_;
   bool          autonl_;
   int           rotateDelay_;
-  int           fileTimeFormat_;
+  bool          fileWithTimeFormat_;
   std::string   pkey_;
 
   uint32_t      addr_;

@@ -35,6 +35,8 @@ FileReader::FileReader(LuaCtx *ctx)
   line_ = dline_ = 0;
   qsize_ = 0;
   fileRecordsCache_ = 0;
+
+  fileRotateTime_ = ctx->cnf()->fasttime();
 }
 
 FileReader::~FileReader()
@@ -46,13 +48,20 @@ FileReader::~FileReader()
 // try best to watch the file
 bool FileReader::tryOpen(char *errbuf)
 {
+  std::string file;
+  if (ctx_->fileWithTimeFormat()) {
+    file = timeFormatFile_ = sys::timeFormat(ctx_->cnf()->fasttime(), ctx_->file().c_str(), ctx_->file().size());
+  } else {
+    file = file_;
+  }
+
   for (int i = 0; i < 15; ++i) {
-    fd_ = open(file_.c_str(), O_RDONLY);
+    fd_ = open(file.c_str(), O_RDONLY);
     if (fd_ == -1) sleep(1);
     else break;
   }
   if (fd_ == -1) {
-    snprintf(errbuf, MAX_ERR_LEN, "%s open error: %s", file_.c_str(), strerror(errno));
+    snprintf(errbuf, MAX_ERR_LEN, "%s open error: %s", file.c_str(), strerror(errno));
     return false;
   } else {
     return true;
@@ -75,7 +84,9 @@ bool FileReader::reinit()
 {
   if (fd_ != -1) return false;   // init already
 
-  fd_ = open(file_.c_str(), O_RDONLY);
+  std::string file = ctx_->fileWithTimeFormat() ? timeFormatFile_ : ctx_->file();
+
+  fd_ = open(file.c_str(), O_RDONLY);
   if (fd_ != -1) {
     struct stat st;
     fstat(fd_, &st);
@@ -87,7 +98,7 @@ bool FileReader::reinit()
     tail2kafka(START, &st);
     return true;
   } else {
-    log_error(errno, "%s reinit error", file_.c_str());
+    log_error(errno, "%s reinit error", file.c_str());
     return false;
   }
 }
@@ -169,6 +180,7 @@ inline const char *flagsToAction(uint32_t flags)
   else if (flags & FILE_DELETED) return "deleted";
   else if (flags & FILE_TRUNCATED) return "truncated";
   else if (flags & FILE_ICHANGE) return "inodechanged";
+  else if (flags & FILE_CREATED) return "newcreated";
   else return 0;
 }
 
@@ -184,22 +196,30 @@ bool FileReader::remove()
   else if (st.st_size < size_) flags_ |= FILE_TRUNCATED;
   else if (st.st_ino != inode_) flags_ |= FILE_ICHANGE;
 
+  std::string timeFormatFile;
+  if (ctx_->fileWithTimeFormat()) {
+    timeFormatFile = sys::timeFormat(ctx_->cnf()->fasttime(), ctx_->file().c_str(), ctx_->file().size());
+    if (timeFormatFile != timeFormatFile_ && access(timeFormatFile.c_str(), F_OK) == 0) {
+      flags_ |= FILE_CREATED;
+    }
+  }
+
   const char *action = flagsToAction(flags_);
   bool rc = action ? true : false;
   std::string oldFileName;
 
-// when mv x to x.old, the process may still write to x.old untill reopen x
-  if (rc && (flags_ & FILE_MOVED || flags_ & FILE_DELETED)) {
+  // when mv x to x.old, the process may still write to x.old untill reopen x
+  if (rc && (flags_ & FILE_MOVED || flags_ & FILE_DELETED || flags_ & FILE_CREATED)) {
     rc = false;
     if (ctx_->getRotateDelay() > 0) {  // if config rotate delay
-      if (time(0) - fileRotateTime_ >= ctx_->getRotateDelay()) rc = true;  // rotate delay timeout
+      if (ctx_->cnf()->fasttime() - fileRotateTime_ >= ctx_->getRotateDelay()) rc = true;  // rotate delay timeout
     } else if (flags_ & FILE_MOVED && access(ctx_->file().c_str(), F_OK) == 0) {  // if file reopened
       rc = true;
     }
 
     if (!rc && !(flags_ & FILE_LOGGED)) {
       flags_ |= FILE_LOGGED;
-      fileRotateTime_ = time(0);
+      fileRotateTime_ = ctx_->cnf()->fasttime();
       log_info(0, "inotify %s %s, wait rotatedelay timeout or wait reopen", ctx_->file().c_str(), action);
     }
   }
@@ -215,6 +235,7 @@ bool FileReader::remove()
     close(fd_);
     fd_ = -1;
     flags_ = 0;
+    if (ctx_->fileWithTimeFormat()) timeFormatFile_ = timeFormatFile_;
   }
 
   return rc;

@@ -55,6 +55,12 @@ public:
   int partition() const { return partition_; }
   const std::string &host() const { return host_; }
 
+  time_t fasttime() const { return time_; }
+  time_t fasttime(bool force) {
+    if (force) time_ = time(0);
+    return time_;
+  }
+
   char *errbuf() { return errbuf_; }
   const std::string &libdir() const { return libdir_; }
   const std::string &logdir() const { return logdir_; }
@@ -80,6 +86,7 @@ private:
   std::map<std::string, std::string>  kafkaTopic_;
   KafkaCtx                           *kafka_;
 
+  time_t       time_;
   char        *errbuf_;
   RunStatus   *runStatus_;
 

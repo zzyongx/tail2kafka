@@ -15,6 +15,7 @@ class FileOffRecord;
 #define FILE_DELETED   0x04
 #define FILE_LOGGED    0x08
 #define FILE_ICHANGE   0x10
+#define FILE_CREATED   0x20
 
 struct OneTaskReq {
   LuaCtx *ctx;
@@ -79,6 +80,7 @@ private:
   std::string   file_;
   LuaCtx       *ctx_;
 
+  std::string timeFormatFile_;
   std::vector<FileRecord*> *fileRecordsCache_;
 };
 

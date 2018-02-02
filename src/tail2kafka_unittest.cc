@@ -22,8 +22,9 @@ LOGGER_INIT();
 
 static CnfCtx *cnf = 0;
 
-#define ETCDIR "blackboxtest/etc"
-#define LUA(f) "blackboxtest/etc/"f
+#define LUACNF_SIZE 6
+#define ETCDIR "blackboxtest/tail2kafka"
+#define LUA(f) "blackboxtest/tailkafka/"f
 #define LOG(f) "logs/"f
 
 DEFINE(split)
@@ -87,7 +88,10 @@ DEFINE(loadCnf)
   check(cnf->getKafkaTopicConf().count("request.required.acks"), "kafkaTopicConf request.required.acks notfound");
   check(cnf->getKafkaTopicConf().find("request.required.acks")->second == "1", "kafkaTopicConf request.required.acks = %s", PTRS(cnf->getKafkaTopicConf().find("request.required.acks")->second));
 
-  check(cnf->getLuaCtxSize() == 5, "%d", (int) cnf->getLuaCtxSize());
+  check(cnf->rotateDelay_ == 10, "rotatedelay %d", cnf->rotateDelay_);
+  check(cnf->pingbackUrl_ == "http://pingbackdst/pingback/tail2kafka", "pingbackUrl %s", cnf->pingbackUrl_.c_str());
+
+  check(cnf->getLuaCtxSize() == LUACNF_SIZE, "%d", (int) cnf->getLuaCtxSize());
   for (std::vector<LuaCtx *>::iterator ite = cnf->getLuaCtxs().begin(); ite != cnf->getLuaCtxs().end(); ++ite) {
     LuaCtx *ctx = (*ite);
     while (ctx) {
@@ -105,13 +109,23 @@ DEFINE(loadLuaCtx)
   ctx = getLuaCtx("basic");
   check(ctx, "%s", "basic not found");
 
-  check(ctx->file() == "logs/basic.log", "%s", ctx->file().c_str());
-  check(ctx->topic() == "basic", "%s", ctx->topic().c_str());
+  check(ctx->file() == LOG("basic.log"), "%s", PTRS(ctx->file()));
+  check(ctx->topic() == "basic", "%s", PTRS(ctx->topic()));
   check(ctx->autoparti_, "%s", BTOS(ctx->autoparti_));
   check(ctx->partition_ == -1, "%d", ctx->partition_);
   check(ctx->autonl(), "%s", BTOS(ctx->autonl()));
   check(!ctx->rawcopy_, "%s", BTOS(ctx->rawcopy_));
+  check(!ctx->fileWithTimeFormat_, "fileWithTimeFormat_ %s", BTOS(ctx->fileWithTimeFormat_));
   check(strcmp(ctx->getStartPosition(), "LOG_START") == 0, "%s", ctx->getStartPosition());
+  check(access(ctx->file().c_str(), F_OK) == 0, "file %s autocreat but notfound", PTRS(ctx->file()));
+
+  ctx = getLuaCtx("basic2");
+  check(ctx, "%s", "basic2 notfound");
+
+  check(ctx->autocreat_, "autocreat %s", BTOS(ctx->autocreat_));
+  check(ctx->fileWithTimeFormat_, "fileWithTimeFormat_ %s", BTOS(ctx->fileWithTimeFormat_));
+  std::string file = sys::timeFormat(time(0), LOG("basic.%Y-%m-%d_%H-%M.log"));
+  check(access(file.c_str(), F_OK) == 0, "file %s autocreat but %s notfound", PTRS(ctx->file()), PTRS(file));
 
   ctx = getLuaCtx("filter");
   check(ctx, "%s", "filter not found");
@@ -308,7 +322,7 @@ DEFINE(initFileReader)
   check(cnf->initFileReader(), "%s", cnf->errbuf());
   check(ctx->fileReader_->size_ == 0, "empty file seek %d", (int) ctx->fileReader_->size_);
 
-  const char *topics[] = {"basic", "filter", "grep", "transform", "aggregate"};
+  const char *topics[] = {"basic", "basic2", "filter", "grep", "transform", "aggregate"};
   for (int i = 0; i < 5; ++i) {
     ctx = getLuaCtx(topics[i]);
     check(ctx->getFileReader()->fd_ >= 0, "%s fd_ %d", topics[i], ctx->getFileReader()->fd_);
@@ -351,6 +365,7 @@ DEFINE(watchLoop)
   write(fd, s2, strlen(s2));
   close(fd);
 
+  time_t renameStartTime = cnf->fasttime(true);
   rename(LOG("basic.log"), LOG("basic.log.old"));
 
   OneTaskReq req;
@@ -376,10 +391,13 @@ DEFINE(watchLoop)
   ptr = records->at(0)->data;
   check(ptr->find("End") != std::string::npos, "%s", PTRS(*ptr));
 
-  sleep(2);
+  sleep(1);
   for (std::map<int, LuaCtx*>::iterator ite = inotify.fdToCtx_.begin(); ite != inotify.fdToCtx_.end(); ++ite) {
     check(ite->second != ctx, "%s should be remove from inotify", PTRS(ctx->file()));
   }
+
+  time_t renameEndTime = cnf->fasttime(true);
+  check(renameEndTime - renameStartTime > cnf->rotateDelay_, "%d", (int) (renameEndTime - renameStartTime));
 
   cnf->pollLimit_ = 300;
   ctx->rawcopy_ = true;

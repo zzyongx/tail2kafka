@@ -5,6 +5,9 @@ partition = 0
 polllimit = 50
 brokers   = "127.0.0.1:9092"
 
+rotatedelay = 10
+-- optional
+pingbackurl = "http://pingbackdst/pingback/tail2kafka"
 
 kafka_global = {
   ["client.id"] = "tail2kafka",

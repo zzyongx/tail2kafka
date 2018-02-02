@@ -5,23 +5,32 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#include "filereader.h"
+#include "sys.h"
 #include "common.h"
+#include "filereader.h"
 #include "luahelper.h"
 #include "luactx.h"
 
-bool LuaCtx::createFileIf(const char *luaFile, char *errbuf) const {
+bool LuaCtx::createFileIf(const char *luaFile, char *errbuf) const
+{
+  std::string filename;
+  if (fileWithTimeFormat_) {
+    filename = sys::timeFormat(cnf_->fasttime(), file_.c_str(), file_.size());
+  } else {
+    filename = file_;
+  }
+
   struct stat st;
-  if (::stat(file_.c_str(), &st) == -1) {
+  if (::stat(filename.c_str(), &st) == -1) {
     if (errno == ENOENT && autocreat_) {
-      int fd = creat(file_.c_str(), 0644);
+      int fd = creat(filename.c_str(), 0644);
       if (fd == -1) {
-        snprintf(errbuf, MAX_ERR_LEN, "%s file %s autocreat failed", luaFile, file_.c_str());
+        snprintf(errbuf, MAX_ERR_LEN, "%s file %s autocreat failed", luaFile, filename.c_str());
         return false;
       }
       close(fd);
     } else {
-      snprintf(errbuf, MAX_ERR_LEN, "%s file %s stat failed", luaFile, file_.c_str());
+      snprintf(errbuf, MAX_ERR_LEN, "%s file %s stat failed", luaFile, filename.c_str());
       return false;
     }
   }
@@ -37,6 +46,7 @@ LuaCtx *LuaCtx::loadFile(CnfCtx *cnf, const char *file)
   if (!helper->dofile(file, cnf->errbuf())) return 0;
 
   if (!helper->getBool("autocreat", &ctx->autocreat_, false)) return 0;
+  if (!helper->getBool("fileWithTimeFormat", &ctx->fileWithTimeFormat_, false)) return 0;
 
   if (!helper->getString("topic", &ctx->topic_)) return 0;
   if (!helper->getString("file", &ctx->file_)) return 0;
@@ -60,7 +70,6 @@ LuaCtx *LuaCtx::loadFile(CnfCtx *cnf, const char *file)
   if (!helper->getBool("autonl", &ctx->autonl_, true)) return 0;
   if (!helper->getBool("withhost", &ctx->withhost_, true)) return 0;
   if (!helper->getInt("rotateDelay_", &ctx->rotateDelay_, -1)) return 0;
-  if (!helper->getBool("fileWithTimeFormat_", &ctx->fileWithTimeFormat_, false)) return 0;
   if (!helper->getString("pkey", &ctx->pkey_, "")) return 0;
 
   if (!(ctx->function_ = LuaFunction::create(ctx.get(), helper.get()))) return 0;

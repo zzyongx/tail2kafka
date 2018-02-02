@@ -434,7 +434,7 @@ Transform::Idempotent LuaTransform::write(rd_kafka_message_t *rkm, uint64_t *off
   uint64_t offset = rkm->offset;
 
   const char *ptr = (char *) rkm->payload;
-  size_t len = rkm->len;
+  int len = rkm->len;
 
   if (ptr[len-1] == '\n') --len;
 

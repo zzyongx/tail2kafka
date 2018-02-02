@@ -125,6 +125,7 @@ CnfCtx::CnfCtx() {
   accept = -1;
   server = -1;
   count  = 0;
+  time_  = time(0);
 }
 
 CnfCtx::~CnfCtx()

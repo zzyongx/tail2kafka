@@ -10,9 +10,9 @@
 #include "luactx.h"
 #include "filereader.h"
 
-static const char   NL           = '\n';
-static const size_t MAX_LINE_LEN = 1024 * 1024; // 1M
-static const size_t SEND_QUEUE_SIZE = 1000;
+#define NL              '\n'
+#define MAX_LINE_LEN    1024 * 1024 // 1M
+#define SEND_QUEUE_SIZE 1000
 
 FileReader::StartPosition FileReader::stringToStartPosition(const char *s)
 {
@@ -269,7 +269,7 @@ bool FileReader::setStartPositionEnd(off_t fileSize, char *errbuf)
 bool FileReader::tail2kafka(StartPosition pos, struct stat *stPtr, const char *oldFileName)
 {
   if (pos == NIL && util::atomic_get(&qsize_) > SEND_QUEUE_SIZE) {
-    log_info(0, "%s queue exceed %s", file_.c_str(), SEND_QUEUE_SIZE);
+    log_info(0, "%d %s queue exceed %d", fd_, file_.c_str(), SEND_QUEUE_SIZE);
     return false;
   }
 

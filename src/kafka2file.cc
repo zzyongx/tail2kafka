@@ -139,7 +139,7 @@ KafkaConsumer *KafkaConsumer::create(const char *wdir, const char *brokers, cons
     return 0;
   }
 
-  log_info(0, "%s:%d set offset at %llu", topic, partition, ctx->offset_.get());
+  log_info(0, "%s:%d set offset at %ld", topic, partition, ctx->offset_.get());
   if (rd_kafka_consume_start_queue(ctx->rkt_, partition, ctx->offset_.get(), ctx->rkqu_) == -1) {
     log_fatal(0, "%s:%d failed to start consuming: %s", topic, partition, rd_kafka_err2name(rd_kafka_last_error()));
     return 0;
@@ -171,8 +171,8 @@ bool KafkaConsumer::loop(RunStatus *runStatus, Transform *transform)
       continue;
     }
 
-    if (startOff == (uint64_t)rkm->offset) {
-      log_info(0, "%s:%d same offset message %lu %.*s", topic_, partition_, startOff, rkm->len, (char *) rkm->payload);
+    if (startOff == (uint64_t) rkm->offset) {
+      log_info(0, "%s:%d same offset message %lu %.*s", topic_, partition_, startOff, (int) rkm->len, (char *) rkm->payload);
       rd_kafka_message_destroy(rkm);
       continue;
     }
@@ -182,7 +182,7 @@ bool KafkaConsumer::loop(RunStatus *runStatus, Transform *transform)
   }
 
   if (transform->timeout(&off) != Transform::IGNORE) { assert(off != (uint64_t) RD_KAFKA_OFFSET_END); offset_.update(off); }
-  log_info(0, "%s:%d end offset at %llu", topic_, partition_, offset_.get());
+  log_info(0, "%s:%d end offset at %ld", topic_, partition_, offset_.get());
 
   return true;
 }

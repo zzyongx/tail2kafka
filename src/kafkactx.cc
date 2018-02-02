@@ -10,7 +10,7 @@
 
 static int stats_cb(rd_kafka_t *, char *json, size_t json_len, void *)
 {
-  log_info(0, "kafka stats %.*s", json_len, json);
+  log_info(0, "kafka stats %.*s", (int) json_len, json);
   return 0;
 }
 

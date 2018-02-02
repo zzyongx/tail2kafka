@@ -66,7 +66,7 @@ LuaFunction *LuaFunction::create(LuaCtx *ctx, LuaHelper *helper)
 
 inline std::string *addHost(std::string *ptr, const std::string &host, off_t off, bool space) {
   ptr->append(1, '*').append(host);
-  if (off != (off_t) -1) ptr->append(1, '@').append(util::toStr(off, 11));
+  if (off != (off_t) -1) ptr->append(1, '@').append(util::toStr(off, PADDING_LEN));
   if (space) ptr->append(1, ' ');
   return ptr;
 }

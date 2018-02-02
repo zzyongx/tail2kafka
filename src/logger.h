@@ -223,10 +223,12 @@ private:
 
 #ifdef NO_LOGGER
 
-# define log_fatal(eno, fmt, args...) printf("[FATAL] \"%d:%s\" "fmt"\n", eno, eno ? strerror(eno) : "", ##args)
-# define log_error(eno, fmt, args...) printf("[ERROR] \"%d:%s\" "fmt"\n", eno, eno ? strerror(eno) : "", ##args)
-# define log_info(eno, fmt, args...)  printf("[INFO] \"%d:%s\" "fmt"\n", eno, eno ? strerror(eno) : "", ##args)
-# define log_debug(eno, fmt, args...) printf("[DEBUG] \"%d:%s\" "fmt"\n", eno, eno ? strerror(eno) : "", ##args)
+# define LOG_TIME time_t now = time(0); struct tm ltm; localtime_r(&now, &ltm); char timestr[64]; strftime(timestr, 64, "[%Y-%m-%d %H:%M:%S]", &ltm)
+
+# define log_fatal(eno, fmt, args...) do { LOG_TIME; printf("%s [FATAL] \"%d:%s\" "fmt"\n", timestr, eno, eno ? strerror(eno) : "", ##args); } while (0)
+# define log_error(eno, fmt, args...) do { LOG_TIME; printf("%s [ERROR] \"%d:%s\" "fmt"\n", timestr, eno, eno ? strerror(eno) : "", ##args); } while (0)
+# define log_info(eno, fmt, args...)  do { LOG_TIME; printf("%s [INFO] \"%d:%s\" "fmt"\n", timestr, eno, eno ? strerror(eno) : "", ##args); } while (0)
+# define log_debug(eno, fmt, args...) do { LOG_TIME; printf("%s [DEBUG] \"%d:%s\" "fmt"\n", timestr, eno, eno ? strerror(eno) : "", ##args); } while (0)
 
 #else
 

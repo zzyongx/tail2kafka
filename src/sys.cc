@@ -134,7 +134,7 @@ bool endsWith(const char *haystack, const char *needle)
 bool readdir(const char *dir, const char *suffix, std::vector<std::string> *files, char *errbuf)
 {
   DIR *dh = opendir(dir);
-  if (!dir) {
+  if (!dh) {
     if (errbuf) snprintf(errbuf, MAX_ERR_LEN, "could not opendir %s", dir);
     return false;
   }

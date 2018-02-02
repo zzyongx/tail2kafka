@@ -46,7 +46,7 @@ bool InotifyCtx::init()
 
   for (std::vector<LuaCtx *>::iterator ite = cnf_->getLuaCtxs().begin(); ite != cnf_->getLuaCtxs().end(); ++ite) {
     LuaCtx *ctx = *ite;
-    const std::string &file = ctx->getFileReader()->getFileName();
+    const std::string &file = ctx->file();
 
     int wd = inotify_add_watch(wfd_, file.c_str(), WATCH_EVENT);
     if (wd == -1) {
@@ -65,11 +65,10 @@ bool InotifyCtx::tryReWatch()
     LuaCtx *ctx = *ite;
 
     if (ctx->getFileReader()->reinit()) {
-      const std::string &file = ctx->getFileReader()->getFileName();
-      int wd = inotify_add_watch(wfd_, file.c_str(), WATCH_EVENT);
+      int wd = inotify_add_watch(wfd_, ctx->file().c_str(), WATCH_EVENT);
       fdToCtx_.insert(std::make_pair(wd, ctx));
 
-      log_info(0, "rewatch %s @%d", file.c_str(), wd);
+      log_info(0, "rewatch %s @%d", ctx->file().c_str(), wd);
       ctx->getFileReader()->tail2kafka();
     }
   }

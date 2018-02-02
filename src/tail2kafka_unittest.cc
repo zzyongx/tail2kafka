@@ -290,7 +290,6 @@ DEFINE(initFileReader)
   ctx->startPosition_ = "LOG_END";
 
   check(ctx->initFileReader(cnf->errbuf()), "%s", cnf->errbuf());
-  check(ctx->fileReader_->file_ == LOG("basic.log"), "%s", ctx->fileReader_->file_.c_str());
   check(ctx->fileReader_->buffer_, "buffer init ok");
   check(ctx->fileReader_->npos_ == 0, "%d", (int) ctx->fileReader_->npos_);
   check(ctx->fileReader_->size_ == 7, "%d", (int) ctx->fileReader_->size_);

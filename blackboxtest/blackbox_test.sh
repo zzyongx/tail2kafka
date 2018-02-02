@@ -1,8 +1,10 @@
 #!/bin/bash
 
-CFGDIR="blackboxtest/etc"
-PIDF=/var/run/tail2kafka.pid
+BIN="${BASH_SOURCE[0]}"
 BINDIR=$(readlink -e $(dirname $BIN))
+
+CFGDIR="$BINDIR/tail2kafka"
+PIDF=/var/run/tail2kafka.pid
 BUILDDIR=$BINDIR/../build
 
 if [ ! -d $CFGDIR ]; then
@@ -29,12 +31,20 @@ OLDFILE=kafka2filedir/basic/zzyong_basic.log.old
 test -d kafka2filedir || mkdir kafka2filedir
 rm -f kafka2filedir/basic.0.offset $OLDFILE
 
-$BUILDDIR/kafka2file 127.0.0.1:9092 basic 0 kafka2filedir &
+$BUILDDIR/kafka2file 127.0.0.1:9092 basic 0 offset-end kafka2filedir &
 KAFKA2FILE_ID=$!
+if [ $? != 0 ]; then
+  echo "start kafka2file failed"
+  exit 1
+fi
 
 (test -f $PIDF && test -d /proc/$(cat $PIDF)) && kill $(cat $PIDF)
 sleep 1
-$BUILDDIR/tail2kafka $CFGDIR || exit $?
+$BUILDDIR/tail2kafka $CFGDIR
+if [ ! -f $PIDF ] || [ ! -d /proc/$(cat $PIDF) ]; then
+  echo "start tail2kafka failed"
+  exit 1;
+fi
 
 sleep 1
 $BUILDDIR/tail2kafka_blackbox

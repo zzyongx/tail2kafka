@@ -48,12 +48,7 @@ FileReader::~FileReader()
 // try best to watch the file
 bool FileReader::tryOpen(char *errbuf)
 {
-  std::string file;
-  if (ctx_->fileWithTimeFormat()) {
-    file = timeFormatFile_ = sys::timeFormat(ctx_->cnf()->fasttime(), ctx_->file().c_str(), ctx_->file().size());
-  } else {
-    file = file_;
-  }
+  const std::string &file = ctx_->file();
 
   for (int i = 0; i < 15; ++i) {
     fd_ = open(file.c_str(), O_RDONLY);
@@ -70,7 +65,6 @@ bool FileReader::tryOpen(char *errbuf)
 
 bool FileReader::init(char *errbuf)
 {
-  file_ = ctx_->file();
   if (!tryOpen(errbuf)) return false;
 
   struct stat st;
@@ -84,7 +78,7 @@ bool FileReader::reinit()
 {
   if (fd_ != -1) return false;   // init already
 
-  std::string file = ctx_->fileWithTimeFormat() ? timeFormatFile_ : ctx_->file();
+  const std::string &file = ctx_->file();
 
   fd_ = open(file.c_str(), O_RDONLY);
   if (fd_ != -1) {
@@ -103,12 +97,6 @@ bool FileReader::reinit()
   }
 }
 
-std::string FileReader::getFileName()
-{
-  if (ctx_->fileWithTimeFormat()) return ctx_->file();
-  else return timeFormatFile_;
-}
-
 bool FileReader::setStartPosition(off_t fileSize, char *errbuf)
 {
   StartPosition startPosition = stringToStartPosition(ctx_->getStartPosition());
@@ -116,14 +104,14 @@ bool FileReader::setStartPosition(off_t fileSize, char *errbuf)
     size_ = ctx_->cnf()->getFileOff()->getOff(inode_);
     if (size_ == (off_t) -1 || size_ > fileSize) {
       size_ = 0;
-      log_error(0, "%s fileoff notfound, set to start", file_.c_str());
+      log_error(0, "%s fileoff notfound, set to start", ctx_->file().c_str());
     }
   } else if (startPosition == FileReader::START) {
     size_ = 0;
   } else if (startPosition == FileReader::LOG_END) {
     size_ = ctx_->cnf()->getFileOff()->getOff(inode_);
     if (size_ == (off_t) -1 || size_ > fileSize) {
-      log_error(0, "%s fileoff notfound, set to end", file_.c_str());
+      log_error(0, "%s fileoff notfound, set to end", ctx_->file().c_str());
       return setStartPositionEnd(fileSize, errbuf);
     }
   } else if (startPosition == FileReader::END) {
@@ -203,11 +191,8 @@ bool FileReader::remove()
   else if (st.st_ino != inode_) flags_ |= FILE_ICHANGE;
 
   std::string timeFormatFile;
-  if (ctx_->fileWithTimeFormat()) {
-    timeFormatFile = sys::timeFormat(ctx_->cnf()->fasttime(), ctx_->file().c_str(), ctx_->file().size());
-    if (timeFormatFile != timeFormatFile_ && access(timeFormatFile.c_str(), F_OK) == 0) {
-      flags_ |= FILE_CREATED;
-    }
+  if (ctx_->getTimeFormatFile(&timeFormatFile) && access(timeFormatFile.c_str(), F_OK) == 0) {
+    flags_ |= FILE_CREATED;
   }
 
   const char *action = flagsToAction(flags_);
@@ -232,6 +217,7 @@ bool FileReader::remove()
 
   if (rc) {
     if ((flags_ & FILE_MOVED) || (flags_ & FILE_DELETED)) oldFileName = getFileNameFromFd(fd_);
+    else if (flags_ & FILE_CREATED) oldFileName = ctx_->file();
     log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) %s %s", fd_, ctx_->file().c_str(),
              size_, dsize_, line_, dline_, action, getFileNameFromFd(fd_).c_str());
 
@@ -245,7 +231,7 @@ bool FileReader::remove()
     close(fd_);
     fd_ = -1;
     flags_ = 0;
-    if (ctx_->fileWithTimeFormat()) timeFormatFile_ = timeFormatFile_;
+    ctx_->setTimeFormatFile(timeFormatFile);
   }
 
   return rc;
@@ -262,13 +248,13 @@ bool FileReader::setStartPositionEnd(off_t fileSize, char *errbuf)
   lseek(fd_, fileSize - min, SEEK_SET);
 
   if (read(fd_, buffer_, MAX_LINE_LEN) != min) {
-    snprintf(errbuf, MAX_ERR_LEN, "read %s less min %s", file_.c_str(), errno == 0 ? "" : strerror(errno));
+    snprintf(errbuf, MAX_ERR_LEN, "read %s less min %s", ctx_->file().c_str(), errno == 0 ? "" : strerror(errno));
     return false;
   }
 
   char *pos = (char *) memrchr(buffer_, NL, min);
   if (!pos) {
-    snprintf(errbuf, MAX_ERR_LEN, "%s line length bigger than %ld", file_.c_str(), (long) min);
+    snprintf(errbuf, MAX_ERR_LEN, "%s line length bigger than %ld", ctx_->file().c_str(), (long) min);
     return false;
   }
 
@@ -279,14 +265,14 @@ bool FileReader::setStartPositionEnd(off_t fileSize, char *errbuf)
 bool FileReader::tail2kafka(StartPosition pos, struct stat *stPtr, const char *oldFileName)
 {
   if (pos == NIL && util::atomic_get(&qsize_) > SEND_QUEUE_SIZE) {
-    log_info(0, "%d %s queue exceed %d", fd_, file_.c_str(), SEND_QUEUE_SIZE);
+    log_info(0, "%d %s queue exceed %d", fd_, ctx_->file().c_str(), SEND_QUEUE_SIZE);
     return false;
   }
 
   struct stat stat;
   if (stPtr == 0) {
     if (fstat(fd_, &stat) != 0) {
-      log_error(errno, "%d %s fstat error", fd_, file_.c_str());
+      log_error(errno, "%d %s fstat error", fd_, ctx_->file().c_str());
       return false;
     }
     stPtr = &stat;
@@ -294,7 +280,7 @@ bool FileReader::tail2kafka(StartPosition pos, struct stat *stPtr, const char *o
 
   off_t off = lseek(fd_, 0, SEEK_CUR);  // get last read seek
   if (off == (off_t) -1) {
-    log_error(errno, "%d %s lseek error", fd_, file_.c_str());
+    log_error(errno, "%d %s lseek error", fd_, ctx_->file().c_str());
     return false;
   }
 
@@ -314,7 +300,7 @@ bool FileReader::tail2kafka(StartPosition pos, struct stat *stPtr, const char *o
     assert(min > 0);
     ssize_t nn = read(fd_, buffer_ + npos_, min);
     if (nn == -1) {
-      log_error(errno, "%d %s read error", fd_, file_.c_str());
+      log_error(errno, "%d %s read error", fd_, ctx_->file().c_str());
       return false;
     } else if (nn == 0) { // file was truncated
       flags_ |= FILE_TRUNCATED;
@@ -455,7 +441,7 @@ void FileReader::processLines(ino_t inode, off_t *offPtr)
 
   if (n == 0) {
     if (npos_ == MAX_LINE_LEN) {
-      log_error(0, "%s line length exceed, truncate\n", file_.c_str());
+      log_error(0, "%s line length exceed, truncate\n", ctx_->file().c_str());
       npos_ = 0;
     }
   } else if (npos_ > n) {

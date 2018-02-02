@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 
+#include "sys.h"
 #include "luafunction.h"
 #include "cnfctx.h"
 
@@ -69,14 +70,29 @@ public:
   int getRotateDelay() const { return rotateDelay_ <= 0 ? cnf_->getRotateDelay() : rotateDelay_; }
   bool fileWithTimeFormat() const { return fileWithTimeFormat_; }
 
-  const std::string &file() const { return file_; }
+  bool getTimeFormatFile(std::string *timeFormatFile) const {
+    if (fileWithTimeFormat_) {
+      std::string f = sys::timeFormat(cnf_->fasttime(), file_.c_str(), file_.size());
+      if (f != timeFormatFile_) {
+        timeFormatFile->assign(f);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  void setTimeFormatFile(const std::string &timeFormatFile) {
+    if (fileWithTimeFormat_) timeFormatFile_ = timeFormatFile;
+  }
+
+  const std::string &file() const { return fileWithTimeFormat_ ? timeFormatFile_ : file_; }
   const std::string &topic() const { return topic_; }
 
   LuaFunction *function() const { return function_; }
 
 private:
   LuaCtx();
-  bool createFileIf(const char *luaFile, char *errbuf) const;
+  bool testFile(const char *luaFile, char *errbuf);
 
 private:
   bool          autocreat_;
@@ -88,8 +104,10 @@ private:
   int           timeidx_;
   bool          autonl_;
   int           rotateDelay_;
-  bool          fileWithTimeFormat_;
   std::string   pkey_;
+
+  bool          fileWithTimeFormat_;
+  std::string   timeFormatFile_;
 
   uint32_t      addr_;
   bool          autoparti_;

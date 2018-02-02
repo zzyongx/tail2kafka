@@ -11,11 +11,12 @@
 #include "luahelper.h"
 #include "luactx.h"
 
-bool LuaCtx::createFileIf(const char *luaFile, char *errbuf) const
+bool LuaCtx::testFile(const char *luaFile, char *errbuf)
 {
   std::string filename;
   if (fileWithTimeFormat_) {
-    filename = sys::timeFormat(cnf_->fasttime(), file_.c_str(), file_.size());
+    timeFormatFile_ = sys::timeFormat(cnf_->fasttime(), file_.c_str(), file_.size());
+    filename = timeFormatFile_;
   } else {
     filename = file_;
   }
@@ -50,7 +51,7 @@ LuaCtx *LuaCtx::loadFile(CnfCtx *cnf, const char *file)
 
   if (!helper->getString("topic", &ctx->topic_)) return 0;
   if (!helper->getString("file", &ctx->file_)) return 0;
-  if (!ctx->createFileIf(file, cnf->errbuf())) return 0;
+  if (!ctx->testFile(file, cnf->errbuf())) return 0;
 
   if (!helper->getString("startpos", &ctx->startPosition_, "LOG_START")) return 0;
   if (FileReader::stringToStartPosition(ctx->startPosition_.c_str()) == FileReader::NIL) {

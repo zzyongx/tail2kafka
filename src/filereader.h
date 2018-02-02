@@ -34,7 +34,6 @@ public:
   bool init(char *errbuf);
   bool reinit();
 
-  std::string getFileName();
   void tagRemove() { flags_ |= FILE_MOVED; }
   bool remove();
 
@@ -78,10 +77,8 @@ private:
 
   char         *buffer_;
   size_t        npos_;
-  std::string   file_;
   LuaCtx       *ctx_;
 
-  std::string timeFormatFile_;
   std::vector<FileRecord*> *fileRecordsCache_;
 };
 

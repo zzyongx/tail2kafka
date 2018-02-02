@@ -72,6 +72,8 @@ private:
   size_t dline_;  // send line
   off_t  dsize_;  // send size
 
+  size_t qsize_;  // send queue size
+
   char         *buffer_;
   size_t        npos_;
   std::string   file_;

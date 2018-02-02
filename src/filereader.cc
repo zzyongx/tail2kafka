@@ -12,6 +12,7 @@
 
 static const char   NL           = '\n';
 static const size_t MAX_LINE_LEN = 1024 * 1024; // 1M
+static const size_t SEND_QUEUE_SIZE = 1000;
 
 FileReader::StartPosition FileReader::stringToStartPosition(const char *s)
 {
@@ -32,6 +33,7 @@ FileReader::FileReader(LuaCtx *ctx)
 
   size_ = dsize_ = 0;
   line_ = dline_ = 0;
+  qsize_ = 0;
   fileRecordsCache_ = 0;
 }
 
@@ -125,6 +127,8 @@ void FileReader::initFileOffRecord(FileOffRecord * fileOffRecord)
 // FileOffRecord should be called in only one thread
 void FileReader::updateFileOffRecord(const FileRecord *record)
 {
+  util::atomic_dec(&qsize_);
+
   if (record->inode != fileOffRecord_->inode) {
     fileOffRecord_->inode = record->inode;
     fileOffRecord_->off   = record->off;
@@ -243,6 +247,11 @@ bool FileReader::setStartPositionEnd(off_t fileSize, char *errbuf)
 
 bool FileReader::tail2kafka(StartPosition pos, struct stat *stPtr, const char *oldFileName)
 {
+  if (pos == NIL && util::atomic_get(&qsize_) > SEND_QUEUE_SIZE) {
+    log_info(0, "%s queue exceed %s", file_.c_str(), SEND_QUEUE_SIZE);
+    return false;
+  }
+
   struct stat stat;
   if (stPtr == 0) {
     if (fstat(fd_, &stat) != 0) {
@@ -367,6 +376,7 @@ void FileReader::propagateRawData(const std::string &line, off_t size)
     }
     if (ctx->autonl()) linePtr->append(1, NL);
 
+    util::atomic_inc(&qsize_);
     fileReader->fileRecordsCache_->push_back(FileRecord::create(-1, -1, linePtr));
     ctx = ctx->next();
   }
@@ -377,6 +387,7 @@ void FileReader::cacheFileRecord(ino_t inode, off_t off, const std::vector<std::
   if (n == 0) return;
   if (!fileRecordsCache_) fileRecordsCache_ = new std::vector<FileRecord *>;
 
+  util::atomic_inc(&qsize_, lines.size());
   for (size_t i = lines.size()-n; i < lines.size(); ++i) {
     fileRecordsCache_->push_back(FileRecord::create(inode, off, lines[i]));
   }

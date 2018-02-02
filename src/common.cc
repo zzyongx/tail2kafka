@@ -27,6 +27,7 @@ bool shell(const char *cmd, std::string *output, char *errbuf)
     return false;
   }
 
+  output->assign(util::trim(*output));
   return true;
 }
 

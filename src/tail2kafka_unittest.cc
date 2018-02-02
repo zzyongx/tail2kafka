@@ -59,6 +59,20 @@ DEFINE(iso8601)
   check(iso == "2015-02-28T12:30:00", "%s", iso.c_str());
 }
 
+DEFINE(hostshell)
+{
+  std::string s = " \tHello World\n";
+  check(util::trim(s) == "Hello World", "%s", PTRS(util::trim(s)));
+  check(util::trim(s, false) == " \tHelloWorld", "%s", PTRS(util::trim(s, true, false)));
+  check(util::trim(s, true, false) == "HelloWorld\n", "%s", PTRS(util::trim(s, true, false)));
+  check(util::trim("\t\n ") == "", "%s", PTRS(util::trim("\t\n ")));
+
+  char errbuf[1024];
+  std::string result;
+  check(shell("ls -d /", &result, errbuf), "error %s", errbuf);
+  check(result == "/", "result %s", PTRS(result));
+}
+
 static LuaCtx *getLuaCtx(const char *topic)
 {
   for (std::vector<LuaCtx *>::iterator ite = cnf->getLuaCtxs().begin(); ite != cnf->getLuaCtxs().end(); ++ite) {

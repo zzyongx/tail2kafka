@@ -1,6 +1,7 @@
 #ifndef _UTIL_H_
 #define _UTIL_H_
 
+#include <cstring>
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -59,6 +60,28 @@ inline std::string toStr(IntType i, int len = -1, char padding = '0')
 
   std::reverse(s.begin(), s.end());
   return s;
+}
+
+inline std::string trim(const std::string &str, bool left = true, bool right = true, const char *space = " \t\n")
+{
+  std::string s;
+  size_t start = 0, end = str.size();
+  for (size_t i = 0; left && i < str.size(); ++i) {
+    if (!strchr(space, str[i])) {
+      start = i;
+      break;
+    }
+  }
+
+  for (size_t i = str.size(); right && i > start; --i) {
+    if (!strchr(space, str[i-1])) {
+      end = i;
+      break;
+    }
+  }
+
+  if (start < end) return str.substr(start, end - start);
+  else return "";
 }
 
 } // namespace util

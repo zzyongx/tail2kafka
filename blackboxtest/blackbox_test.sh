@@ -2,6 +2,8 @@
 
 CFGDIR="blackboxtest/etc"
 PIDF=/var/run/tail2kafka.pid
+BINDIR=$(readlink -e $(dirname $BIN))
+BUILDDIR=$BINDIR/../build
 
 if [ ! -d $CFGDIR ]; then
   echo "$CFGDIR NOT FOUND"
@@ -27,15 +29,15 @@ OLDFILE=kafka2filedir/basic/zzyong_basic.log.old
 test -d kafka2filedir || mkdir kafka2filedir
 rm -f kafka2filedir/basic.0.offset $OLDFILE
 
-./kafka2file 127.0.0.1:9092 basic 0 kafka2filedir &
+$BUILDDIR/kafka2file 127.0.0.1:9092 basic 0 kafka2filedir &
 KAFKA2FILE_ID=$!
 
 (test -f $PIDF && test -d /proc/$(cat $PIDF)) && kill $(cat $PIDF)
 sleep 1
-./tail2kafka $CFGDIR || exit $?
+$BUILDDIR/tail2kafka $CFGDIR || exit $?
 
 sleep 1
-./tail2kafka_blackbox
+$BUILDDIR/tail2kafka_blackbox
 
 echo "WAIT kafka2file ... "; sleep 20
 kill $KAFKA2FILE_ID

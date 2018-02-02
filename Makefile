@@ -17,25 +17,26 @@ ifndef ($(INSTALLDIR))
 endif
 
 VPATH = .:./libs
+BUILDDIR = build
 
-OBJ = build/common.o build/cnfctx.o build/luactx.o build/transform.o \
-	    build/filereader.o build/inotifyctx.o build/fileoff.o \
-      build/luafunction.o build/kafkactx.o build/sys.o build/util.o
+OBJ = $(BUILDDIR)/common.o $(BUILDDIR)/cnfctx.o $(BUILDDIR)/luactx.o $(BUILDDIR)/transform.o \
+	    $(BUILDDIR)/filereader.o $(BUILDDIR)/inotifyctx.o $(BUILDDIR)/fileoff.o \
+      $(BUILDDIR)/luafunction.o $(BUILDDIR)/kafkactx.o $(BUILDDIR)/sys.o $(BUILDDIR)/util.o
 
 default: configure tail2kafka kafka2file tail2kafka_unittest
 	@echo finished
 
-tail2kafka: build/tail2kafka.o $(OBJ)
-	$(CXX) $(CFLAGS) -o $@ $^ $(ARLIBS) $(LDFLAGS)
+tail2kafka: $(BUILDDIR)/tail2kafka.o $(OBJ)
+	$(CXX) $(CFLAGS) -o $(BUILDDIR)/$@ $^ $(ARLIBS) $(LDFLAGS)
 
-tail2kafka_unittest: build/tail2kafka_unittest.o $(OBJ)
-	$(CXX) $(CFLAGS) -o $@ $^ $(ARLIBS) $(LDFLAGS)
+tail2kafka_unittest: $(BUILDDIR)/tail2kafka_unittest.o $(OBJ)
+	$(CXX) $(CFLAGS) -o $(BUILDDIR)/$@ $^ $(ARLIBS) $(LDFLAGS)
 
-kafka2file: build/kafka2file.o $(OBJ)
-	$(CXX) $(CFLAGS) -o $@ $^ $(ARLIBS) $(LDFLAGS)
+kafka2file: $(BUILDDIR)/kafka2file.o $(OBJ)
+	$(CXX) $(CFLAGS) -o $(BUILDDIR)/$@ $^ $(ARLIBS) $(LDFLAGS)
 
-speedlimit: build/mix/speedlimit.o
-	$(CXX) $(CFLAGS) -o $@ $^
+speedlimit: $(BUILDDIR)/mix/speedlimit.o
+	$(CXX) $(CFLAGS) -o $(BUILDDIR)/$@ $^
 
 .PHONY: get-deps
 get-deps:
@@ -65,18 +66,18 @@ get-deps:
 
 .PHONY: configure
 configure:
-	@mkdir -p build
-	@mkdir -p build/mix
+	@mkdir -p $(BUILDDIR)
+	@mkdir -p $(BUILDDIR)/mix
 	@ls -l $(ARLIBS) >/dev/null || (echo "make get-deps first" && exit 2)
 
-build/%.o: src/%.cc
+$(BUILDDIR)/%.o: src/%.cc
 	$(CXX) -o $@ $(WARN) $(CXXWARN) $(CFLAGS) $(PREDEF) -c $<
 
-build/mix/%.o: mix/%.cc
+$(BUILDDIR)/mix/%.o: mix/%.cc
 	$(CXX) -o $@ $(WARN) $(CXXWARN) $(CFLAGS) $(PREDEF) -c $<
 
-tail2kafka_blackbox: build/tail2kafka_blackbox.o
-	$(CXX) $(CFLAGS) -o $@ $^ $(ARLIBS) $(LDFLAGS)
+tail2kafka_blackbox: $(BUILDDIR)/tail2kafka_blackbox.o
+	$(CXX) $(CFLAGS) -o $(BUILDDIR)/$@ $^ $(ARLIBS) $(LDFLAGS)
 
 .PHONY: test
 test:
@@ -85,7 +86,7 @@ test:
 	@echo "unit test"
 	find logs -type f -name "*.log" -delete
 	make clean && make PREDEF="-DNO_LOGGER" DEBUG=1
-	./tail2kafka_unittest
+	$(BUILDDIR)/tail2kafka_unittest
 
 	@echo "blackbox test"
 	make clean && make PREDEF="-D_DEBUG_" && make tail2kafka_blackbox
@@ -99,4 +100,4 @@ install:
 
 .PHONY: clean
 clean:
-	rm -rf ./build/*
+	rm -rf $(BUILDDIR)/*

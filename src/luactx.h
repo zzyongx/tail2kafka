@@ -9,13 +9,16 @@
 #include "luafunction.h"
 #include "cnfctx.h"
 
+#define FILE_TIMEFORMAT_NIL  0
+#define FILE_TIMEFORMAT_MIN  1
+#define FILE_TIMEFORMAT_HOUR 2
+#define FILE_TIMEFORMAT_DAY  3
+
 struct rk_kafka_topic_t;
 class FileReader;
 
 class LuaCtx {
   template<class T> friend class UNITTEST_HELPER;
-public:
-
 public:
   static LuaCtx *loadFile(CnfCtx *cnf, const char *file);
   ~LuaCtx();
@@ -64,6 +67,7 @@ public:
   const std::string &host() const { return cnf_->host(); }
 
   int getRotateDelay() const { return rotateDelay_ <= 0 ? cnf_->getRotateDelay() : rotateDelay_; }
+  int getFileTimeFormat() const { return fileTimeFormat_; }
 
   const std::string &file() const { return file_; }
   const std::string &topic() const { return topic_; }
@@ -84,6 +88,7 @@ private:
   int           timeidx_;
   bool          autonl_;
   int           rotateDelay_;
+  int           fileTimeFormat_;
   std::string   pkey_;
 
   uint32_t      addr_;

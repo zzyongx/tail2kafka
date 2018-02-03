@@ -10,6 +10,19 @@ namespace util {
 
 bool split(const char *str, char sp, std::vector<int> *list);
 
+template <class Iterator>
+std::string join(Iterator begin, Iterator end, char sp)
+{
+  bool first = true;
+  std::string s;
+  for (Iterator ite = begin; ite != end; ++ite) {
+    if (!first) s.append(1, sp);
+    s.append(*ite);
+    first = false;
+  }
+  return s;
+}
+
 inline bool hexToInt(const char *ptr, int *val)
 {
   *val = 0;
@@ -62,27 +75,10 @@ inline std::string toStr(IntType i, int len = -1, char padding = '0')
   return s;
 }
 
-inline std::string trim(const std::string &str, bool left = true, bool right = true, const char *space = " \t\n")
-{
-  std::string s;
-  size_t start = 0, end = str.size();
-  for (size_t i = 0; left && i < str.size(); ++i) {
-    if (!strchr(space, str[i])) {
-      start = i;
-      break;
-    }
-  }
+std::string trim(const std::string &str, bool left = true, bool right = true, const char *space = " \t\n");
 
-  for (size_t i = str.size(); right && i > start; --i) {
-    if (!strchr(space, str[i-1])) {
-      end = i;
-      break;
-    }
-  }
 
-  if (start < end) return str.substr(start, end - start);
-  else return "";
-}
+
 
 } // namespace util
 

@@ -1,5 +1,5 @@
-#ifndef _MIXUTIL_LOGGER_H_
-#define _MIXUTIL_LOGGER_H_
+#ifndef _LOGGER_H_
+#define _LOGGER_H_
 
 #include <cstdio>
 #include <cerrno>

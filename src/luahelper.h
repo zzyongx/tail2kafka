@@ -20,7 +20,7 @@ public:
     if (L_) lua_close(L_);
   }
 
-  const char *file() const { return file_; }
+  const char *file() const { return file_.c_str(); }
 
   bool dofile(const char *f, char *errbuf) {
     lua_State *L = luaL_newstate();
@@ -33,6 +33,7 @@ public:
 
     if (L_) lua_close(L_);
     L_ = L;
+
     file_   = f;
     errbuf_ = errbuf;
     return true;
@@ -44,7 +45,7 @@ public:
     if (lua_isstring(L_, 1)) {
       value->assign(lua_tostring(L_, 1));
     } else {
-      snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be string", file_, name);
+      snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be string", file_.c_str(), name);
       rc = false;
     }
     lua_settop(L_, 0);
@@ -60,7 +61,7 @@ public:
       if (lua_isstring(L_, 1)) {
         value->assign(lua_tostring(L_, 1));
       } else {
-        snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be string", file_, name);
+        snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be string", file_.c_str(), name);
         rc = false;
       }
     }
@@ -77,7 +78,7 @@ public:
       if (lua_isnumber(L_, 1)) {
         *value = lua_tonumber(L_, 1);
       } else {
-        snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be number", file_, name);
+        snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be number", file_.c_str(), name);
         rc = false;
       }
 
@@ -95,7 +96,7 @@ public:
       if (lua_isboolean(L_, 1)) {
         *value = lua_toboolean(L_, 1);
       } else {
-        snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be boolean", file_, name);
+        snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be boolean", file_.c_str(), name);
         rc = false;
       }
     }
@@ -109,17 +110,17 @@ public:
 
     if (lua_isnil(L_, 1)) {
       if (required) {
-        snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be hash table", file_, name);
+        snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be hash table", file_.c_str(), name);
         rc = false;
       }
     } else if (lua_istable(L_, 1)) {
       lua_pushnil(L_);
       while (rc && lua_next(L_, 1) != 0) {
         if (lua_type(L_, -2) != LUA_TSTRING) {
-          snprintf(errbuf_, MAX_ERR_LEN, "%s %s key must be string", file_, name);
+          snprintf(errbuf_, MAX_ERR_LEN, "%s %s key must be string", file_.c_str(), name);
           rc = false;
         } else if (lua_type(L_, -1) != LUA_TSTRING && lua_type(L_, -1) != LUA_TNUMBER) {
-          snprintf(errbuf_, MAX_ERR_LEN, "%s %s value must be string", file_, name);
+          snprintf(errbuf_, MAX_ERR_LEN, "%s %s value must be string", file_.c_str(), name);
           rc = false;
         } else {
           map->insert(std::make_pair(lua_tostring(L_, -2), lua_tostring(L_, -1)));
@@ -127,7 +128,7 @@ public:
         lua_pop(L_, 1);
       }
     } else {
-      snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be hash table", file_, name);
+      snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be hash table", file_.c_str(), name);
       rc = false;
     }
 
@@ -141,7 +142,7 @@ public:
 
     if (lua_isnil(L_, 1)) {
       if (required) {
-        snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be array", file_, name);
+        snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be array", file_.c_str(), name);
         rc = false;
       }
     } else if (lua_istable(L_, 1)) {
@@ -152,12 +153,12 @@ public:
         if (lua_isnumber(L_, -1)) {
           value->push_back(lua_tonumber(L_, -1));
         } else {
-          snprintf(errbuf_, MAX_ERR_LEN, "%s %s element must be number", file_, name);
+          snprintf(errbuf_, MAX_ERR_LEN, "%s %s element must be number", file_.c_str(), name);
           rc = false;
         }
       }
     } else {
-      snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be array", file_, name);
+      snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be array", file_.c_str(), name);
       rc = false;
     }
 
@@ -171,7 +172,7 @@ public:
 
     if (lua_isnil(L_, 1)) {
       if (required) {
-        snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be array", file_, name);
+        snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be array", file_.c_str(), name);
         rc = false;
       }
     } else if (lua_istable(L_, 1)) {
@@ -179,15 +180,15 @@ public:
       for (int i = 0; rc && i < size; ++i) {
         lua_pushinteger(L_, i+1);
         lua_gettable(L_, 1);
-				if (lua_type(L_, -1) == LUA_TSTRING || lua_type(L_, -1) == LUA_TNUMBER) {
-					value->push_back(lua_tostring(L_, -1));
+        if (lua_type(L_, -1) == LUA_TSTRING || lua_type(L_, -1) == LUA_TNUMBER) {
+          value->push_back(lua_tostring(L_, -1));
         } else {
-          snprintf(errbuf_, MAX_ERR_LEN, "%s %s element must be string", file_, name);
+          snprintf(errbuf_, MAX_ERR_LEN, "%s %s element must be string", file_.c_str(), name);
           rc = false;
         }
       }
     } else {
-      snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be array", file_, name);
+      snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be array", file_.c_str(), name);
       rc = false;
     }
 
@@ -207,7 +208,7 @@ public:
       } else if (lua_isfunction(L_, 1)) {
         value->assign(name);
       } else {
-        snprintf(errbuf_, MAX_ERR_LEN, "%s %s is not a function or function name", file_, name);
+        snprintf(errbuf_, MAX_ERR_LEN, "%s %s is not a function or function name", file_.c_str(), name);
         rc = false;
       }
     }
@@ -229,7 +230,7 @@ public:
     initInputTableBeforeCall(fields);
 
     if (lua_pcall(L_, 1, nret, 0) != 0) {
-      snprintf(errbuf_, MAX_ERR_LEN, "%s %s error %s", file_, name, lua_tostring(L_, -1));
+      snprintf(errbuf_, MAX_ERR_LEN, "%s %s error %s", file_.c_str(), name, lua_tostring(L_, -1));
       lua_settop(L_, 0);
       return false;
     }
@@ -238,14 +239,14 @@ public:
 
   bool callResultListAsString(const char *name, std::string *result) {
     if (!lua_istable(L_, 1)) {
-      snprintf(errbuf_, MAX_ERR_LEN, "%s %s return #1 must be table", file_, name);
+      snprintf(errbuf_, MAX_ERR_LEN, "%s %s return #1 must be table", file_.c_str(), name);
       lua_settop(L_, 0);
       return false;
     }
 
     int size = luaL_getn(L_, 1);
     if (size == 0) {
-      snprintf(errbuf_, MAX_ERR_LEN, "%s %s return #1 must be not empty", file_, name);
+      snprintf(errbuf_, MAX_ERR_LEN, "%s %s return #1 must be not empty", file_.c_str(), name);
       lua_settop(L_, 0);
       return false;
     }
@@ -255,7 +256,7 @@ public:
       lua_pushinteger(L_, i+1);
       lua_gettable(L_, 1);
       if (!lua_isstring(L_, -1) && !lua_isnumber(L_, -1)) {
-        snprintf(errbuf_, MAX_ERR_LEN, "%s %s return #1[%d] is not string", file_, name, i);
+        snprintf(errbuf_, MAX_ERR_LEN, "%s %s return #1[%d] is not string", file_.c_str(), name, i);
         lua_settop(L_, 0);
         return false;
       }
@@ -271,7 +272,7 @@ public:
     lua_pushlstring(L_, line, nline);
 
     if (lua_pcall(L_, 1, 1, 0) != 0) {
-      snprintf(errbuf_, MAX_ERR_LEN, "%s %s error %s", file_, name, lua_tostring(L_, -1));
+      snprintf(errbuf_, MAX_ERR_LEN, "%s %s error %s", file_.c_str(), name, lua_tostring(L_, -1));
       lua_settop(L_, 0);
       return false;
     }
@@ -280,7 +281,7 @@ public:
 
   bool callResultString(const char *name, std::string *result) {
     if (!lua_isstring(L_, 1)) {
-      snprintf(errbuf_, MAX_ERR_LEN, "%s %s return #1 must be string(nil)", file_, name);
+      snprintf(errbuf_, MAX_ERR_LEN, "%s %s return #1 must be string(nil)", file_.c_str(), name);
       lua_settop(L_, 0);
       return false;
     }
@@ -292,14 +293,14 @@ public:
 
   bool callResult(const char *name, std::string *s, std::map<std::string, int> *map) {
     if (!lua_isstring(L_, 1)) {
-      snprintf(errbuf_, MAX_ERR_LEN, "%s %s return #1 must be string", file_, name);
+      snprintf(errbuf_, MAX_ERR_LEN, "%s %s return #1 must be string", file_.c_str(), name);
       lua_settop(L_, 0);
       return false;
     }
     s->assign(lua_tostring(L_, 1));
 
     if (!lua_istable(L_, 2)) {
-      snprintf(errbuf_, MAX_ERR_LEN, "%s %s return #2 must be hash table", file_, name);
+      snprintf(errbuf_, MAX_ERR_LEN, "%s %s return #2 must be hash table", file_.c_str(), name);
       lua_settop(L_, 0);
       return false;
     }
@@ -307,12 +308,12 @@ public:
     lua_pushnil(L_);
     while (lua_next(L_, 2) != 0) {
       if (lua_type(L_, -2) != LUA_TSTRING) {
-        snprintf(errbuf_, MAX_ERR_LEN, "%s %s return #2 key must be string", file_, name);
+        snprintf(errbuf_, MAX_ERR_LEN, "%s %s return #2 key must be string", file_.c_str(), name);
         lua_settop(L_, 0);
         return false;
       }
       if (lua_type(L_, -1) != LUA_TNUMBER) {
-        snprintf(errbuf_, MAX_ERR_LEN, "%s %s return #2 value must be number", file_, name);
+        snprintf(errbuf_, MAX_ERR_LEN, "%s %s return #2 value must be number", file_.c_str(), name);
         lua_settop(L_, 0);
         return false;
       }
@@ -337,9 +338,9 @@ private:
   }
 
 private:
-  lua_State *L_;
-  const char *file_;
-  char *errbuf_;
+  lua_State   *L_;
+  std::string  file_;
+  char        *errbuf_;
 };
 
 #endif

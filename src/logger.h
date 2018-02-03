@@ -18,7 +18,7 @@
 
 #define LOGGER_INIT() Logger *Logger::defLogger = 0;
 
-static const size_t ERR_STR = 2047;
+static const size_t ERR_STR = 4095;
 static pthread_mutex_t LOGGER_MUTEX = PTHREAD_MUTEX_INITIALIZER;
 
 static const int   DEBUG_INT = 2;

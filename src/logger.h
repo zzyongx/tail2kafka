@@ -12,6 +12,7 @@
 #include <time.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/uio.h>
 #include <fcntl.h>
 #include <sys/time.h>
 #include <pthread.h>
@@ -109,6 +110,15 @@ public:
     bool rc = log(FATAL_INT, FATAL_PTR, eno, fmt, ap);
     va_end(ap);
     return rc;
+  }
+
+  bool print(const char *ptr, int len, bool autonl) {
+    if (autonl) {
+      struct iovec iovs[2] = {{(void *) ptr, len}, {(void*) "\n", 1}};
+      return writev(handle_, iovs, 2) != -1;
+    } else {
+      return write(handle_, ptr, len) != -1;
+    }
   }
 
 private:
@@ -229,6 +239,7 @@ private:
 # define log_error(eno, fmt, args...) do { LOG_TIME; printf("%s [ERROR] \"%d:%s\" "fmt"\n", timestr, eno, eno ? strerror(eno) : "", ##args); } while (0)
 # define log_info(eno, fmt, args...)  do { LOG_TIME; printf("%s [INFO] \"%d:%s\" "fmt"\n", timestr, eno, eno ? strerror(eno) : "", ##args); } while (0)
 # define log_debug(eno, fmt, args...) do { LOG_TIME; printf("%s [DEBUG] \"%d:%s\" "fmt"\n", timestr, eno, eno ? strerror(eno) : "", ##args); } while (0)
+# define log_opaque(ptr, len, autonl) printf("%.*s%s", (int) len, ptr, autonl ? "\n" : "");
 
 #else
 
@@ -236,7 +247,7 @@ private:
 # define log_error(eno, fmt, args...) Logger::defLogger->error(eno, fmt, ##args)
 # define log_info(eno, fmt, args...)  Logger::defLogger->info(eno, fmt, ##args);
 # define log_debug(eno, fmt, args...) Logger::defLogger->debug(eno, fmt, ##args)
-
+# define log_opaque(ptr, len, autonl) Logger::defLogger->print(ptr, len, autonl);
 
 #endif
 

@@ -77,9 +77,6 @@ inline std::string toStr(IntType i, int len = -1, char padding = '0')
 
 std::string trim(const std::string &str, bool left = true, bool right = true, const char *space = " \t\n");
 
-
-
-
 } // namespace util
 
 #endif

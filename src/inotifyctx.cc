@@ -156,6 +156,7 @@ void InotifyCtx::loop()
 
     tryRmWatch();
     tryReWatch();
+    cnf_->getKafka()->poll(0);  // if send queue is full, we rely on this poll
     if (cnf_->getPollLimit()) sys::nanosleep(cnf_->getPollLimit());
   }
 

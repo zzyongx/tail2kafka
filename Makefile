@@ -71,6 +71,10 @@ configure:
 	@mkdir -p $(BUILDDIR)/mix
 	@ls -l $(ARLIBS) >/dev/null || (echo "make get-deps first" && exit 2)
 
+.PHONY: debug
+debug:
+	make DEBUG=1
+
 $(BUILDDIR)/%.o: src/%.cc
 	$(CXX) -o $@ $(WARN) $(CXXWARN) $(CFLAGS) $(PREDEF) -c $<
 
@@ -86,7 +90,7 @@ test:
 
 	@echo "unit test"
 	find logs -type f -name "*.log" -delete
-	make clean && make PREDEF="-DNO_LOGGER" DEBUG=1
+	make clean && make PREDEF="-D_DEBUG_ -DNO_LOGGER" DEBUG=1
 	$(BUILDDIR)/tail2kafka_unittest
 
 	@echo "blackbox test"

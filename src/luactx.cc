@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <cstring>
 #include <memory>
 #include <errno.h>
 #include <sys/types.h>
@@ -5,11 +7,64 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include "util.h"
 #include "sys.h"
 #include "common.h"
+#include "logger.h"
 #include "filereader.h"
 #include "luahelper.h"
 #include "luactx.h"
+
+static bool loadHistoryFile(const std::string &libdir, const std::string &name, std::deque<std::string> *q)
+{
+  char buffer[2048];
+  snprintf(buffer, 2048, "%s/%s.history", libdir.c_str(), name.c_str());
+
+  FILE *fp = fopen(buffer, "r");
+  if (!fp) {
+    if (errno == ENOENT) return true;
+    else return false;
+  }
+
+  while (fgets(buffer, 2048, fp)) {
+    size_t n = strlen(buffer);
+    if (buffer[n-1] != '\n') {
+      fclose(fp);
+      return false;
+    }
+
+    buffer[n-1] = '\0';
+    q->push_back(buffer);
+  }
+
+  fclose(fp);
+  return true;
+}
+
+ bool writeHistoryFile(const std::string &libdir, const std::string &name, const std::deque<std::string> &q)
+{
+  char path[2048];
+  snprintf(path, 2048, "%s/%s.history", libdir.c_str(), name.c_str());
+
+  std::string flist = util::join(q.begin(), q.end(), ',');
+  log_info(0, "write history start %s %s", path, flist.c_str());
+
+
+  FILE *fp = fopen(path, "w");
+  if (!fp) {
+    log_fatal(errno, "writeHistoryFile %s error", path);
+    return false;
+  }
+  for (std::deque<std::string>::const_iterator ite = q.begin(); ite != q.end(); ++ite) {
+    if (fwrite(ite->c_str(), ite->size(), 1, fp) != 1) {
+      log_fatal(errno, "writeHistoryFile %s line %s error", path, ite->c_str());
+    }
+  }
+  fclose(fp);
+
+  log_info(0, "wirte history end %s %s", path, flist.c_str());
+  return true;
+}
 
 bool LuaCtx::testFile(const char *luaFile, char *errbuf)
 {
@@ -53,6 +108,17 @@ LuaCtx *LuaCtx::loadFile(CnfCtx *cnf, const char *file)
   if (!helper->getString("file", &ctx->file_)) return 0;
   if (!ctx->testFile(file, cnf->errbuf())) return 0;
 
+  if (!helper->getString("fileAlias", &ctx->fileAlias_, ctx->topic_)) return false;
+  for (std::vector<LuaCtx *>::iterator ite = cnf->getLuaCtxs().begin(); ite != cnf->getLuaCtxs().end(); ++ite) {
+    for (LuaCtx *existCtx = *ite; existCtx; existCtx = existCtx->next_) {
+      if (ctx->fileAlias_ == existCtx->fileAlias_) {
+        snprintf(cnf->errbuf(), MAX_ERR_LEN, "%s and %s has the same fileAlias %s",
+                 file, existCtx->helper_->file(), ctx->fileAlias_.c_str());
+        return 0;
+      }
+    }
+  }
+
   if (!helper->getString("startpos", &ctx->startPosition_, "LOG_START")) return 0;
   if (FileReader::stringToStartPosition(ctx->startPosition_.c_str()) == FileReader::NIL) {
     snprintf(cnf->errbuf(), MAX_ERR_LEN, "%s unknow start position %s", file, ctx->startPosition_.c_str());
@@ -75,8 +141,29 @@ LuaCtx *LuaCtx::loadFile(CnfCtx *cnf, const char *file)
 
   if (!(ctx->function_ = LuaFunction::create(ctx.get(), helper.get()))) return 0;
 
+  if (!loadHistoryFile(cnf->libdir(), ctx->fileAlias_, &ctx->fqueue_)) {
+    snprintf(cnf->errbuf(), MAX_ERR_LEN, "load history file %s/%s.history eror %d:%s",
+             cnf->libdir().c_str(), ctx->fileAlias_.c_str(), errno, strerror(errno));
+    return 0;
+  }
+
   ctx->helper_ = helper.release();
   return ctx.release();
+}
+
+void LuaCtx::addHistoryFile(const std::string &historyFile)
+{
+  fqueue_.push_back(historyFile);
+  writeHistoryFile(cnf_->libdir(), fileAlias_, fqueue_);
+}
+
+bool LuaCtx::removeHistoryFile()
+{
+  if (!fqueue_.empty()) {
+    fqueue_.pop_front();
+    writeHistoryFile(cnf_->libdir(), fileAlias_, fqueue_);
+  }
+  return fqueue_.empty();
 }
 
 bool LuaCtx::initFileReader(char *errbuf)

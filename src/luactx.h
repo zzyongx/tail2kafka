@@ -1,6 +1,8 @@
 #ifndef _LUACTX_H_
 #define _LUACTX_H_
 
+#include <string>
+#include <deque>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -9,11 +11,6 @@
 #include "sys.h"
 #include "luafunction.h"
 #include "cnfctx.h"
-
-#define FILE_TIMEFORMAT_NIL  0
-#define FILE_TIMEFORMAT_MIN  1
-#define FILE_TIMEFORMAT_HOUR 2
-#define FILE_TIMEFORMAT_DAY  3
 
 struct rk_kafka_topic_t;
 class FileReader;
@@ -86,8 +83,15 @@ public:
   }
 
   const std::string &file() const { return fileWithTimeFormat_ ? timeFormatFile_ : file_; }
-  const std::string &topic() const { return topic_; }
+  const std::string & datafile() const {
+    if (!fqueue_.empty()) return fqueue_.front();
+    else return fileWithTimeFormat_ ? timeFormatFile_ : file_;
+  }
 
+  void addHistoryFile(const std::string &historyFile);
+  bool removeHistoryFile();
+
+  const std::string &topic() const { return topic_; }
   LuaFunction *function() const { return function_; }
 
 private:
@@ -95,6 +99,11 @@ private:
   bool testFile(const char *luaFile, char *errbuf);
 
 private:
+  /* default set to topic_, it must be unique
+   * if multi file write to one topic_, manual set fileAlias
+   */
+  std::string   fileAlias_;
+
   bool          autocreat_;
   std::string   file_;
   std::string   topic_;
@@ -108,6 +117,7 @@ private:
 
   bool          fileWithTimeFormat_;
   std::string   timeFormatFile_;
+  std::deque<std::string> fqueue_;
 
   uint32_t      addr_;
   bool          autoparti_;

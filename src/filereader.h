@@ -10,12 +10,17 @@
 class LuaCtx;
 class FileOffRecord;
 
-#define FILE_MOVED     0x01
-#define FILE_TRUNCATED 0x02
-#define FILE_DELETED   0x04
-#define FILE_LOGGED    0x08
-#define FILE_ICHANGE   0x10
-#define FILE_CREATED   0x20
+enum FileInotifyStatus {
+  FILE_MOVED     = 0x0001,
+  FILE_CREATED   = 0x0002,
+  FILE_ICHANGE   = 0x0004,
+  FILE_TRUNCATED = 0x0008,
+  FILE_DELETED   = 0x0010,
+  FILE_LOGGED    = 0x0020,
+  FILE_WATCHED   = 0x0040,
+  FILE_OPENONLY  = 0x0080,
+  FILE_HISTORY   = 0x0100,
+};
 
 struct OneTaskReq {
   LuaCtx *ctx;

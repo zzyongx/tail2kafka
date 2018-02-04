@@ -22,7 +22,7 @@ private:
   rd_kafka_t                      *rk_;
   std::vector<rd_kafka_topic_t *> rkts_;
 
-  bool initKafka(const char *brokers, const std::map<std::string, std::string> &gcnf, char *errbuf);
+  bool initKafka(const char *brokers, const std::map<std::string, std::string> &gcnf, char *errbuf, void *ptr);
   bool initKafkaTopic(LuaCtx *ctx, const std::map<std::string, std::string> &tcnf, char *errbuf);
   void produce(LuaCtx *ctx, FileRecord *data);
 };

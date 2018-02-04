@@ -10,12 +10,19 @@
 
 static int stats_cb(rd_kafka_t *, char *json, size_t json_len, void *)
 {
-  log_info(0, "kafka stats %.*s", (int) json_len, json);
+  log_opaque(json, (int) json_len, true);
   return 0;
 }
 
-static void error_cb(rd_kafka_t *, int err, const char *reason, void *)
+static void error_cb(rd_kafka_t *, int err, const char *reason, void *opaque)
 {
+  CnfCtx *cnf = (CnfCtx *) opaque;
+
+  if (err == RD_KAFKA_RESP_ERR__ALL_BROKERS_DOWN ||
+      err == RD_KAFKA_RESP_ERR__TRANSPORT) {
+    // TODO:
+    cnf->setError(KAFKA_ERROR);
+  }
   log_error(0, "kafka error level %d reason %s", err, reason);
 }
 
@@ -45,7 +52,7 @@ static int32_t partitioner_cb (
   else return partition;
 }
 
-bool KafkaCtx::initKafka(const char *brokers, const std::map<std::string, std::string> &gcnf, char *errbuf)
+bool KafkaCtx::initKafka(const char *brokers, const std::map<std::string, std::string> &gcnf, char *errbuf, void *cnf)
 {
   char errstr[512];
 
@@ -61,6 +68,7 @@ bool KafkaCtx::initKafka(const char *brokers, const std::map<std::string, std::s
     }
   }
 
+  rd_kafka_conf_set_opaque(conf, cnf);
   rd_kafka_conf_set_dr_msg_cb(conf, dr_msg_cb);
   rd_kafka_conf_set_stats_cb(conf, stats_cb);
   rd_kafka_conf_set_error_cb(conf, error_cb);
@@ -112,7 +120,7 @@ bool KafkaCtx::initKafkaTopic(LuaCtx *ctx, const std::map<std::string, std::stri
 
 bool KafkaCtx::init(CnfCtx *cnf, char *errbuf)
 {
-  if (!initKafka(cnf->getBrokers(), cnf->getKafkaGlobalConf(), errbuf)) return false;
+  if (!initKafka(cnf->getBrokers(), cnf->getKafkaGlobalConf(), errbuf, cnf)) return false;
 
   for (LuaCtxPtrList::iterator ite = cnf->getLuaCtxs().begin(); ite != cnf->getLuaCtxs().end(); ++ite) {
     LuaCtx *ctx = (*ite);

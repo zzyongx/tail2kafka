@@ -8,13 +8,15 @@
 
 class RunStatus;
 
+enum RunError {
+  KAFKA_ERROR = 0x0001,
+};
+
 class CnfCtx {
   template<class T> friend class UNITTEST_HELPER;
 public:
   int                    accept;
   int                    server;
-
-public:
 
 public:
   static CnfCtx *loadCnf(const char *dir, char *errbuf);
@@ -65,6 +67,10 @@ public:
   const std::string &libdir() const { return libdir_; }
   const std::string &logdir() const { return logdir_; }
 
+  void setError(int error) { error_ |= error; }
+  void clearError(int error) { error_ &= ~error; }
+  bool testError(int error) { return error_ & error; }
+
 private:
   CnfCtx();
 
@@ -92,6 +98,7 @@ private:
 
   LuaHelper  *helper_;
   FileOff    *fileOff_;
+  uint32_t    error_;
 };
 
 #endif

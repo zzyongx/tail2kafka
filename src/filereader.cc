@@ -5,15 +5,17 @@
 #include <unistd.h>
 
 #include "gnuatomic.h"
+#include "bitshelper.h"
 #include "logger.h"
 #include "sys.h"
 #include "luactx.h"
 #include "filereader.h"
 
-#define NL              '\n'
-#define MAX_LINE_LEN    1024 * 1024         // 1M
-#define MAX_TAIL_SIZE   100 * MAX_LINE_LEN  // 100M
-#define SEND_QUEUE_SIZE 2000
+#define NL                  '\n'
+#define MAX_LINE_LEN        1024 * 1024         // 1M
+#define MAX_TAIL_SIZE       100 * MAX_LINE_LEN  // 100M
+#define SEND_QUEUE_SIZE     2000
+#define KAFKA_ERROR_TIMEOUT 60
 
 FileReader::StartPosition FileReader::stringToStartPosition(const char *s)
 {
@@ -71,7 +73,9 @@ bool FileReader::init(char *errbuf)
   struct stat st;
   fstat(fd_, &st);
   inode_ = st.st_ino;
-  flags_ |= FILE_WATCHED;
+
+  bits_set(flags_, FILE_WATCHED);
+  if (ctx_->datafile() != ctx_->file()) bits_set(flags_, FILE_HISTORY);
 
   return setStartPosition(st.st_size, errbuf);
 }
@@ -80,9 +84,9 @@ bool FileReader::reinit()
 {
   bool reopen = false;
   bool rewatch = false;
-  if (flags_ & FILE_OPENONLY) {   // datafile change
+  if (bits_test(flags_, FILE_OPENONLY)) {   // datafile change
     reopen = true;
-  } else if (!(flags_ & FILE_WATCHED)) {  // file == datafile
+  } else if (!bits_test(flags_, FILE_WATCHED)) {
     if (fd_ == -1) reopen = true;         // fd > 0, use history fd
     rewatch = true;
   }
@@ -101,12 +105,11 @@ bool FileReader::reinit()
       line_ = 0;
       npos_ = 0;
       inode_ = st.st_ino;
-      flags_ |= FILE_WATCHED;
-      flags_ |= ~FILE_OPENONLY;
+      bits_clear(flags_, FILE_OPENONLY);
 
       tail2kafka(START, &st);
-    } else if (flags_ & FILE_HISTORY) {
-      if (ctx_->removeHistoryFile()) flags_ |= ~FILE_HISTORY;
+    } else if (bits_test(flags_, FILE_HISTORY)) {
+      if (ctx_->removeHistoryFile()) bits_clear(flags_, FILE_HISTORY);
       log_fatal(errno, "history file %s reinit error, try next %s", file.c_str(), ctx_->datafile().c_str());
       tryNext = true;
     } else {
@@ -116,10 +119,11 @@ bool FileReader::reinit()
   }
 
   // as a side effect, poll history file
-  if (!reopen && (flags_ & FILE_HISTORY)) {
+  if (!reopen && bits_test(flags_, FILE_HISTORY)) {
     tail2kafka();
   }
 
+  if (rewatch) bits_set(flags_, FILE_WATCHED);
   return rewatch;
 }
 
@@ -161,21 +165,23 @@ void FileReader::updateFileOffRecord(const FileRecord *record)
   util::atomic_dec(&qsize_);
 
   if (record->inode != fileOffRecord_->inode) {
+    log_info(0, "%s change inode from %ld to %ld", ctx_->file().c_str(),
+             (long) fileOffRecord_->inode, (long) record->inode);
+
     fileOffRecord_->inode = record->inode;
     fileOffRecord_->off   = record->off;
 
     dline_ = 1;
     dsize_ = record->data->size();
-    log_info(0, "%s change inode from %ld to %ld", ctx_->file().c_str(),
-             (long) fileOffRecord_->inode, (long) record->inode);
   } else if (record->off > fileOffRecord_->off) {
     fileOffRecord_->off   = record->off;
 
     util::atomic_inc(&dline_);
     util::atomic_inc(&dsize_, record->data->size() - ctx_->function()->extraSize());
   } else {
-    log_fatal(0, "%s off change smaller, from %ld to %ld", ctx_->file().c_str(),
-              (long) fileOffRecord_->off, (long) record->off);
+    log_fatal(0, "%s off change smaller, from %ld/%ld to %ld/%ld", ctx_->file().c_str(),
+              (long) fileOffRecord_->inode, (long) fileOffRecord_->off,
+              (long) record->inode, (long) record->off);
   }
 }
 
@@ -196,12 +202,30 @@ static std::string getFileNameFromFd(int fd)
 
 inline const char *flagsToAction(uint32_t flags)
 {
-  if (flags & FILE_MOVED) return "moved";
-  else if (flags & FILE_DELETED) return "deleted";
-  else if (flags & FILE_TRUNCATED) return "truncated";
-  else if (flags & FILE_ICHANGE) return "inodechanged";
-  else if (flags & FILE_CREATED) return "newcreated";
+  if (bits_test(flags, FILE_MOVED)) return "moved";
+  else if (bits_test(flags, FILE_DELETED)) return "deleted";
+  else if (bits_test(flags, FILE_TRUNCATED)) return "truncated";
+  else if (bits_test(flags, FILE_ICHANGE)) return "inodechanged";
+  else if (bits_test(flags, FILE_CREATED)) return "newcreated";
   else return 0;
+}
+
+void FileReader::tagRotate(int action, const char *fptr)
+{
+  bits_set(flags_, action);
+
+  std::string newFileName;
+  if (!fptr && bits_test(flags_, FILE_MOVED)) {
+    newFileName = getFileNameFromFd(fd_);
+    fptr = newFileName.c_str();
+  }
+
+  log_info(0, "%d %s rotate %s to %s", fd_, ctx_->datafile().c_str(), flagsToAction(flags_), fptr ? fptr : "");
+
+  if (ctx_->cnf()->fasttime() - fileRotateTime_ < KAFKA_ERROR_TIMEOUT ||
+      (ctx_->getRotateDelay() > 0 && ctx_->cnf()->fasttime() - fileRotateTime_ < ctx_->getRotateDelay())) {
+    log_fatal(0, "%d %s rotate %s too frequent, may lose data", fd_, ctx_->datafile().c_str(), flagsToAction(flags_));
+  }
 }
 
 bool FileReader::remove()
@@ -212,27 +236,31 @@ bool FileReader::remove()
     return false;
   }
 
-  if (flags_ & FILE_HISTORY && st.st_size == size_) {
-    tail2kafka(END, &st, ctx_->datafile().c_str());
+  // make reinit REOPEN
+  if (bits_test(flags_, FILE_HISTORY) && st.st_size == size_) {
+    std::string oldFile = ctx_->datafile();
+    bool rc = tail2kafka(END, &st, oldFile.c_str());
+    assert(rc = true);
+
+    log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) historyrotate %s", fd_, ctx_->file().c_str(),
+             size_, dsize_, line_, dline_, oldFile.c_str());
 
     close(fd_);
     fd_ = -1;
-    flags_ |= FILE_OPENONLY;
+    bits_set(flags_, FILE_OPENONLY);
 
-    std::string oldFile = ctx_->datafile();
-    if (ctx_->removeHistoryFile()) flags_ &= ~FILE_HISTORY;
+
+    if (ctx_->removeHistoryFile()) bits_clear(flags_, FILE_HISTORY);
     log_info(0, "history file %s finished, try next %s", oldFile.c_str(), ctx_->datafile().c_str());
-
-    return false;
   }
 
-  if (st.st_nlink == 0) flags_ |= FILE_DELETED;
-  else if (st.st_size < size_) flags_ |= FILE_TRUNCATED;
-  else if (st.st_ino != inode_) flags_ |= FILE_ICHANGE;
+  if (st.st_nlink == 0) bits_set(flags_, FILE_DELETED);
+  else if (st.st_size < size_) bits_set(flags_, FILE_TRUNCATED);
+  else if (st.st_ino != inode_) bits_set(flags_, FILE_ICHANGE);
 
   std::string timeFormatFile;
   if (ctx_->getTimeFormatFile(&timeFormatFile) && access(timeFormatFile.c_str(), F_OK) == 0) {
-    flags_ |= FILE_CREATED;
+    tagRotate(FILE_CREATED, timeFormatFile.c_str());
   }
 
   const char *action = flagsToAction(flags_);
@@ -240,27 +268,27 @@ bool FileReader::remove()
 
   if (rc) {
     // when mv x to x.old, the process may still write to x.old untill reopen x
-    if ((flags_ & FILE_MOVED) || (flags_ & FILE_CREATED)) {
+    if (bits_test(flags_, FILE_MOVED) || bits_test(flags_, FILE_CREATED)) {
       rc = false;
-      if (ctx_->getRotateDelay() > 0 && (flags_ & FILE_LOGGED)) {  // if config rotate delay
+      if (ctx_->getRotateDelay() > 0 && bits_test(flags_, FILE_LOGGED)) {  // if config rotate delay
         if (ctx_->cnf()->fasttime() - fileRotateTime_ >= ctx_->getRotateDelay()) rc = true;  // rotate delay timeout
-      } else if ((flags_ & FILE_MOVED) && access(ctx_->file().c_str(), F_OK) == 0) {  // if file reopened
+      } else if (bits_test(flags_, FILE_MOVED) && access(ctx_->file().c_str(), F_OK) == 0) {  // if file reopened
         rc = true;
       }
 
-      if (!rc && !(flags_ & FILE_LOGGED)) {
+      if (!rc && !bits_test(flags_, FILE_LOGGED)) {
         log_info(0, "inotify %s %s, wait rotatedelay timeout or wait reopen", ctx_->file().c_str(), action);
       }
     }
 
-    if (!(flags_ & FILE_LOGGED)) fileRotateTime_ = ctx_->cnf()->fasttime();
-    flags_ |= FILE_LOGGED;
+    if (!bits_test(flags_, FILE_LOGGED)) fileRotateTime_ = ctx_->cnf()->fasttime();
+    bits_set(flags_, FILE_LOGGED);
   }
 
   if (rc) {
     std::string rotateFileName;
-    if (flags_ & FILE_MOVED) rotateFileName = getFileNameFromFd(fd_);
-    else if (flags_ & FILE_CREATED) rotateFileName = ctx_->file();
+    if (bits_test(flags_, FILE_MOVED)) rotateFileName = getFileNameFromFd(fd_);
+    else if (bits_test(flags_, FILE_CREATED)) rotateFileName = ctx_->file();
 
     std::string oldFileName = rotateFileName;
     if (oldFileName.empty()) oldFileName = ctx_->file() + "." + sys::timeFormat(time(0), "%Y-%m-%d_%H:%M:%S");
@@ -268,17 +296,17 @@ bool FileReader::remove()
 
     bool closeFd = true;
     if (!rc) {
-      // ignore kafka unavaliable, rotate any way
-      if ((flags_ & FILE_TRUNCATED) || (flags_ & FILE_DELETED)) {
-        rc = true;
-      } else if (ctx_->cnf()->fasttime() - fileRotateTime_ > 60) {
-        log_fatal(0, "kafka queue full duration %d, kafka may unavaliable, %s turn on history",
-                  (int) (ctx_->cnf()->fasttime() - fileRotateTime_), ctx_->topic().c_str());
-
-        flags_ |= FILE_HISTORY;
-        ctx_->addHistoryFile(rotateFileName);
-        rc = true;
+      if (bits_test(flags_, FILE_MOVED) || bits_test(flags_, FILE_CREATED)) {
         closeFd = false;
+
+        if (ctx_->cnf()->fasttime() - fileRotateTime_ > KAFKA_ERROR_TIMEOUT &&
+            ctx_->addHistoryFile(rotateFileName)) {
+          log_fatal(0, "kafka queue full duration %d, kafka may unavaliable, %s turn on history",
+                  (int) (ctx_->cnf()->fasttime() - fileRotateTime_), ctx_->topic().c_str());
+          rc = true;
+        }
+      } else {
+        rc = true;
       }
     }
 
@@ -290,6 +318,8 @@ bool FileReader::remove()
         close(fd_);
         fd_ = -1;
         flags_ = 0;
+      } else {
+        flags_ = FILE_HISTORY;
       }
       ctx_->setTimeFormatFile(timeFormatFile);
     }
@@ -326,7 +356,7 @@ bool FileReader::setStartPositionEnd(off_t fileSize, char *errbuf)
 bool FileReader::tail2kafka(StartPosition pos, struct stat *stPtr, const char *oldFileName)
 {
   if (util::atomic_get(&qsize_) > SEND_QUEUE_SIZE) {
-    log_info(0, "%d %s queue exceed %d", fd_, ctx_->file().c_str(), SEND_QUEUE_SIZE);
+    log_info(0, "%d %s queue exceed %d", fd_, ctx_->datafile().c_str(), SEND_QUEUE_SIZE);
     return false;
   }
 
@@ -346,7 +376,7 @@ bool FileReader::tail2kafka(StartPosition pos, struct stat *stPtr, const char *o
   }
 
   if (off > stPtr->st_size) {
-    flags_ |= FILE_TRUNCATED;
+    bits_set(flags_, FILE_TRUNCATED);
     return true;
   }
 
@@ -368,7 +398,7 @@ bool FileReader::tail2kafka(StartPosition pos, struct stat *stPtr, const char *o
       log_fatal(errno, "%d %s read error", fd_, ctx_->file().c_str());
       return false;
     } else if (nn == 0) { // file was truncated
-      flags_ |= FILE_TRUNCATED;
+      bits_set(flags_, FILE_TRUNCATED);
       break;
     }
     off += nn;

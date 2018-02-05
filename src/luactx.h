@@ -88,7 +88,7 @@ public:
     else return fileWithTimeFormat_ ? timeFormatFile_ : file_;
   }
 
-  void addHistoryFile(const std::string &historyFile);
+  bool addHistoryFile(const std::string &historyFile);
   bool removeHistoryFile();
 
   const std::string &topic() const { return topic_; }

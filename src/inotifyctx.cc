@@ -79,7 +79,7 @@ bool InotifyCtx::tryReWatch()
 void InotifyCtx::tryRmWatch(LuaCtx *ctx, int wd)
 {
   log_info(0, "tag remove %d %s", wd, ctx->file().c_str());
-  ctx->getFileReader()->tagRemove();
+  ctx->getFileReader()->tagRotate();
 }
 
 /* unlink or truncate */
@@ -110,6 +110,7 @@ void InotifyCtx::loop()
     {wfd_, POLLIN, 0 }
   };
 
+  int error = 0;
   long savedTime = cnf_->fasttime(true);
   while (runStatus->get() == RunStatus::WAIT) {
     int nfd = poll(fds, 1, 500);
@@ -131,7 +132,7 @@ void InotifyCtx::loop()
           LuaCtx *ctx = getLuaCtx(event->wd);
           if (ctx) {
             log_debug(0, "inotify %s was modified", ctx->file().c_str());
-            ctx->getFileReader()->tail2kafka();
+            error += ctx->getFileReader()->tail2kafka() ? -1 : 1;
           } else {
             log_fatal(0, "@%d could not found ctx", event->wd);
           }
@@ -156,6 +157,7 @@ void InotifyCtx::loop()
 
     tryRmWatch();
     tryReWatch();
+
     cnf_->getKafka()->poll(0);  // if send queue is full, we rely on this poll
     if (cnf_->getPollLimit()) sys::nanosleep(cnf_->getPollLimit());
   }

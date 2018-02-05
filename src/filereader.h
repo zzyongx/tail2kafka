@@ -10,21 +10,22 @@
 class LuaCtx;
 class FileOffRecord;
 
+struct OneTaskReq {
+  LuaCtx *ctx;
+  std::vector<FileRecord *> *records;
+};
+
 enum FileInotifyStatus {
   FILE_MOVED     = 0x0001,
   FILE_CREATED   = 0x0002,
   FILE_ICHANGE   = 0x0004,
   FILE_TRUNCATED = 0x0008,
   FILE_DELETED   = 0x0010,
+
   FILE_LOGGED    = 0x0020,
   FILE_WATCHED   = 0x0040,
   FILE_OPENONLY  = 0x0080,
   FILE_HISTORY   = 0x0100,
-};
-
-struct OneTaskReq {
-  LuaCtx *ctx;
-  std::vector<FileRecord *> *records;
 };
 
 class FileReader {
@@ -39,7 +40,7 @@ public:
   bool init(char *errbuf);
   bool reinit();
 
-  void tagRemove() { flags_ |= FILE_MOVED; }
+  void tagRotate(int action = FILE_MOVED, const char *fptr = 0);
   bool remove();
 
   bool tail2kafka(StartPosition pos = NIL, struct stat *stPtr = 0, const char *oldFileName = 0);

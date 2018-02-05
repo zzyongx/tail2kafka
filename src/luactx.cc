@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/uio.h>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -46,23 +47,34 @@ static bool loadHistoryFile(const std::string &libdir, const std::string &name, 
   char path[2048];
   snprintf(path, 2048, "%s/%s.history", libdir.c_str(), name.c_str());
 
+  if (q.empty()) {
+    if (unlink(path) == -1) {
+      log_fatal(errno, "delete history file %s error", path);
+      return false;
+    } else {
+      log_info(0, "delete history file %s", path);
+      return true;
+    }
+  }
+
   std::string flist = util::join(q.begin(), q.end(), ',');
-  log_info(0, "write history start %s %s", path, flist.c_str());
+  log_info(0, "write history file %s start %s", path, flist.c_str());
 
 
-  FILE *fp = fopen(path, "w");
-  if (!fp) {
+  int fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+  if (fd == -1) {
     log_fatal(errno, "writeHistoryFile %s error", path);
     return false;
   }
   for (std::deque<std::string>::const_iterator ite = q.begin(); ite != q.end(); ++ite) {
-    if (fwrite(ite->c_str(), ite->size(), 1, fp) != 1) {
+    struct iovec iovs[2] = {{(void *) ite->c_str(), ite->size()}, {(void *) "\n", 1}};
+    if (writev(fd, iovs, 2) == -1) {
       log_fatal(errno, "writeHistoryFile %s line %s error", path, ite->c_str());
     }
   }
-  fclose(fp);
+  close(fd);
 
-  log_info(0, "wirte history end %s %s", path, flist.c_str());
+  log_info(0, "wirte history file %s end %s", path, flist.c_str());
   return true;
 }
 
@@ -151,10 +163,15 @@ LuaCtx *LuaCtx::loadFile(CnfCtx *cnf, const char *file)
   return ctx.release();
 }
 
-void LuaCtx::addHistoryFile(const std::string &historyFile)
+bool LuaCtx::addHistoryFile(const std::string &historyFile)
 {
-  fqueue_.push_back(historyFile);
-  writeHistoryFile(cnf_->libdir(), fileAlias_, fqueue_);
+  if (fqueue_.empty() || fqueue_.back() != historyFile) {
+    fqueue_.push_back(historyFile);
+    writeHistoryFile(cnf_->libdir(), fileAlias_, fqueue_);
+    return true;
+  } else {
+    return false;
+  }
 }
 
 bool LuaCtx::removeHistoryFile()
@@ -163,6 +180,7 @@ bool LuaCtx::removeHistoryFile()
     fqueue_.pop_front();
     writeHistoryFile(cnf_->libdir(), fileAlias_, fqueue_);
   }
+
   return fqueue_.empty();
 }
 

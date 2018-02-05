@@ -95,7 +95,7 @@ int main(int argc, char *argv[])
 
   int signos[] = { SIGTERM, SIGINT, SIGCHLD };
   RunStatus::Want wants[] = { RunStatus::STOP, RunStatus::STOP, RunStatus::IGNORE };
-  if (!signalHelper.signal(runStatus, 2, signos, wants)) {
+  if (!signalHelper.signal(runStatus, sizeof(signos)/sizeof(signos[0]), signos, wants)) {
     log_fatal(errno, "install signal %s", buffer);
     return EXIT_FAILURE;
   }
@@ -111,6 +111,10 @@ int main(int argc, char *argv[])
   return rc ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
+static void log_cb(const rd_kafka_t *, int level, const char *fac, const char *buf)
+{
+  log_info(0, "kafka error level %d fac %s buf %s", level, fac, buf);
+}
 
 KafkaConsumer *KafkaConsumer::create(const char *wdir, const char *brokers, const char *topic, int partition, bool defaultStart)
 {
@@ -122,6 +126,8 @@ KafkaConsumer *KafkaConsumer::create(const char *wdir, const char *brokers, cons
   rd_kafka_conf_t *conf = rd_kafka_conf_new();
   rd_kafka_conf_set(conf, "broker.version.fallback", "0.8.2.1", 0, 0);
   rd_kafka_conf_set(conf, "enable.auto.commit", "false", 0, 0);
+
+  rd_kafka_conf_set_log_cb(conf, log_cb);
 
   ctx->rk_ = rd_kafka_new(RD_KAFKA_CONSUMER, conf, errstr, sizeof(errstr));
   if (rd_kafka_brokers_add(ctx->rk_, brokers) == 0) {

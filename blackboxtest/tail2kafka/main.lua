@@ -1,5 +1,5 @@
 -- remove the trailing newline
-hostshell = "echo -n $(hostname)"
+hostshell = "hostname"
 pidfile   = "/var/run/tail2kafka.pid"
 partition = 0
 polllimit = 50

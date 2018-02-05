@@ -37,7 +37,6 @@ class MirrorTransform : public Transform {
 public:
   struct FdCache {
     int                       fd;
-    std::string               file;
     std::vector<struct iovec> iovs;
 
     long                 pos;
@@ -66,7 +65,7 @@ public:
 
 private:
   bool addToCache(rd_kafka_message_t *rkm, std::string *host, std::string *file);
-  bool flushCache(bool force, bool eof, const std::string &host, std::string *ofile);
+  bool flushCache(bool eof, const std::string &host);
 
   std::map<std::string, FdCache> fdCache_;
 };

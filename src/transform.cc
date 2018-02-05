@@ -175,12 +175,12 @@ bool MirrorTransform::addToCache(rd_kafka_message_t *rkm, std::string *host, std
   return eof;
 }
 
-bool MirrorTransform::flushCache(bool force, bool eof, const std::string &host, std::string *ofile)
+bool MirrorTransform::flushCache(bool eof, const std::string &host)
 {
   bool flush = false;
   for (std::map<std::string, FdCache>::iterator ite = fdCache_.begin(); ite != fdCache_.end(); ++ite) {
     FdCache &fdCache = ite->second;
-    if (!(force || fdCache.rkmSize == IOV_MAX || (eof && host == ite->first))) continue;
+    if (!(fdCache.rkmSize == IOV_MAX || (eof && host == ite->first))) continue;
 
     flush = true;
     if (fdCache.fd < 0) {
@@ -192,7 +192,6 @@ bool MirrorTransform::flushCache(bool force, bool eof, const std::string &host, 
         exit(EXIT_FAILURE);
       }
       fdCache.fd = fd;
-      fdCache.file = path;
     }
 
     ssize_t wantn = 0;
@@ -206,7 +205,6 @@ bool MirrorTransform::flushCache(bool force, bool eof, const std::string &host, 
       }
     }
 
-    if (ite->first == host && ofile) ofile->assign(ite->second.file);
     fdCache.clear();
   }
 
@@ -216,26 +214,28 @@ bool MirrorTransform::flushCache(bool force, bool eof, const std::string &host, 
 Transform::Idempotent MirrorTransform::write(rd_kafka_message_t *rkm, uint64_t *offsetPtr)
 {
   uint64_t offset = rkm->offset;
-  std::string host, ofile, nfile;
+  std::string host, nfile;
 
   bool eof = addToCache(rkm, &host, &nfile);
-  Idempotent ide = flushCache(false, eof, host, &ofile) ? LOCAL : IGNORE;
+  Idempotent ide = flushCache(eof, host) ? LOCAL : IGNORE;
 
   if (eof) {
-    assert(ide != IGNORE);
-
     fdCache_.erase(host);
 
-    size_t slash = nfile.rfind('/');
-    if (slash == std::string::npos) nfile = ofile + "_" + nfile;
-    else nfile = ofile + "_" + nfile.substr(slash+1);
+    char opath[1024];
+    snprintf(opath, 2048, "%s/%s/%s", wdir_, topic_, host.c_str());
 
-    if (rename(ofile.c_str(), nfile.c_str()) == -1) {
-      log_fatal(errno, "%s:%d rename %s to %s error", topic_, partition_, ofile.c_str(), nfile.c_str());
+    size_t slash = nfile.rfind('/');
+    char npath[1024];
+    snprintf(npath, 1024, "%s_%s", opath,
+             (slash == std::string::npos) ? nfile.c_str() : nfile.substr(slash+1).c_str());
+
+    if (rename(opath, npath) == -1) {
+      log_fatal(errno, "%s:%d rename %s to %s error", topic_, partition_, opath, npath);
       exit(EXIT_FAILURE);
     } else {
-      log_info(0, "%s:%d rename %s to %s", topic_, partition_, ofile.c_str(), nfile.c_str());
-      notify(notify_, wdir_, topic_, partition_, nfile.c_str());
+      log_info(0, "%s:%d rename %s to %s", topic_, partition_, opath, npath);
+      notify(notify_, wdir_, topic_, partition_, npath);
     }
     ide = GLOBAL;
   }

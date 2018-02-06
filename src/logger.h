@@ -72,42 +72,42 @@ public:
     return dup2(handle_, STDERR_FILENO) != -1;
   }
 
-  bool debug(int eno, const char *fmt, ...) {
+  bool debug(const char *file, int line, int eno, const char *fmt, ...) {
     if (level_ > DEBUG_INT) return true;
 
     va_list ap;
     va_start(ap, fmt);
-    bool rc = log(DEBUG_INT, DEBUG_PTR, eno, fmt, ap);
+    bool rc = log(DEBUG_INT, DEBUG_PTR, file, line, eno, fmt, ap);
     va_end(ap);
     return rc;
   }
 
-  bool info(int eno, const char *fmt, ...) {
+  bool info(const char *file, int line, int eno, const char *fmt, ...) {
     if (level_ > INFO_INT) return true;
 
     va_list ap;
     va_start(ap, fmt);
-    bool rc = log(INFO_INT, INFO_PTR, eno, fmt, ap);
+    bool rc = log(INFO_INT, INFO_PTR, file, line, eno, fmt, ap);
     va_end(ap);
     return rc;
   }
 
-  bool error(int eno, const char *fmt, ...) {
+  bool error(const char *file, int line, int eno, const char *fmt, ...) {
     if (level_ > ERROR_INT) return true;
 
     va_list ap;
     va_start(ap, fmt);
-    bool rc = log(ERROR_INT, ERROR_PTR, eno, fmt, ap);
+    bool rc = log(ERROR_INT, ERROR_PTR, file, line, eno, fmt, ap);
     va_end(ap);
     return rc;
   }
 
-  bool fatal(int eno, const char *fmt, ...) {
+  bool fatal(const char *file, int line, int eno, const char *fmt, ...) {
     if (level_ > FATAL_INT) return true;
 
     va_list ap;
     va_start(ap, fmt);
-    bool rc = log(FATAL_INT, FATAL_PTR, eno, fmt, ap);
+    bool rc = log(FATAL_INT, FATAL_PTR, file, line, eno, fmt, ap);
     va_end(ap);
     return rc;
   }
@@ -191,7 +191,7 @@ private:
     return now.tv_usec;
   }
 
-  bool log(int level, const char *levelPtr, int eno, const char *fmt, va_list ap) {
+  bool log(int level, const char *levelPtr, const char *file, int line, int eno, const char *fmt, va_list ap) {
     struct tm ltm;
     time_t now = nowPtr_ ? *nowPtr_ : time(0);
     localtime_r(&now, &ltm);
@@ -204,8 +204,8 @@ private:
 
     int micros = level == DEBUG_INT ? microseconds() : 0;
     n = strftime(errstr, ERR_STR, "%Y-%m-%d %H:%M:%S ", &ltm);
-    n += snprintf(errstr + n, ERR_STR - n, "[%s] #%d \"%d:%s\" ",
-                  levelPtr, micros, eno, eno ? strerror(eno) : "");
+    n += snprintf(errstr + n, ERR_STR - n, "[%s] #%d #%s@%d \"%d:%s\" ",
+                  levelPtr, micros, file, line, eno, eno ? strerror(eno) : "");
 
     n += vsnprintf(errstr + n, ERR_STR - n, fmt, ap);
 
@@ -233,20 +233,29 @@ private:
 
 #ifdef NO_LOGGER
 
-# define LOG_TIME time_t now = time(0); struct tm ltm; localtime_r(&now, &ltm); char timestr[64]; strftime(timestr, 64, "[%Y-%m-%d %H:%M:%S]", &ltm)
+# define LOG_IMPL(level, eno, fmt, args...) do {       \
+  time_t now = time(0);                                \
+  struct tm ltm;                                       \
+  localtime_r(&now, &ltm);                             \
+  char timestr[64];                                    \
+  strftime(timestr, 64, "[%Y-%m-%d %H:%M:%S]", &ltm);  \
+  printf("%s [%s] #%s@%d \"%d:%s\" "fmt"\n",           \
+         timestr, level, __FILE__, __LINE__,           \
+         eno, eno ? strerror(eno) : "", ##args);       \
+} while (0)
 
-# define log_fatal(eno, fmt, args...) do { LOG_TIME; printf("%s [FATAL] \"%d:%s\" "fmt"\n", timestr, eno, eno ? strerror(eno) : "", ##args); } while (0)
-# define log_error(eno, fmt, args...) do { LOG_TIME; printf("%s [ERROR] \"%d:%s\" "fmt"\n", timestr, eno, eno ? strerror(eno) : "", ##args); } while (0)
-# define log_info(eno, fmt, args...)  do { LOG_TIME; printf("%s [INFO] \"%d:%s\" "fmt"\n", timestr, eno, eno ? strerror(eno) : "", ##args); } while (0)
-# define log_debug(eno, fmt, args...) do { LOG_TIME; printf("%s [DEBUG] \"%d:%s\" "fmt"\n", timestr, eno, eno ? strerror(eno) : "", ##args); } while (0)
-# define log_opaque(ptr, len, autonl) printf("%.*s%s", (int) len, ptr, autonl ? "\n" : "");
+# define log_fatal(eno, fmt, args...) LOG_IMPL("FATAL", eno, fmt, ##args)
+# define log_error(eno, fmt, args...) LOG_IMPL("ERROR", eno, fmt, ##args)
+# define log_info(eno, fmt, args...)  LOG_IMPL("INFO",  eno, fmt, ##args)
+# define log_debug(eno, fmt, args...) LOG_IMPL("DEBUG", eno, fmt, ##args)
+# define log_opaque(ptr, len, autonl) printf("%.*s%s", (int) len, ptr, autonl ? "\n" : "")
 
 #else
 
-# define log_fatal(eno, fmt, args...) Logger::defLogger->fatal(eno, fmt, ##args)
-# define log_error(eno, fmt, args...) Logger::defLogger->error(eno, fmt, ##args)
-# define log_info(eno, fmt, args...)  Logger::defLogger->info(eno, fmt, ##args);
-# define log_debug(eno, fmt, args...) Logger::defLogger->debug(eno, fmt, ##args)
+# define log_fatal(eno, fmt, args...) Logger::defLogger->fatal(__FILE__, __LINE__, eno, fmt, ##args)
+# define log_error(eno, fmt, args...) Logger::defLogger->error(__FILE__, __LINE__, eno, fmt, ##args)
+# define log_info(eno, fmt, args...)  Logger::defLogger->info(__FILE__, __LINE__, eno, fmt, ##args)
+# define log_debug(eno, fmt, args...) Logger::defLogger->debug(__FILE__, __LINE__, eno, fmt, ##args)
 # define log_opaque(ptr, len, autonl) Logger::defLogger->print(ptr, len, autonl);
 
 #endif

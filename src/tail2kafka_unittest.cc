@@ -378,7 +378,7 @@ DEFINE(watchLoop)
   write(fd, s2, strlen(s2));
   close(fd);
 
-  time_t renameStartTime = cnf->fasttime(true);
+  time_t renameStartTime = cnf->fasttime(true, TIMEUNIT_SECONDS);
   rename(LOG("basic.log"), LOG("basic.log.old"));
 
   OneTaskReq req;
@@ -409,7 +409,7 @@ DEFINE(watchLoop)
     check(ite->second != ctx, "%s should be remove from inotify", PTRS(ctx->file()));
   }
 
-  time_t renameEndTime = cnf->fasttime(true);
+  time_t renameEndTime = cnf->fasttime(true, TIMEUNIT_SECONDS);
   check(renameEndTime - renameStartTime > cnf->rotateDelay_, "%d", (int) (renameEndTime - renameStartTime));
 
   cnf->pollLimit_ = 300;

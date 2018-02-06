@@ -92,6 +92,7 @@ public:
   bool removeHistoryFile();
 
   const std::string &topic() const { return topic_; }
+  bool autocreat() const { return autocreat_; }
   LuaFunction *function() const { return function_; }
 
 private:

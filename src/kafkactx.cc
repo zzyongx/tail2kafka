@@ -8,9 +8,9 @@
 #include "filereader.h"
 #include "kafkactx.h"
 
-static int stats_cb(rd_kafka_t *, char *json, size_t json_len, void *)
+static int stats_cb(rd_kafka_t *, char * /*json*/, size_t /*json_len*/, void *)
 {
-  log_opaque(json, (int) json_len, true);
+//  log_opaque(json, (int) json_len, true);
   return 0;
 }
 

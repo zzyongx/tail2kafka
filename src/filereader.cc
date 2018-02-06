@@ -36,16 +36,21 @@ FileReader::FileReader(LuaCtx *ctx)
 
   size_ = dsize_ = 0;
   line_ = dline_ = 0;
+
   qsize_ = 0;
+  lastQueueFullTime_ = ctx_->cnf()->fasttime(TIMEUNIT_MILLI);
+
   fileRecordsCache_ = 0;
 
   fileRotateTime_ = ctx->cnf()->fasttime();
+  holdFd_ = -1;
 }
 
 FileReader::~FileReader()
 {
   delete[] buffer_;
   if (fd_ > 0) close(fd_);
+  if (holdFd_ > 0) close(holdFd_);
 }
 
 // try best to watch the file
@@ -74,6 +79,8 @@ bool FileReader::init(char *errbuf)
   fstat(fd_, &st);
   inode_ = st.st_ino;
 
+  log_info(0, "open file %s fd %d inode %ld", ctx_->datafile().c_str(), fd_, inode_);
+
   bits_set(flags_, FILE_WATCHED);
   if (ctx_->datafile() != ctx_->file()) bits_set(flags_, FILE_HISTORY);
 
@@ -97,7 +104,15 @@ bool FileReader::reinit()
     const std::string &file = ctx_->datafile();
     log_info(0, "reinit %s", file.c_str());
 
-    fd_ = open(file.c_str(), O_RDONLY);
+    bool doOpen = false;
+    if (!bits_test(flags_, FILE_HISTORY) && holdFd_ > 0) {
+      fd_ = holdFd_;
+      holdFd_ = -1;
+    } else {
+      fd_ = open(file.c_str(), O_RDONLY);
+      doOpen = true;
+    }
+
     if (fd_ != -1) {
       struct stat st;
       fstat(fd_, &st);
@@ -106,6 +121,9 @@ bool FileReader::reinit()
       npos_ = 0;
       inode_ = st.st_ino;
       bits_clear(flags_, FILE_OPENONLY);
+
+      if (doOpen) log_info(0, "open file %s fd %d inode %ld", file.c_str(), fd_, inode_);
+      else log_info(0, "%d %s use holdFd instead of reopen inode %ld", fd_, ctx_->datafile().c_str(), inode_);
 
       tail2kafka(START, &st);
     } else if (bits_test(flags_, FILE_HISTORY)) {
@@ -123,7 +141,24 @@ bool FileReader::reinit()
     tail2kafka();
   }
 
-  if (rewatch) bits_set(flags_, FILE_WATCHED);
+  if (rewatch) {
+    if (access(ctx_->file().c_str(), F_OK) == 0 ||
+        (ctx_->autocreat() && creat(ctx_->file().c_str(), 0644) == 0)) {
+      if (bits_test(flags_, FILE_HISTORY)) {
+        if (holdFd_ > 0) close(holdFd_);
+        holdFd_ = open(ctx_->file().c_str(), O_RDONLY, 0644);
+        if (holdFd_ == -1) {
+          log_fatal(errno, "open holdFd %s error", ctx_->file().c_str());
+          rewatch = false;
+        } else {
+          log_info(0, "open file %s fd %d inode %ld as holdFd", ctx_->file().c_str(), holdFd_, inode_);
+        }
+      }
+      if (rewatch) bits_set(flags_, FILE_WATCHED);
+    } else {
+      rewatch = false;
+    }
+  }
   return rewatch;
 }
 
@@ -159,14 +194,16 @@ void FileReader::initFileOffRecord(FileOffRecord * fileOffRecord)
   fileOffRecord_->off   = size_;
 }
 
-// FileOffRecord should be called in only one thread
+// FileOffRecord should be called in only one thread, but it must not call thread unsafe function
 void FileReader::updateFileOffRecord(const FileRecord *record)
 {
   util::atomic_dec(&qsize_);
 
   if (record->inode != fileOffRecord_->inode) {
-    log_info(0, "%s change inode from %ld to %ld", ctx_->file().c_str(),
-             (long) fileOffRecord_->inode, (long) record->inode);
+    // rename file does not change inode
+    log_info(0, "%d %s change inode from %ld/%ld to %ld/%ld", fd_, ctx_->topic().c_str(),
+      (long) fileOffRecord_->inode, (long) fileOffRecord_->off,
+      (long) record->inode, (long) record->off);
 
     fileOffRecord_->inode = record->inode;
     fileOffRecord_->off   = record->off;
@@ -179,7 +216,7 @@ void FileReader::updateFileOffRecord(const FileRecord *record)
     util::atomic_inc(&dline_);
     util::atomic_inc(&dsize_, record->data->size() - ctx_->function()->extraSize());
   } else {
-    log_fatal(0, "%s off change smaller, from %ld/%ld to %ld/%ld", ctx_->file().c_str(),
+    log_fatal(0, "%d %s off change smaller, from %ld/%ld to %ld/%ld", fd_, ctx_->topic().c_str(),
               (long) fileOffRecord_->inode, (long) fileOffRecord_->off,
               (long) record->inode, (long) record->off);
   }
@@ -200,14 +237,33 @@ static std::string getFileNameFromFd(int fd)
   }
 }
 
-inline const char *flagsToAction(uint32_t flags)
+static struct FileInotifyStatusWithDesc {
+  uint32_t    flags;
+  const char *desc;
+} fileInotifyStatusWithDesc[] = {
+  { FILE_MOVED,     "FILE_MOVED" },
+  { FILE_CREATED,   "FILE_CREATED" },
+  { FILE_ICHANGE,   "FILE_ICHANGE" },
+  { FILE_TRUNCATED, "FILE_TRUNCATED" },
+  { FILE_DELETED,   "FILE_DELETED" },
+
+  { FILE_LOGGED,    "FILE_LOGGED" },
+  { FILE_WATCHED,   "FILE_WATCHED" },
+  { FILE_OPENONLY,  "FILE_OPENONLY" },
+  { FILE_HISTORY,   "FILE_HISTORY" },
+  { 0, 0 }
+};
+
+inline std::string flagsToString(uint32_t flags)
 {
-  if (bits_test(flags, FILE_MOVED)) return "moved";
-  else if (bits_test(flags, FILE_DELETED)) return "deleted";
-  else if (bits_test(flags, FILE_TRUNCATED)) return "truncated";
-  else if (bits_test(flags, FILE_ICHANGE)) return "inodechanged";
-  else if (bits_test(flags, FILE_CREATED)) return "newcreated";
-  else return 0;
+  std::string s;
+  for (int i = 0; fileInotifyStatusWithDesc[i].flags != 0; ++i) {
+    if (bits_test(flags, fileInotifyStatusWithDesc[i].flags)) {
+      if (!s.empty()) s.append(1, ',');
+      s.append(fileInotifyStatusWithDesc[i].desc);
+    }
+  }
+  return s;
 }
 
 void FileReader::tagRotate(int action, const char *fptr)
@@ -216,17 +272,59 @@ void FileReader::tagRotate(int action, const char *fptr)
 
   std::string newFileName;
   if (!fptr && bits_test(flags_, FILE_MOVED)) {
-    newFileName = getFileNameFromFd(fd_);
+    newFileName = getFileNameFromFd(holdFd_ > 0 ? holdFd_ : fd_);
     fptr = newFileName.c_str();
   }
 
-  log_info(0, "%d %s rotate %s to %s", fd_, ctx_->datafile().c_str(), flagsToAction(flags_), fptr ? fptr : "");
+  log_info(0, "%d %s rotate %s to %s", fd_, ctx_->file().c_str(), flagsToString(flags_).c_str(), fptr ? fptr : "");
 
   if (ctx_->cnf()->fasttime() - fileRotateTime_ < KAFKA_ERROR_TIMEOUT ||
       (ctx_->getRotateDelay() > 0 && ctx_->cnf()->fasttime() - fileRotateTime_ < ctx_->getRotateDelay())) {
-    log_fatal(0, "%d %s rotate %s too frequent, may lose data", fd_, ctx_->datafile().c_str(), flagsToAction(flags_));
+    log_fatal(0, "%d %s rotate %s too frequent, may lose data", fd_, ctx_->file().c_str(),
+              flagsToString(flags_).c_str());
   }
 }
+
+void FileReader::checkHistoryRotate(const struct stat *stPtr)
+{
+  if (bits_test(flags_, FILE_HISTORY) && stPtr->st_size == size_) {
+    std::string oldFile = ctx_->datafile();
+    if (tail2kafka(END, stPtr, oldFile.c_str())) {
+      bits_set(flags_, FILE_OPENONLY);
+      if (ctx_->removeHistoryFile()) bits_clear(flags_, FILE_HISTORY);
+
+      log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) historyrotate %s", fd_, ctx_->datafile().c_str(),
+               size_, dsize_, line_, dline_, oldFile.c_str());
+      close(fd_);
+      fd_ = -1;
+      log_info(0, "history file %s finished, try next %s", oldFile.c_str(), ctx_->datafile().c_str());
+    }
+  }
+}
+
+// when mv x to x.old, the process may still write to x.old untill reopen x
+// we wait use roateDelay to reduce data lose
+bool FileReader::waitRotate()
+{
+  bool rc = false;
+  if (bits_test(flags_, FILE_MOVED) || bits_test(flags_, FILE_CREATED)) {
+    if (ctx_->getRotateDelay() > 0 && bits_test(flags_, FILE_LOGGED)) {  // if config rotate delay
+      if (ctx_->cnf()->fasttime() - fileRotateTime_ >= ctx_->getRotateDelay()) rc = true;  // rotate delay timeout
+    } else if (bits_test(flags_, FILE_MOVED) && access(ctx_->file().c_str(), F_OK) == 0) {  // if file reopened
+      rc = true;
+    }
+
+    if (!rc && !bits_test(flags_, FILE_LOGGED)) {
+      log_info(0, "inotify %s %s, wait rotatedelay timeout or wait reopen", ctx_->file().c_str(),
+               flagsToString(flags_).c_str());
+    }
+  }
+
+  if (!bits_test(flags_, FILE_LOGGED)) fileRotateTime_ = ctx_->cnf()->fasttime();
+  bits_set(flags_, FILE_LOGGED);
+  return rc;
+}
+
 
 bool FileReader::remove()
 {
@@ -236,23 +334,8 @@ bool FileReader::remove()
     return false;
   }
 
-  // make reinit REOPEN
-  if (bits_test(flags_, FILE_HISTORY) && st.st_size == size_) {
-    std::string oldFile = ctx_->datafile();
-    bool rc = tail2kafka(END, &st, oldFile.c_str());
-    assert(rc = true);
-
-    log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) historyrotate %s", fd_, ctx_->file().c_str(),
-             size_, dsize_, line_, dline_, oldFile.c_str());
-
-    close(fd_);
-    fd_ = -1;
-    bits_set(flags_, FILE_OPENONLY);
-
-
-    if (ctx_->removeHistoryFile()) bits_clear(flags_, FILE_HISTORY);
-    log_info(0, "history file %s finished, try next %s", oldFile.c_str(), ctx_->datafile().c_str());
-  }
+  // make reinit REOPEN  #flow HISTORY_ROTATE
+  checkHistoryRotate(&st);
 
   if (st.st_nlink == 0) bits_set(flags_, FILE_DELETED);
   else if (st.st_size < size_) bits_set(flags_, FILE_TRUNCATED);
@@ -263,31 +346,14 @@ bool FileReader::remove()
     tagRotate(FILE_CREATED, timeFormatFile.c_str());
   }
 
-  const char *action = flagsToAction(flags_);
-  bool rc = action ? true : false;
+  bool rc = bits_test(flags_, FILE_MOVED) || bits_test(flags_, FILE_CREATED) ||
+    bits_test(flags_, FILE_DELETED) || bits_test(flags_, FILE_TRUNCATED) || bits_test(flags_, FILE_ICHANGE);
 
-  if (rc) {
-    // when mv x to x.old, the process may still write to x.old untill reopen x
-    if (bits_test(flags_, FILE_MOVED) || bits_test(flags_, FILE_CREATED)) {
-      rc = false;
-      if (ctx_->getRotateDelay() > 0 && bits_test(flags_, FILE_LOGGED)) {  // if config rotate delay
-        if (ctx_->cnf()->fasttime() - fileRotateTime_ >= ctx_->getRotateDelay()) rc = true;  // rotate delay timeout
-      } else if (bits_test(flags_, FILE_MOVED) && access(ctx_->file().c_str(), F_OK) == 0) {  // if file reopened
-        rc = true;
-      }
-
-      if (!rc && !bits_test(flags_, FILE_LOGGED)) {
-        log_info(0, "inotify %s %s, wait rotatedelay timeout or wait reopen", ctx_->file().c_str(), action);
-      }
-    }
-
-    if (!bits_test(flags_, FILE_LOGGED)) fileRotateTime_ = ctx_->cnf()->fasttime();
-    bits_set(flags_, FILE_LOGGED);
-  }
+  if (rc) rc = waitRotate();
 
   if (rc) {
     std::string rotateFileName;
-    if (bits_test(flags_, FILE_MOVED)) rotateFileName = getFileNameFromFd(fd_);
+    if (bits_test(flags_, FILE_MOVED)) rotateFileName = getFileNameFromFd(holdFd_ > 0 ? holdFd_ : fd_);
     else if (bits_test(flags_, FILE_CREATED)) rotateFileName = ctx_->file();
 
     std::string oldFileName = rotateFileName;
@@ -295,6 +361,7 @@ bool FileReader::remove()
     rc = tail2kafka(END, &st, oldFileName.c_str());
 
     bool closeFd = true;
+    if (bits_test(flags_, FILE_HISTORY)) rc = false;  // FILE_HISTORY exec flow #HISTORY_ROTATE
     if (!rc) {
       if (bits_test(flags_, FILE_MOVED) || bits_test(flags_, FILE_CREATED)) {
         closeFd = false;
@@ -306,6 +373,8 @@ bool FileReader::remove()
           rc = true;
         }
       } else {
+        log_info(0, "%d %s treat tail2kafka fail as success when file status is %s", fd_, ctx_->file().c_str(),
+                 flagsToString(flags_).c_str());
         rc = true;
       }
     }
@@ -313,7 +382,8 @@ bool FileReader::remove()
     if (rc) {
       if (closeFd) {
         log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) %s %s", fd_, ctx_->file().c_str(),
-                 size_, dsize_, line_, dline_, action, rotateFileName.empty() ? "NIL" : rotateFileName.c_str());
+                 size_, dsize_, line_, dline_, flagsToString(flags_).c_str(),
+                 rotateFileName.empty() ? "NIL" : rotateFileName.c_str());
         // TODO add inode file
         close(fd_);
         fd_ = -1;
@@ -353,10 +423,15 @@ bool FileReader::setStartPositionEnd(off_t fileSize, char *errbuf)
   return true;
 }
 
-bool FileReader::tail2kafka(StartPosition pos, struct stat *stPtr, const char *oldFileName)
+bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, const char *oldFileName)
 {
   if (util::atomic_get(&qsize_) > SEND_QUEUE_SIZE) {
-    log_info(0, "%d %s queue exceed %d", fd_, ctx_->datafile().c_str(), SEND_QUEUE_SIZE);
+    int queueFullTimeDuration = ctx_->cnf()->fasttime(TIMEUNIT_MILLI) - lastQueueFullTime_;
+    if (queueFullTimeDuration > 1500) {    // suppress queue exceed log
+      log_info(0, "%d %s queue exceed %d duration %d", fd_, ctx_->datafile().c_str(),
+               SEND_QUEUE_SIZE, queueFullTimeDuration);
+      lastQueueFullTime_ = ctx_->cnf()->fasttime(TIMEUNIT_MILLI);
+    }
     return false;
   }
 

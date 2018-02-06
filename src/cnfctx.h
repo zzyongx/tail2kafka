@@ -1,6 +1,11 @@
 #ifndef _CNFCTX_H_
 #define _CNFCTX_H_
 
+#include <string>
+#include <vector>
+#include <map>
+#include <sys/time.h>
+
 #include "fileoff.h"
 #include "luahelper.h"
 #include "kafkactx.h"
@@ -10,6 +15,10 @@ class RunStatus;
 
 enum RunError {
   KAFKA_ERROR = 0x0001,
+};
+
+enum TimeUnit {
+  TIMEUNIT_MILLI, TIMEUNIT_SECONDS,
 };
 
 class CnfCtx {
@@ -57,10 +66,14 @@ public:
   int partition() const { return partition_; }
   const std::string &host() const { return host_; }
 
-  time_t fasttime() const { return time_; }
-  time_t fasttime(bool force) {
-    if (force) time_ = time(0);
-    return time_;
+  int64_t fasttime(TimeUnit unit = TIMEUNIT_SECONDS) const {
+    if (unit == TIMEUNIT_MILLI) return timeval_.tv_sec * 1000 + timeval_.tv_usec / 1000;
+    else return timeval_.tv_sec;
+  }
+
+  int64_t fasttime(bool force, TimeUnit unit) {
+    if (force) gettimeofday(&timeval_, 0);
+    return fasttime(unit);
   }
 
   char *errbuf() { return errbuf_; }
@@ -92,7 +105,7 @@ private:
   std::map<std::string, std::string>  kafkaTopic_;
   KafkaCtx                           *kafka_;
 
-  time_t       time_;
+  struct timeval timeval_;
   char        *errbuf_;
   RunStatus   *runStatus_;
 

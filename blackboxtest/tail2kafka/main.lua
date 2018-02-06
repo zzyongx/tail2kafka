@@ -13,7 +13,8 @@ kafka_global = {
   ["client.id"] = "tail2kafka",
   ["broker.version.fallback"] = "0.8.2.1",
   ["compression.codec"] = "snappy",
-  ["message.send.max.retries"] = "10",
+  ["max.in.flight"] = 10000,
+  ["message.send.max.retries"] = "1",
   ["statistics.interval.ms"] = "60000",
 }
 

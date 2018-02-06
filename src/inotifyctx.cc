@@ -66,10 +66,14 @@ bool InotifyCtx::tryReWatch()
 
     if (ctx->getFileReader()->reinit()) {
       int wd = inotify_add_watch(wfd_, ctx->file().c_str(), WATCH_EVENT);
-      fdToCtx_.insert(std::make_pair(wd, ctx));
+      if (wd == -1) {
+        log_fatal(errno, "rewatch %s error", ctx->file().c_str());
+      } else {
+        fdToCtx_.insert(std::make_pair(wd, ctx));
 
-      log_info(0, "rewatch %s @%d", ctx->file().c_str(), wd);
-      ctx->getFileReader()->tail2kafka();
+        log_info(0, "rewatch %s @%d", ctx->file().c_str(), wd);
+        ctx->getFileReader()->tail2kafka();
+      }
     }
   }
   return true;
@@ -110,11 +114,10 @@ void InotifyCtx::loop()
     {wfd_, POLLIN, 0 }
   };
 
-  int error = 0;
-  long savedTime = cnf_->fasttime(true);
+  long savedTime = cnf_->fasttime(true, TIMEUNIT_MILLI);
   while (runStatus->get() == RunStatus::WAIT) {
     int nfd = poll(fds, 1, 500);
-    cnf_->fasttime(true);
+    cnf_->fasttime(true, TIMEUNIT_SECONDS);
 
     if (nfd == -1) {
       if (errno != EINTR) return;
@@ -132,7 +135,7 @@ void InotifyCtx::loop()
           LuaCtx *ctx = getLuaCtx(event->wd);
           if (ctx) {
             log_debug(0, "inotify %s was modified", ctx->file().c_str());
-            error += ctx->getFileReader()->tail2kafka() ? -1 : 1;
+            ctx->getFileReader()->tail2kafka();
           } else {
             log_fatal(0, "@%d could not found ctx", event->wd);
           }

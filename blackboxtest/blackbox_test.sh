@@ -15,31 +15,44 @@ if [ ! -d $CFGDIR ]; then
   exit 1
 fi
 
-# delete.topic.enable=true
+echo "WARN: YOU MUST KILL tail2kafka and kafka2file first, both may create topic automatic"
+
+T2KDIR=logs
+K2FDIR=kafka2filedir
+
+echo "kill tail2kafka"
+(test -f $PIDF && test -d /proc/$(cat $PIDF)) && kill $(cat $PIDF); sleep 2
+echo "kill kafka2file"
+for TOPIC in "basic" "filter" "grep" "aggregate" "transform"; do
+  K2FPID=$K2FDIR/$TOPIC.0.lock
+  (test -f $K2FPID && test -d /proc/$(cat $K2FPID)) && kill $(cat $K2FPID); sleep 2
+done
 
 find logs -type f -name "*.log" -delete
 
+ZK=localhost:2181/kafka
+# delete.topic.enable=true
 cd /opt/kafka
 for TOPIC in "basic" "filter" "grep" "aggregate" "transform"; do
-  bin/kafka-topics.sh --delete --zookeeper localhost:2181 --topic $TOPIC
-  bin/kafka-topics.sh --create --zookeeper localhost:2181 --replication-factor 1 --partitions 1 --topic $TOPIC
+  bin/kafka-topics.sh --delete --if-exists --zookeeper $ZK  --topic $TOPIC
+  bin/kafka-topics.sh --create --zookeeper $ZK --replication-factor 1 --partitions 1 --topic $TOPIC
 done
-bin/kafka-topics.sh --list --zookeeper localhost:2181
+if bin/kafka-topics.sh --list --zookeeper $ZK | grep -e 'aggregate|basic|filter|grep|transform'; then
+  echo "delete kafka topic error"
+  exit 1
+fi
 cd -
 
-OLDFILE=kafka2filedir/basic/zzyong_basic.log.old
-test -d kafka2filedir || mkdir kafka2filedir
-rm -f kafka2filedir/basic.0.offset $OLDFILE
+OLDFILE=$K2FDIR/basic/zzyong_basic.log.old
+test -d $K2FDIR || mkdir $K2FDIR
+rm -f $K2FDIR/basic.0.offset $OLDFILE
 
 $BUILDDIR/kafka2file 127.0.0.1:9092 basic 0 offset-end kafka2filedir &
-KAFKA2FILE_ID=$!
 if [ $? != 0 ]; then
   echo "start kafka2file failed"
   exit 1
 fi
 
-(test -f $PIDF && test -d /proc/$(cat $PIDF)) && kill $(cat $PIDF)
-sleep 1
 $BUILDDIR/tail2kafka $CFGDIR
 if [ ! -f $PIDF ] || [ ! -d /proc/$(cat $PIDF) ]; then
   echo "start tail2kafka failed"
@@ -50,7 +63,6 @@ sleep 1
 $BUILDDIR/tail2kafka_blackbox
 
 echo "WAIT kafka2file ... "; sleep 20
-kill $KAFKA2FILE_ID
 
 if [ ! -f $OLDFILE ]; then
   echo "kafka2file rotate error, expect $OLDFILE"
@@ -62,6 +74,8 @@ if [ "$NUM" != 200 ]; then
   echo "line of $OLDFILE is $NUM should be 200"
   exit 1
 fi
+
+echo "$0 test ok"
 
 # kafka2file
 # current/last file was deleted after kill

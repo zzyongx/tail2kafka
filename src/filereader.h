@@ -43,7 +43,7 @@ public:
   void tagRotate(int action = FILE_MOVED, const char *fptr = 0);
   bool remove();
 
-  bool tail2kafka(StartPosition pos = NIL, struct stat *stPtr = 0, const char *oldFileName = 0);
+  bool tail2kafka(StartPosition pos = NIL, const struct stat *stPtr = 0, const char *oldFileName = 0);
   bool checkCache();
 
   void initFileOffRecord(FileOffRecord * fileOffRecord);
@@ -66,12 +66,17 @@ private:
   void propagateRawData(const std::string &line, off_t size);
   void cacheFileRecord(ino_t inode, off_t off, const std::vector<std::string *> &lines, size_t n);
 
+  void checkHistoryRotate(const struct stat *stPtr);
+  bool waitRotate();
+
 private:
   int      fd_;
   off_t    size_;
   ino_t    inode_;
   uint32_t flags_;
+
   time_t   fileRotateTime_;
+  int      holdFd_;    // trace moved file when datafile != file
 
   FileOffRecord *fileOffRecord_;
 
@@ -79,7 +84,8 @@ private:
   size_t dline_;  // send line
   off_t  dsize_;  // send size
 
-  size_t qsize_;  // send queue size
+  size_t   qsize_;  // send queue size
+  int64_t  lastQueueFullTime_;
 
   char         *buffer_;
   size_t        npos_;

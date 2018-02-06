@@ -87,6 +87,33 @@ bool FileReader::init(char *errbuf)
   return setStartPosition(st.st_size, errbuf);
 }
 
+bool FileReader::checkRewatch()
+{
+  bool rewatch = true;
+  if (access(ctx_->file().c_str(), F_OK) == 0 ||
+      (ctx_->autocreat() && creat(ctx_->file().c_str(), 0644) == 0)) {
+    if (bits_test(flags_, FILE_HISTORY)) {
+      if (holdFd_ > 0) {
+        close(holdFd_);
+        log_info(0, "close holdFd %d", holdFd_);
+      }
+
+      holdFd_ = open(ctx_->file().c_str(), O_RDONLY, 0644);
+      if (holdFd_ == -1) {
+        log_fatal(errno, "open holdFd %s error", ctx_->file().c_str());
+        rewatch = false;
+      } else {
+        log_info(0, "open file %s fd %d as holdFd", ctx_->file().c_str(), holdFd_);
+      }
+    }
+  } else {
+    rewatch = false;
+  }
+
+  if (rewatch) bits_set(flags_, FILE_WATCHED);
+  return rewatch;
+}
+
 bool FileReader::reinit()
 {
   bool reopen = false;
@@ -102,7 +129,7 @@ bool FileReader::reinit()
   while (reopen && tryNext) {
     tryNext = false;
     const std::string &file = ctx_->datafile();
-    log_info(0, "reinit %s", file.c_str());
+    log_info(0, "reopen %s", file.c_str());
 
     bool doOpen = false;
     if (!bits_test(flags_, FILE_HISTORY) && holdFd_ > 0) {
@@ -141,24 +168,7 @@ bool FileReader::reinit()
     tail2kafka();
   }
 
-  if (rewatch) {
-    if (access(ctx_->file().c_str(), F_OK) == 0 ||
-        (ctx_->autocreat() && creat(ctx_->file().c_str(), 0644) == 0)) {
-      if (bits_test(flags_, FILE_HISTORY)) {
-        if (holdFd_ > 0) close(holdFd_);
-        holdFd_ = open(ctx_->file().c_str(), O_RDONLY, 0644);
-        if (holdFd_ == -1) {
-          log_fatal(errno, "open holdFd %s error", ctx_->file().c_str());
-          rewatch = false;
-        } else {
-          log_info(0, "open file %s fd %d inode %ld as holdFd", ctx_->file().c_str(), holdFd_, inode_);
-        }
-      }
-      if (rewatch) bits_set(flags_, FILE_WATCHED);
-    } else {
-      rewatch = false;
-    }
-  }
+  if (rewatch) rewatch = checkRewatch();
   return rewatch;
 }
 
@@ -290,14 +300,15 @@ void FileReader::checkHistoryRotate(const struct stat *stPtr)
   if (bits_test(flags_, FILE_HISTORY) && stPtr->st_size == size_) {
     std::string oldFile = ctx_->datafile();
     if (tail2kafka(END, stPtr, oldFile.c_str())) {
+      log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) historyrotate %s", fd_, ctx_->datafile().c_str(),
+               size_, dsize_, line_, dline_, oldFile.c_str());
+
       bits_set(flags_, FILE_OPENONLY);
       if (ctx_->removeHistoryFile()) bits_clear(flags_, FILE_HISTORY);
 
-      log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) historyrotate %s", fd_, ctx_->datafile().c_str(),
-               size_, dsize_, line_, dline_, oldFile.c_str());
+      log_info(0, "history file %s finished, close fd %d try next %s", oldFile.c_str(), fd_, ctx_->datafile().c_str());
       close(fd_);
       fd_ = -1;
-      log_info(0, "history file %s finished, try next %s", oldFile.c_str(), ctx_->datafile().c_str());
     }
   }
 }
@@ -381,9 +392,9 @@ bool FileReader::remove()
 
     if (rc) {
       if (closeFd) {
-        log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) %s %s", fd_, ctx_->file().c_str(),
+        log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) %s %s, close fd %d", fd_, ctx_->file().c_str(),
                  size_, dsize_, line_, dline_, flagsToString(flags_).c_str(),
-                 rotateFileName.empty() ? "NIL" : rotateFileName.c_str());
+                 rotateFileName.empty() ? "NIL" : rotateFileName.c_str(), fd_);
         // TODO add inode file
         close(fd_);
         fd_ = -1;

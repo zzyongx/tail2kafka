@@ -66,6 +66,7 @@ private:
   void propagateRawData(const std::string &line, off_t size);
   void cacheFileRecord(ino_t inode, off_t off, const std::vector<std::string *> &lines, size_t n);
 
+  bool checkRewatch();
   void checkHistoryRotate(const struct stat *stPtr);
   bool waitRotate();
 

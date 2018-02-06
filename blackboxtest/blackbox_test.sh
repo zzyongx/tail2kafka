@@ -47,8 +47,10 @@ OLDFILE=$K2FDIR/basic/zzyong_basic.log.old
 test -d $K2FDIR || mkdir $K2FDIR
 rm -f $K2FDIR/basic.0.offset $OLDFILE
 
-$BUILDDIR/kafka2file 127.0.0.1:9092 basic 0 offset-end kafka2filedir &
-if [ $? != 0 ]; then
+K2FPID=$K2FDIR/basic.0.lock
+$BUILDDIR/kafka2file 127.0.0.1:9092 basic 0 offset-end $K2FDIR &
+sleep 5
+if [ ! -f $K2FPID ] || [ ! -d /proc/$(cat $K2FPID) ]; then
   echo "start kafka2file failed"
   exit 1
 fi

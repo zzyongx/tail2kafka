@@ -50,9 +50,9 @@ fi
 bin/kafka-topics.sh --create --zookeeper $ZK --replication-factor 1 --partitions 1 --topic $TOPIC
 cd -
 
-$BUILDDIR/kafka2file 127.0.0.1:9092 basic 0 offset-end kafka2filedir &
-KAFKA2FILE_PID=$!
-if [ $? != 0 ]; then
+$BUILDDIR/kafka2file 127.0.0.1:9092 basic 0 offset-end $K2FDIR &
+sleep 5
+if [ ! -f $K2FPID ] || [ ! -d /proc/$(cat $K2FPID) ]; then
   echo "start kafka2file failed"
   exit 1
 fi
@@ -118,14 +118,13 @@ for suffix in `seq $NFILE -1 1`; do
 done
 
 touch $LOGFILE
-$UNBLOCK_KAFKA
+echo "UNBLOCK_KAFKA $UNBLOCK_KAFKA"; $UNBLOCK_KAFKA
 
 for i in `seq 1 100`; do
   echo "BASIC_0 $i" >> $LOGFILE
 done
 
 echo "WAIT kafka2file ... "; sleep 20
-kill $KAFKA2FILE_PID
 
 NFILE=$((NFILE-1))
 for suffix in `seq $NFILE -1 1`; do

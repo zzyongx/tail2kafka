@@ -266,7 +266,7 @@ DEFINE(initKafka)
   check(cnf->initKafka(), "%s", cnf->errbuf());
 
   check(cnf->kafka_->rk_, "rk_ == 0");
-  check(cnf->kafka_->rkts_.size() == cnf->getLuaCtxSize(), "rkts size %d", (int) cnf->getLuaCtxSize());
+  check(cnf->kafka_->nrkt_ == cnf->getLuaCtxSize(), "rkts size %d", (int) cnf->getLuaCtxSize());
 }
 
 DEFINE(initFileOff)

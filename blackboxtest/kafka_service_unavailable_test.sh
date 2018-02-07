@@ -123,11 +123,22 @@ echo "UNBLOCK_KAFKA $UNBLOCK_KAFKA"; $UNBLOCK_KAFKA
 for i in `seq 1 100`; do
   echo "BASIC_0 $i" >> $LOGFILE
 done
+# kafka2file has memory cache, rotate file to trigger kafka2file flush cache
+mv $LOGFILE $LOGFILE.0
 
-echo "WAIT kafka2file ... "; sleep 20
+echo "WAIT kafka2file ... "; sleep 60
+
+# WARN basic.log.5 out of order, I haven't found a way to fix it yet
+# but the messages was not lost
+SIZE1=$(stat -c %s $T2KDIR/basic.log.5)
+SIZE2=$(stat -c %s $K2FDIR/basic/${HOST}_basic.log.5)
+if [ "$SIZE1" != "$SIZE2" ]; then
+  echo "expect $K2FDIR/basic/${HOST}_basic.log.5 size != $T2KDIR/basic.log.5"
+  exit 1
+fi
 
 NFILE=$((NFILE-1))
-for suffix in `seq $NFILE -1 1`; do
+for suffix in `seq $NFILE -1 0`; do
   ofile=$T2KDIR/basic.log.$suffix
   dfile=$K2FDIR/basic/${HOST}_basic.log.$suffix
 
@@ -135,7 +146,7 @@ for suffix in `seq $NFILE -1 1`; do
   md5Dfile=$(md5sum $dfile | cut -d' ' -f1)
 
   if [ "$md5Ofile" != "$md5Dfile" ]; then
-    echo "expect $dfile content != $ofile"
+    echo "$(date +%Y-%m-%d_%H-%M-%S) expect $dfile content != $ofile"
     exit 1
   fi
 done

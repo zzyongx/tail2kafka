@@ -12,7 +12,6 @@
 #include "luafunction.h"
 #include "cnfctx.h"
 
-struct rk_kafka_topic_t;
 class FileReader;
 
 class LuaCtx {
@@ -24,16 +23,13 @@ public:
   bool initFileReader(char *errbuf);
   FileReader *getFileReader() { return fileReader_; }
 
-  void setRkt(rd_kafka_topic_t *rktopic) { rkt_ = rktopic; }
-  rd_kafka_topic_t *rkt() { return rkt_; }
+  void setRktId(int id) { rktId_ = id; }
+  int rktId() { return rktId_; }
 
   void setNext(LuaCtx* nxt) { next_ = nxt; }
   LuaCtx *next() { return next_; }
 
   CnfCtx *cnf() { return cnf_; }
-
-  void setIdx(int i) { idx_ = i; }
-  int idx() const { return idx_; }
 
   bool copyRawRequired() const {
 #ifdef DISABLE_COPYRAW
@@ -129,12 +125,11 @@ private:
   std::string   startPosition_;
   FileReader   *fileReader_;
 
-  int           idx_;
   LuaCtx       *next_;
   CnfCtx       *cnf_;
   LuaHelper    *helper_;
 
-  rd_kafka_topic_t *rkt_;
+  size_t        rktId_;
 };
 
 #endif

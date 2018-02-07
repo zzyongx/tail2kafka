@@ -93,7 +93,7 @@ bool FileReader::checkRewatch()
   int tmpFd = -1;
   bool rewatch = access(ctx_->file().c_str(), F_OK) == 0;
   if (!rewatch && ctx_->autocreat()) {
-    tmpFd = creat(ctx_->file().c_str(), 0644);
+    tmpFd = open(ctx_->file().c_str(), O_CREAT | O_RDONLY, 0644);
     if (tmpFd != -1) {
       rewatch = true;
     } else {

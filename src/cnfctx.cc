@@ -73,8 +73,7 @@ CnfCtx *CnfCtx::loadFile(const char *file, char *errbuf)
 
 void CnfCtx::addLuaCtx(LuaCtx *ctx)
 {
-  ctx->setIdx(count++);
-
+  count_++;
   bool find = false;
   for (std::vector<LuaCtx *>::iterator ite = luaCtxs_.begin(); ite != luaCtxs_.end(); ++ite) {
     if ((*ite)->file() == ctx->file()) {
@@ -124,7 +123,7 @@ CnfCtx::CnfCtx() {
 
   accept = -1;
   server = -1;
-  count  = 0;
+  count_  = 0;
   gettimeofday(&timeval_, 0);
 }
 

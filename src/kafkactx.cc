@@ -14,14 +14,13 @@ static int stats_cb(rd_kafka_t *, char * /*json*/, size_t /*json_len*/, void *)
   return 0;
 }
 
-static void error_cb(rd_kafka_t *, int err, const char *reason, void *opaque)
+void KafkaCtx::error_cb(rd_kafka_t *, int err, const char *reason, void *opaque)
 {
-  CnfCtx *cnf = (CnfCtx *) opaque;
+  KafkaCtx *kafka = (KafkaCtx *) opaque;
 
   if (err == RD_KAFKA_RESP_ERR__ALL_BROKERS_DOWN ||
       err == RD_KAFKA_RESP_ERR__TRANSPORT) {
-    // TODO:
-    cnf->setError(KAFKA_ERROR);
+    for (size_t i = 0; i < kafka->nrkt_; ++i) util::atomic_dec(kafka->errors_ + i, 1);
   }
   log_error(0, "kafka error level %d reason %s", err, reason);
 }
@@ -52,7 +51,7 @@ static int32_t partitioner_cb (
   else return partition;
 }
 
-bool KafkaCtx::initKafka(const char *brokers, const std::map<std::string, std::string> &gcnf, char *errbuf, void *cnf)
+bool KafkaCtx::initKafka(const char *brokers, const std::map<std::string, std::string> &gcnf, char *errbuf)
 {
   char errstr[512];
 
@@ -68,7 +67,7 @@ bool KafkaCtx::initKafka(const char *brokers, const std::map<std::string, std::s
     }
   }
 
-  rd_kafka_conf_set_opaque(conf, cnf);
+  rd_kafka_conf_set_opaque(conf, this);
   rd_kafka_conf_set_dr_msg_cb(conf, dr_msg_cb);
   rd_kafka_conf_set_stats_cb(conf, stats_cb);
   rd_kafka_conf_set_error_cb(conf, error_cb);
@@ -87,7 +86,7 @@ bool KafkaCtx::initKafka(const char *brokers, const std::map<std::string, std::s
   return true;
 }
 
-bool KafkaCtx::initKafkaTopic(LuaCtx *ctx, const std::map<std::string, std::string> &tcnf, char *errbuf)
+rd_kafka_topic_t *KafkaCtx::initKafkaTopic(LuaCtx *ctx, const std::map<std::string, std::string> &tcnf, char *errbuf)
 {
   char errstr[512];
 
@@ -110,22 +109,29 @@ bool KafkaCtx::initKafkaTopic(LuaCtx *ctx, const std::map<std::string, std::stri
   rkt = rd_kafka_topic_new(rk_, ctx->topic().c_str(), tconf);
   if (!rkt) {
     snprintf(errbuf, MAX_ERR_LEN, "kafka_topic_new error");
-    return false;
+    return 0;
   }
-
-  ctx->setRkt(rkt);
-  rkts_.push_back(rkt);
-  return true;
+  return rkt;
 }
 
 bool KafkaCtx::init(CnfCtx *cnf, char *errbuf)
 {
-  if (!initKafka(cnf->getBrokers(), cnf->getKafkaGlobalConf(), errbuf, cnf)) return false;
+  if (!initKafka(cnf->getBrokers(), cnf->getKafkaGlobalConf(), errbuf)) return false;
+
+  rkts_ = new rd_kafka_topic_t*[cnf->getLuaCtxSize()];
+  errors_ = new int[cnf->getLuaCtxSize()];
+  memset(errors_, 0, cnf->getLuaCtxSize());
 
   for (LuaCtxPtrList::iterator ite = cnf->getLuaCtxs().begin(); ite != cnf->getLuaCtxs().end(); ++ite) {
     LuaCtx *ctx = (*ite);
     while (ctx) {
-      if (!initKafkaTopic(ctx, cnf->getKafkaTopicConf(), errbuf)) return false;
+      rd_kafka_topic_t *rkt = initKafkaTopic(ctx, cnf->getKafkaTopicConf(), errbuf);
+      if (!rkt) return false;
+
+      rkts_[nrkt_] = rkt;
+      ctx->setRktId(nrkt_);
+      nrkt_++;
+
       ctx = ctx->next();
     }
   }
@@ -135,15 +141,33 @@ bool KafkaCtx::init(CnfCtx *cnf, char *errbuf)
 
 KafkaCtx::~KafkaCtx()
 {
-  for (std::vector<rd_kafka_topic_t *>::iterator ite = rkts_.begin(); ite != rkts_.end(); ++ite) {
-    rd_kafka_topic_destroy(*ite);
-  }
+  for (size_t i = 0; i < nrkt_; ++i) rd_kafka_topic_destroy(rkts_[i]);
   if (rk_) rd_kafka_destroy(rk_);
+
+  if (rkts_) delete[] rkts_;
+  if (errors_) delete[] errors_;
+}
+
+bool KafkaCtx::ping(LuaCtx *ctx)
+{
+  int id = ctx->rktId();
+  if (util::atomic_get(errors_ + id) > 0) return true;
+  return false;
+
+  /*
+  struct rd_kafka_message_t *meta = 0;
+  rd_kafka_resp_err_t rc = rd_kafka_metadata(rk_, 0, ctx->rkt, 30);
+  if (rc == RD_KAFKA_RESP_ERR_NO_ERROR) {
+    util::atomic_set(errors_ + id, 10);
+  }
+
+  if (meta) rd_kafka_metadata_destroy(meta);
+  */
 }
 
 void KafkaCtx::produce(LuaCtx *ctx, FileRecord *record)
 {
-  rd_kafka_topic_t *rkt = ctx->rkt();
+  rd_kafka_topic_t *rkt = rkts_[ctx->rktId()];
   record->ctx = ctx;
 
   int rc;
@@ -164,7 +188,7 @@ void KafkaCtx::produce(LuaCtx *ctx, FileRecord *record)
 bool KafkaCtx::produce(LuaCtx *ctx, std::vector<FileRecord *> *datas)
 {
   assert(!datas->empty());
-  rd_kafka_topic_t *rkt = ctx->rkt();
+  rd_kafka_topic_t *rkt = rkts_[ctx->rktId()];
 
   std::vector<rd_kafka_message_t> rkmsgs;
   rkmsgs.resize(datas->size());

@@ -6,6 +6,7 @@
 #include <map>
 #include <sys/time.h>
 
+#include "gnuatomic.h"
 #include "fileoff.h"
 #include "luahelper.h"
 #include "kafkactx.h"
@@ -55,7 +56,7 @@ public:
 
   LuaHelper *getLuaHelper() { return helper_; }
 
-  size_t getLuaCtxSize() const { return count; }
+  size_t getLuaCtxSize() const { return count_; }
   std::vector<LuaCtx *> &getLuaCtxs() { return luaCtxs_; }
 
   int getPollLimit() const { return pollLimit_; }
@@ -80,10 +81,6 @@ public:
   const std::string &libdir() const { return libdir_; }
   const std::string &logdir() const { return logdir_; }
 
-  void setError(int error) { error_ |= error; }
-  void clearError(int error) { error_ &= ~error; }
-  bool testError(int error) { return error_ & error; }
-
 private:
   CnfCtx();
 
@@ -97,7 +94,7 @@ private:
   std::string logdir_;
   std::string libdir_;
 
-  size_t                 count;
+  size_t                 count_;
   std::vector<LuaCtx *>  luaCtxs_;
 
   std::string                         brokers_;
@@ -111,7 +108,6 @@ private:
 
   LuaHelper  *helper_;
   FileOff    *fileOff_;
-  uint32_t    error_;
 };
 
 #endif

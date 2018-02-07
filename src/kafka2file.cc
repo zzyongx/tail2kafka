@@ -168,12 +168,13 @@ bool KafkaConsumer::loop(RunStatus *runStatus, Transform *transform)
     rkm = rd_kafka_consume_queue(rkqu_, 1000);
     if (!rkm) {    // timeout
       if (transform->timeout(&off) != Transform::IGNORE) { assert(off != (uint64_t) RD_KAFKA_OFFSET_END); offset_.update(off); }
+      log_info(0, "consume %s:%d timeout", topic_, partition_);
       continue;
     }
 
     if (rkm->err) {
       if (rkm->err == RD_KAFKA_RESP_ERR__PARTITION_EOF) continue;
-      log_error(0, "consume %s:%d error %s\n", topic_, partition_, rd_kafka_message_errstr(rkm));
+      log_error(0, "consume %s:%d error %s", topic_, partition_, rd_kafka_message_errstr(rkm));
       continue;
     }
 

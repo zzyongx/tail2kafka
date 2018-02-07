@@ -149,7 +149,7 @@ bool FileReader::reinit()
       fd_ = holdFd_;
       holdFd_ = -1;
     } else {
-      fd_ = open(file.c_str(), O_RDONLY);
+      fd_ = open(file.c_str(), (ctx_->autocreat() ? O_CREAT : 0) | O_RDONLY);
       doOpen = true;
     }
 

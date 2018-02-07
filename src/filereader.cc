@@ -89,27 +89,40 @@ bool FileReader::init(char *errbuf)
 
 bool FileReader::checkRewatch()
 {
-  bool rewatch = true;
-  if (access(ctx_->file().c_str(), F_OK) == 0 ||
-      (ctx_->autocreat() && creat(ctx_->file().c_str(), 0644) == 0)) {
-    if (bits_test(flags_, FILE_HISTORY)) {
-      if (holdFd_ > 0) {
-        close(holdFd_);
-        log_info(0, "close holdFd %d", holdFd_);
-      }
-
-      holdFd_ = open(ctx_->file().c_str(), O_RDONLY, 0644);
-      if (holdFd_ == -1) {
-        log_fatal(errno, "open holdFd %s error", ctx_->file().c_str());
-        rewatch = false;
-      } else {
-        log_info(0, "open file %s fd %d as holdFd", ctx_->file().c_str(), holdFd_);
-      }
+  // rewatch only existing file
+  int tmpFd = -1;
+  bool rewatch = access(ctx_->file().c_str(), F_OK) == 0;
+  if (!rewatch && ctx_->autocreat()) {
+    tmpFd = creat(ctx_->file().c_str(), 0644);
+    if (tmpFd != -1) {
+      rewatch = true;
+    } else {
+      log_fatal(errno, "create file %s error", ctx_->file().c_str());
     }
-  } else {
-    rewatch = false;
   }
 
+  // if datafile is not the file, use holdFd to track file name changes
+  if (rewatch && bits_test(flags_, FILE_HISTORY)) {
+    if (holdFd_ > 0) {
+      close(holdFd_);
+      log_info(0, "close holdFd %d", holdFd_);
+    }
+
+    if (tmpFd != -1) {
+      holdFd_ = tmpFd;
+      tmpFd = -1;
+    } else {
+      holdFd_ = open(ctx_->file().c_str(), O_RDONLY, 0644);
+    }
+    if (holdFd_ == -1) {
+      log_fatal(errno, "open holdFd %s error", ctx_->file().c_str());
+      rewatch = false;
+    } else {
+      log_info(0, "open file %s fd %d as holdFd", ctx_->file().c_str(), holdFd_);
+    }
+  }
+
+  if (tmpFd != -1) close(tmpFd);
   if (rewatch) bits_set(flags_, FILE_WATCHED);
   return rewatch;
 }

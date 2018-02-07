@@ -140,6 +140,19 @@ for suffix in `seq $NFILE -1 1`; do
   fi
 done
 
+CHILDPID=$(pgrep -P $(cat $PIDF))
+OPENFILENUM=0;
+for f in $(ls /proc/$CHILDPID/fd/); do
+  if readlink /proc/$CHILDPID/fd/$f | grep basic.log; then
+    OPENFILENUM=$((OPENFILENUM+1));
+  fi
+done
+
+if [ $OPENFILENUM != 1 ]; then
+  echo "too many open files, file fd may leak"
+  exit 1
+fi
+
 echo "OK"
 
 # qsize has bug, if set start, but without tail2kafka, should tail2kafka after init

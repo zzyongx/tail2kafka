@@ -8,6 +8,7 @@
 #include "bitshelper.h"
 #include "logger.h"
 #include "sys.h"
+#include "metrics.h"
 #include "luactx.h"
 #include "filereader.h"
 
@@ -300,6 +301,7 @@ void FileReader::tagRotate(int action, const char *fptr)
   }
 
   log_info(0, "%d %s rotate %s to %s", fd_, ctx_->file().c_str(), flagsToString(flags_).c_str(), fptr ? fptr : "");
+  util::Metrics::pingback("TAG_ROTATE", "new=%s&old=%s", ctx_->file().c_str());
 
   if (ctx_->cnf()->fasttime() - fileRotateTime_ < KAFKA_ERROR_TIMEOUT ||
       (ctx_->getRotateDelay() > 0 && ctx_->cnf()->fasttime() - fileRotateTime_ < ctx_->getRotateDelay())) {
@@ -313,8 +315,9 @@ void FileReader::checkHistoryRotate(const struct stat *stPtr)
   if (bits_test(flags_, FILE_HISTORY) && stPtr->st_size == size_) {
     std::string oldFile = ctx_->datafile();
     if (tail2kafka(END, stPtr, oldFile.c_str())) {
-      log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) historyrotate %s", fd_, ctx_->datafile().c_str(),
+      log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) historyrotate %s", fd_, oldFile.c_str(),
                size_, dsize_, line_, dline_, oldFile.c_str());
+      util::Metrics::pingback("ROTATE", "file=%s&size=%lu", oldFile.c_str(), size_);
 
       bits_set(flags_, FILE_OPENONLY);
       if (ctx_->removeHistoryFile()) bits_clear(flags_, FILE_HISTORY);
@@ -394,6 +397,7 @@ bool FileReader::remove()
             ctx_->addHistoryFile(rotateFileName)) {
           log_fatal(0, "kafka queue full duration %d, kafka may unavaliable, %s turn on history",
                   (int) (ctx_->cnf()->fasttime() - fileRotateTime_), ctx_->topic().c_str());
+          util::Metrics::pingback("KAFKA_ERROR", "topic=%s", ctx_->topic().c_str());
           rc = true;
         }
       } else {
@@ -405,9 +409,12 @@ bool FileReader::remove()
 
     if (rc) {
       if (closeFd) {
+        const char *oldFile = rotateFileName.empty() ? "NIL" : rotateFileName.c_str();
         log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) %s %s, close fd %d", fd_, ctx_->file().c_str(),
-                 size_, dsize_, line_, dline_, flagsToString(flags_).c_str(),
-                 rotateFileName.empty() ? "NIL" : rotateFileName.c_str(), fd_);
+                 size_, dsize_, line_, dline_, flagsToString(flags_).c_str(), oldFile, fd_);
+
+        util::Metrics::pingback("ROTATE", "file=%s&size=%lu", oldFile, size_);
+
         // TODO add inode file
         close(fd_);
         fd_ = -1;

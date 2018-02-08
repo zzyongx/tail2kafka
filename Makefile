@@ -1,7 +1,7 @@
 CC      = gcc
 CXX     = g++
 INSTALL = install
-LDFLAGS = -lrt -ldl -lpthread -lz
+LDFLAGS = -lcurl -lrt -ldl -lpthread -lz
 DEPSDIR = ".deps"
 ARLIBS  = $(DEPSDIR)/librdkafka.a $(DEPSDIR)/libluajit-5.1.a $(DEPSDIR)/libjsoncpp.a
 CFLAGS  += -I/usr/local/include/luajit-2.0
@@ -22,7 +22,8 @@ BUILDDIR = build
 
 OBJ = $(BUILDDIR)/common.o $(BUILDDIR)/cnfctx.o $(BUILDDIR)/luactx.o $(BUILDDIR)/transform.o \
 	    $(BUILDDIR)/filereader.o $(BUILDDIR)/inotifyctx.o $(BUILDDIR)/fileoff.o \
-      $(BUILDDIR)/luafunction.o $(BUILDDIR)/kafkactx.o $(BUILDDIR)/sys.o $(BUILDDIR)/util.o
+      $(BUILDDIR)/luafunction.o $(BUILDDIR)/kafkactx.o $(BUILDDIR)/sys.o $(BUILDDIR)/util.o \
+      $(BUILDDIR)/metrics.o $(BUILDDIR)/taskqueue.o
 
 default: configure tail2kafka kafka2file tail2kafka_unittest
 	@echo finished

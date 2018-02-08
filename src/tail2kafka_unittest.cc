@@ -103,7 +103,7 @@ DEFINE(loadCnf)
   check(cnf->getKafkaTopicConf().find("request.required.acks")->second == "1", "kafkaTopicConf request.required.acks = %s", PTRS(cnf->getKafkaTopicConf().find("request.required.acks")->second));
 
   check(cnf->rotateDelay_ == 10, "rotatedelay %d", cnf->rotateDelay_);
-  check(cnf->pingbackUrl_ == "http://pingbackdst/pingback/tail2kafka", "pingbackUrl %s", cnf->pingbackUrl_.c_str());
+  check(cnf->pingbackUrl_ == "http://localhost/pingback/tail2kafka", "pingbackUrl %s", cnf->pingbackUrl_.c_str());
 
   check(cnf->getLuaCtxSize() == LUACNF_SIZE, "%d", (int) cnf->getLuaCtxSize());
   for (std::vector<LuaCtx *>::iterator ite = cnf->getLuaCtxs().begin(); ite != cnf->getLuaCtxs().end(); ++ite) {
@@ -357,6 +357,7 @@ DEFINE(watchLoop)
 
   LuaCtx *ctx = getLuaCtx("basic");
   ctx->withhost_ = true;
+  ctx->autocreat_ = false;
 
   InotifyCtx inotify(cnf);
   check(inotify.init(), "%s", cnf->errbuf());

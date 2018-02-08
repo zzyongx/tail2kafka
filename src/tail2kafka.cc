@@ -15,6 +15,7 @@
 #include "logger.h"
 #include "sys.h"
 #include "runstatus.h"
+#include "metrics.h"
 #include "luactx.h"
 #include "cnfctx.h"
 #include "inotifyctx.h"
@@ -39,11 +40,15 @@ int main(int argc, char *argv[])
 
   CnfCtx *cnf = CnfCtx::loadCnf(dir, errbuf);
   if (!cnf) {
-    fprintf(stderr, "%d:%s load cnf error %s\n", errno, errno ? strerror(errno) : "", errbuf);
+    fprintf(stderr, "load cnf error %s\n", errbuf);
     return EXIT_FAILURE;
   }
 
-  Logger::create(cnf->logdir() + "/tail2kafka.log", Logger::DAY, true);
+  if (!Logger::create(cnf->logdir() + "/tail2kafka.log", Logger::DAY, true)) {
+    fprintf(stderr, "%d:%s init logger error\n", errno, strerror(errno));
+    return EXIT_FAILURE;
+  }
+
 
   bool daemonOff = getenv("DAEMON_OFF");
 
@@ -224,6 +229,15 @@ int runForeGround(CnfCtx *cnf)
 
 pid_t spawn(CnfCtx *cnf, CnfCtx *ocnf)
 {
+  if (!cnf->pingbackUrl().empty()) {
+    if (!util::Metrics::create(cnf->pingbackUrl().c_str(), cnf->errbuf())) {
+      log_fatal(0, "Metrics::create error %s", cnf->errbuf());
+      return -1;
+    }
+  }
+
+  util::Metrics::pingback("SPAWN", "reload=%s", ocnf ? "true" : "false");
+
   InotifyCtx inotify(cnf);
   if (!inotify.init()) return -1;
 

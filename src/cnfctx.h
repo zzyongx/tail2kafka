@@ -61,7 +61,7 @@ public:
 
   int getPollLimit() const { return pollLimit_; }
   int getRotateDelay() const { return rotateDelay_; }
-  const std::string &getPingbackUrl() const { return pingbackUrl_; }
+  const std::string &pingbackUrl() const { return pingbackUrl_; }
 
   uint32_t addr() const { return addr_; }
   int partition() const { return partition_; }

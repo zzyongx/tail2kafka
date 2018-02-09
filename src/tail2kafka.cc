@@ -184,6 +184,13 @@ inline void terminateRoutine(CnfCtx *ctx)
 
 void run(InotifyCtx *inotify, CnfCtx *cnf)
 {
+  /* must call in subprocess */
+  const char *pingbackUrl = cnf->pingbackUrl().empty() ? 0 : cnf->pingbackUrl().c_str();
+  if (!util::Metrics::create(pingbackUrl, cnf->errbuf())) {
+    log_fatal(0, "Metrics::create error %s", cnf->errbuf());
+  }
+  util::Metrics::pingback("SPAWN", "status=%s", cnf->getRunStatus()->status());
+
   cnf->getRunStatus()->set(RunStatus::WAIT);
 
   sys::SignalHelper signalHelper(0);
@@ -229,15 +236,6 @@ int runForeGround(CnfCtx *cnf)
 
 pid_t spawn(CnfCtx *cnf, CnfCtx *ocnf)
 {
-  if (!cnf->pingbackUrl().empty()) {
-    if (!util::Metrics::create(cnf->pingbackUrl().c_str(), cnf->errbuf())) {
-      log_fatal(0, "Metrics::create error %s", cnf->errbuf());
-      return -1;
-    }
-  }
-
-  util::Metrics::pingback("SPAWN", "reload=%s", ocnf ? "true" : "false");
-
   InotifyCtx inotify(cnf);
   if (!inotify.init()) return -1;
 

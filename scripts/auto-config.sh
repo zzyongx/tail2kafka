@@ -20,9 +20,21 @@ log()
   local dt=$(date +%F_%H-%M-%S)
   echo "$dt $event $error"
 
-  if [ $PINGBACKURL != "" ]; then
+  if [ "$PINGBACKURL" != "" ]; then
     error=$(echo $error | sed -e 's| |%20|g')
-    curl -Ss "$PINGBACKURL?event=$event&product=$PRODUCT&error=$error"
+    curl -Ss "$PINGBACKURL?event=$event&product=$PRODUCT&error=$error" -o /dev/null
+  fi
+}
+
+try_start()
+{
+  if [ "$BIN" != "" ] && [ -x $BIN ]; then
+    log TRY_START "tail2kafka is not running, try start"
+    $BIN $ETCDIR
+    return 0
+  else
+    log RUNNING_ERROR "tail2kafka is not running"
+    return 1
   fi
 }
 
@@ -33,11 +45,6 @@ fi
 
 if [ "$PIDFILE" = "" ]; then
   log CONFIG_ERROR "param PIDFILE is required"
-  exit 1
-fi
-
-if [ ! -f $PIDFILE ]; then
-  log CONFIG_ERROR "PIDFILE $PIDFILE is not a file"
   exit 1
 fi
 
@@ -65,8 +72,14 @@ MD5=$(echo $META | cut -d'-' -f2)
 
 test -f $LIBDIR/version && OLDVER=$(cat $LIBDIR/version)
 if [ "$VER" = "$OLDVER" ]; then
-  log VERSION_OK "version $VER is not changed"
-  exit 0
+  log VERSION_OK "version $VER has not changed"
+
+  RET=0
+  if [ ! -f $PIDFILE ] || [ ! -d /proc/$(cat $PIDFILE) ]; then
+    try_start
+    RET=$?
+  fi
+  exit $RET
 fi
 
 TGZ=$LIBDIR/$PRODUCT-$VER.tar.gz
@@ -91,10 +104,18 @@ fi
 
 mv $ETCDIR $LIBDIR/$PRODUCT.$OLDVER.$(date +"%F_%H-%M-%S")
 mv $LIBDIR/$PRODUCT-$VER $ETCDIR
-kill -HUP $(cat $PIDFILE)
+
+RET=0
+if [ -f $PIDFILE ] && [ -d /proc/$(cat $PIDFILE) ]; then
+  kill -HUP $(cat $PIDFILE)
+else
+  try_start
+  RET=$?
+fi
 
 echo "$VER" > $LIBDIR/version
 log UPGRADE_OK "upgrade config from $OLDVER to $VER"
+exit $RET
 
 # tar czf _PRODUCT_-_VER_.tar.gz _PRODUCT_-_VER_
 # MD5=$(md5sum _PRODUCT_-_VER_.tar.gz | cut -d' ' -f1); echo "_VER_-$MD5" > meta

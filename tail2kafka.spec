@@ -23,8 +23,12 @@ make
 
 %install
 mkdir -p $RPM_BUILD_ROOT/usr/local/bin
-cp tail2kafka  $RPM_BUILD_ROOT/usr/local/bin
-cp kafka2file  $RPM_BUILD_ROOT/usr/local/bin
+cp build/tail2kafka  $RPM_BUILD_ROOT/usr/local/bin
+cp build/kafka2file  $RPM_BUILD_ROOT/usr/local/bin
+cp scripts/auto-config.sh $RPM_BUILD_ROOT/usr/local/bin/tail2kafka-auto-config.sh
+
+mkdir -p $RPM_BUILD_ROOT/etc/cron.d
+cp scripts/tail2kafka.cron $RPM_BUILD_ROOT/etc/cron.d/tail2kafka
 
 mkdir -p $RPM_BUILD_ROOT/etc/rc.d/init.d
 cp scripts/tail2kafka.init $RPM_BUILD_ROOT/etc/rc.d/init.d/tail2kafka
@@ -53,16 +57,20 @@ mkdir -p $RPM_BUILD_ROOT/var/log/tail2kafka
 /etc/kafka2file
 /etc/rc.d/init.d
 /etc/sysconfig
+/etc/cron.d
 
 /var/lib/tail2kafka
 /var/log/tail2kafka
 
-%config
+%config(noreplace)
+/etc/sysconfig/tail2kafka
 
 %clean
 rm -rf $RPM_BUILD_ROOT
+
 %post
+ln -sf ../init.d/tail2kafka /etc/rc.d/rc3.d/S88jetty
 
 %changelog
-* Thu Jan 25 2018 zzyongx <iamzhengzhiyong@gmail.com> -2.0.0-1
+* Fri Feb  9 2018 zzyongx <iamzhengzhiyong@gmail.com> -2.0.0-1
 - Feature: first release

@@ -1,0 +1,4 @@
+30 0 * * * root find /var/log/tail2kafka -type f -mtime +10 -delete
+*  * * * * root /usr/local/bin/tail2kafka-auto-config.sh >/dev/null 2>&1
+
+# WARN: NL is nessary for cron

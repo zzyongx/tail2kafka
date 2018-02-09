@@ -33,22 +33,13 @@ public:
     virtual ~Task();
   };
 
-  TaskQueue() {
-    quit_ = true;
-    pthread_mutex_init(&mutex_, 0);
-    pthread_cond_init(&cond_, 0);
-  }
-
-  ~TaskQueue() {
-    pthread_mutex_destroy(&mutex_);
-    pthread_cond_destroy(&cond_);
-  }
+  TaskQueue();
 
   bool submit(Task *task) {
-    pthread_mutex_lock(&mutex_);
+    pthread_mutex_lock(mutex_);
     if (!quit_) tasks_.push(task);
-    pthread_mutex_unlock(&mutex_);
-    pthread_cond_signal(&cond_);
+    pthread_mutex_unlock(mutex_);
+    pthread_cond_signal(cond_);
     return !quit_;
   }
 
@@ -94,8 +85,9 @@ private:
   bool quit_;
   std::queue<Task *> tasks_;
   std::vector<pthread_t> tids_;
-  pthread_mutex_t    mutex_;
-  pthread_cond_t     cond_;
+
+  pthread_mutex_t    *mutex_;
+  pthread_cond_t     *cond_;
 };
 
 }  // namespace util

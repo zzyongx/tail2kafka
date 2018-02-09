@@ -61,6 +61,8 @@ fi
 LIBDIR=${LIBDIR:-/tmp/tail2kafka}
 mkdir -p $LIBDIR
 
+find $LIBDIR -name "$PRODUCT.*" -type f -mtime +2
+
 META=$(curl -Ssf "$CONFIGURL/$PRODUCT/meta")
 if [ $? != 0 ]; then
   log SYNC_ERROR "curl $CONFIGURL/$PRODUCT/meta error"
@@ -114,7 +116,7 @@ if [ -f $PIDFILE ] && [ -d /proc/$(cat $PIDFILE) ]; then
   RET=1
   for i in `seq 1 10`; do
     sleep 1
-    $NEW_CHILDPID=$(pgrep -P$PID)
+    NEW_CHILDPID=$(pgrep -P$PID)
     if [ "$NEW_CHILDPID" != "$CHILDPID" ]; then
       RET=0
       break
@@ -131,7 +133,6 @@ else
   try_start
   RET=$?
 fi
-
 
 exit $RET
 

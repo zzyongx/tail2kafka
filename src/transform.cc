@@ -532,7 +532,7 @@ Transform::Idempotent LuaTransform::write(rd_kafka_message_t *rkm, uint64_t *off
           root[ite->first] = pos->second;
         }
         query.erase(pos);
-      } else {
+      } else if (!root.isMember(ite->first)) {
         root[ite->first] = Json::nullValue;
       }
     }

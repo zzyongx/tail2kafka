@@ -107,15 +107,34 @@ mv $LIBDIR/$PRODUCT-$VER $ETCDIR
 
 RET=0
 if [ -f $PIDFILE ] && [ -d /proc/$(cat $PIDFILE) ]; then
-  kill -HUP $(cat $PIDFILE)
+  PID=$(cat $PIDFILE)
+  $CHILDPID=$(pgrep -P$PID)
+  kill -HUP $PID
+
+  RET=1
+  for i in `seq 1 10`; do
+    sleep 1
+    $NEW_CHILDPID=$(pgrep -P$PID)
+    if [ "$NEW_CHILDPID" != "$CHILDPID" ]; then
+      RET=0
+      break
+    fi
+  done
+
+  if [ "$RET" = 0 ]; then
+    echo "$VER" > $LIBDIR/version
+    log UPGRADE_OK "upgrade config from $OLDVER to $VER"
+  else
+    log UPGRADE_ERROR "upgrade config from $OLDVER to $VER, reload failed"
+  fi
 else
   try_start
   RET=$?
 fi
 
-echo "$VER" > $LIBDIR/version
-log UPGRADE_OK "upgrade config from $OLDVER to $VER"
+
 exit $RET
 
-# tar czf _PRODUCT_-_VER_.tar.gz _PRODUCT_-_VER_
-# MD5=$(md5sum _PRODUCT_-_VER_.tar.gz | cut -d' ' -f1); echo "_VER_-$MD5" > meta
+# PRODUCT=_PRODUCT_ VER=_VER_
+# mkdir $PRODUCT-$VER; cp *.lua $PRODUCT-$VER
+# tar czf $PRODUCT-$VER.tar.gz $PRODUCT-$VER; MD5=$(md5sum $PRODUCT-$VER.tar.gz | cut -d' ' -f1); echo "$VER-$MD5" > meta

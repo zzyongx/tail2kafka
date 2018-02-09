@@ -25,13 +25,16 @@ OBJ = $(BUILDDIR)/common.o $(BUILDDIR)/cnfctx.o $(BUILDDIR)/luactx.o $(BUILDDIR)
       $(BUILDDIR)/luafunction.o $(BUILDDIR)/kafkactx.o $(BUILDDIR)/sys.o $(BUILDDIR)/util.o \
       $(BUILDDIR)/metrics.o $(BUILDDIR)/taskqueue.o
 
-default: configure tail2kafka kafka2file tail2kafka_unittest
+default: configure tail2kafka kafka2file tail2kafka_unittest kafka2file_unittest
 	@echo finished
 
 tail2kafka: $(BUILDDIR)/tail2kafka.o $(OBJ)
 	$(CXX) $(CFLAGS) -o $(BUILDDIR)/$@ $^ $(ARLIBS) $(LDFLAGS)
 
 tail2kafka_unittest: $(BUILDDIR)/tail2kafka_unittest.o $(OBJ)
+	$(CXX) $(CFLAGS) -o $(BUILDDIR)/$@ $^ $(ARLIBS) $(LDFLAGS)
+
+kafka2file_unittest: $(BUILDDIR)/kafka2file_unittest.o $(OBJ)
 	$(CXX) $(CFLAGS) -o $(BUILDDIR)/$@ $^ $(ARLIBS) $(LDFLAGS)
 
 kafka2file: $(BUILDDIR)/kafka2file.o $(OBJ)

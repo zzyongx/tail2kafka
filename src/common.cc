@@ -160,17 +160,20 @@ bool parseQuery(const char *r, size_t len, std::string *path, std::map<std::stri
   size_t i = 0;
   const char *ptr = r;
 
-  while (i++ < len && *ptr && *ptr != '?') ++ptr;
+  while (i < len && *ptr && *ptr != '?') {
+    ++ptr;
+    ++i;
+  }
   path->assign(r, ptr - r);
 
   if (i >= len || !*ptr) return true;
 
   ++i;
-  ptr++;
+  ++ptr;
 
   std::string key, value;
   bool wantKey = true;
-  while (i++ < len && *ptr) {
+  while (i < len && *ptr) {
     if (*ptr == '&') {
       if (!key.empty() && !value.empty()) (*query)[key] = value;
       key.clear();
@@ -186,7 +189,7 @@ bool parseQuery(const char *r, size_t len, std::string *path, std::map<std::stri
           int val;
           if (util::hexToInt(ptr+1, &val)) {
             value.append(1, val);
-            len += 2;
+            i   += 2;
             ptr += 2;
           } else {
             value.append(1, *ptr);
@@ -197,8 +200,10 @@ bool parseQuery(const char *r, size_t len, std::string *path, std::map<std::stri
       }
     }
     ++ptr;
+    ++i;
   }
 
+  if (!key.empty() && !value.empty()) (*query)[key] = value;
   return true;
 }
 

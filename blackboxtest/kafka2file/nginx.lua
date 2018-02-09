@@ -1,6 +1,6 @@
 -- time_local, request must exist
 informat = {
-  "#remote_addr", "-", "#remote_user", "time_local", "request",
+  "remote_addr", "-", "#remote_user", "time_local", "request",
   "status", "#body_bytes_sent", "request_time", "#http_referer",
   "#http_user_agent", "#http_x_forwarded_for",
 }

@@ -1,6 +1,6 @@
 Name:      tail2kafka
 Version:   2.0.0
-Release:   1
+Release:   4
 Summary:   stream file data to kafka/stream kafka data to file
 Group:     tail2kafka
 License:   Apache2
@@ -56,14 +56,12 @@ mkdir -p $RPM_BUILD_ROOT/var/log/tail2kafka
 /etc/tail2kafka
 /etc/kafka2file
 /etc/rc.d/init.d
-/etc/sysconfig
 /etc/cron.d
 
 /var/lib/tail2kafka
 /var/log/tail2kafka
 
-%config(noreplace)
-/etc/sysconfig/tail2kafka
+%config(noreplace) /etc/sysconfig/tail2kafka
 
 %clean
 rm -rf $RPM_BUILD_ROOT

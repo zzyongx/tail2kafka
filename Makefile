@@ -21,7 +21,7 @@ VPATH = .:./libs
 BUILDDIR = build
 
 OBJ = $(BUILDDIR)/common.o $(BUILDDIR)/cnfctx.o $(BUILDDIR)/luactx.o $(BUILDDIR)/transform.o \
-	    $(BUILDDIR)/filereader.o $(BUILDDIR)/inotifyctx.o $(BUILDDIR)/fileoff.o \
+      $(BUILDDIR)/filereader.o $(BUILDDIR)/inotifyctx.o $(BUILDDIR)/fileoff.o $(BUILDDIR)/cmdnotify.o \
       $(BUILDDIR)/luafunction.o $(BUILDDIR)/kafkactx.o $(BUILDDIR)/sys.o $(BUILDDIR)/util.o \
       $(BUILDDIR)/metrics.o $(BUILDDIR)/taskqueue.o
 

@@ -29,7 +29,7 @@ Transform::Format Transform::stringToFormat(const char *ptr, size_t len)
 }
 
 Transform *Transform::create(
-  const char *wdir, const char *topic, int partition, const char *notify, const char *format, char *errbuf)
+  const char *wdir, const char *topic, int partition, CmdNotify *notify, const char *format, char *errbuf)
 {
   const char *ptr   = format;
   const char *start = ptr;
@@ -77,44 +77,6 @@ Transform *Transform::create(
   } else {
     sprintf(errbuf, "unknow format %s", format);
     return 0;
-  }
-}
-
-static void notify(const char *notifyCmd, const char *wdir, const char *topic, int partition, const char *file, time_t timestamp = -1)
-{
-  if (!notifyCmd) return;
-
-  pid_t pid = fork();
-  if (pid == 0) {
-    char log[2048];
-    snprintf(log, 2048, "%s/%s.%d.notify.log", wdir, topic, partition);
-    int fd = open(log, O_CREAT | O_WRONLY | O_APPEND, 0666);
-    if (fd != -1) {
-      dup2(fd, STDOUT_FILENO);
-      dup2(fd, STDERR_FILENO);
-    }
-
-    char topicPtr[128];
-    snprintf(topicPtr, 128, "NOTIFY_TOPIC=%s", topic);
-
-    char partitionPtr[128];
-    snprintf(partitionPtr, 128, "NOTIFY_PARTITION=%d", partition);
-
-    char filePtr[1024];
-    snprintf(filePtr, 1024, "NOTIFY_FILE=%s", file);
-
-    char timestampPtr[64];
-    if (timestamp != (time_t) -1) {
-      snprintf(timestampPtr, 64, "NOTIFY_TIMESTAMP=%ld", timestamp);
-    } else {
-      snprintf(timestampPtr, 64, "NOTIFY_TIMESTAMP=");
-    }
-
-    char * const argv[] = { (char *) notifyCmd, NULL };
-    char * const envp[] = { topicPtr, partitionPtr, filePtr, timestampPtr, NULL };
-
-    execve(notifyCmd, argv, envp);
-    exit(0);
   }
 }
 
@@ -235,7 +197,7 @@ Transform::Idempotent MirrorTransform::write(rd_kafka_message_t *rkm, uint64_t *
       exit(EXIT_FAILURE);
     } else {
       log_info(0, "%s:%d rename %s to %s", topic_, partition_, opath, npath);
-      notify(notify_, wdir_, topic_, partition_, npath);
+      notify_->exec(npath);
     }
     ide = GLOBAL;
   }
@@ -397,7 +359,7 @@ void LuaTransform::rotateLastToFinish()
     } else {
       log_info(0, "%s:%d rotate %s to %s", topic_, partition_,
                lastIntervalFile_.c_str(), path.c_str());
-      notify(notify_, wdir_, topic_, partition_, path.c_str(), lastIntervalCnt_ * interval_);
+      notify_->exec(path.c_str(), lastIntervalCnt_ * interval_);
     }
   }
   if (lastIntervalFd_ > 0) close(lastIntervalFd_);
@@ -427,6 +389,54 @@ Json::Value toJsonValue(const std::string &s, char t)
   if (t == 'i') return Json::Value(atoi(s.c_str()));
   else if (t == 'f') return Json::Value(atof(s.c_str()));
   else return Json::Value(s);
+}
+
+bool LuaTransform::fieldsToJson(
+  const std::vector<std::string> &fields, const std::string &method, const std::string &path,
+  std::map<std::string, std::string> *query, std::string *json) const
+{
+  Json::Value root(Json::objectValue);
+  for (size_t i = 0; i < fields.size(); ++i) {
+    if (fields_[i] == "-" || (deleteRequestField_ && i == requestIndex_) ||
+        fields_[i][0] == '#') continue;
+
+    std::map<std::string, std::string>::const_iterator pos = requestTypeMap_.find(fields_[i]);
+    char type = (pos != requestTypeMap_.end() && !pos->second.empty()) ? pos->second[0] : 's';
+    root[fields_[i]] = toJsonValue(fields[i], type);
+  }
+
+  std::string qskey;
+  for (std::map<std::string, std::string>::const_iterator ite = requestNameMap_.begin();
+       ite != requestNameMap_.end(); ++ite) {
+    if (ite->second == "__uri__") root[ite->first] = path;
+    else if (ite->second == "__method__") root[ite->first] = method;
+    else if (ite->second == "__query__") qskey = ite->first;
+    else {
+      std::map<std::string, std::string>::iterator pos = query->find(ite->second);
+      if (pos != query->end()) {
+        std::map<std::string, std::string>::const_iterator pos2 = requestTypeMap_.find(ite->first);
+        if (pos2 != requestTypeMap_.end() && !pos2->second.empty()) {
+          root[ite->first] = toJsonValue(pos->second, pos2->second[0]);
+        } else {
+          root[ite->first] = pos->second;
+        }
+        query->erase(pos);
+      } else if (!root.isMember(ite->first)) {
+        root[ite->first] = Json::nullValue;
+      }
+    }
+  }
+
+  if (!qskey.empty()) {
+    Json::Value q(Json::objectValue);
+    for (std::map<std::string, std::string>::iterator ite = query->begin(); ite != query->end(); ++ite) {
+      q[ite->first] = ite->second;
+    }
+    root[qskey] = q;
+  }
+
+  json->assign(Json::FastWriter().write(root));
+  return true;
 }
 
 Transform::Idempotent LuaTransform::write(rd_kafka_message_t *rkm, uint64_t *offsetPtr)
@@ -478,13 +488,16 @@ Transform::Idempotent LuaTransform::write(rd_kafka_message_t *rkm, uint64_t *off
     return IGNORE;
   }
 
-  if (currentTimestamp_ == -1 || timestamp > currentTimestamp_) currentTimestamp_ = timestamp;
+  updateTimestamp(timestamp);
 
   if (timestamp + delay_ < currentTimestamp_) {
     log_info(0, "%s:%d message delay %.*s", topic_, partition_, len, ptr);
     rd_kafka_message_destroy(rkm);
     return IGNORE;
   }
+
+  Idempotent ide = IGNORE;
+  if (lastIntervalTimeout()) ide = timeout_(offsetPtr);
 
   int intervalCnt = timestamp / interval_;
   if (currentIntervalCnt_ > 0 && intervalCnt > currentIntervalCnt_) {
@@ -498,7 +511,7 @@ Transform::Idempotent LuaTransform::write(rd_kafka_message_t *rkm, uint64_t *off
   if (!selectCurrentFile(intervalCnt, &fd, &file)) {
     log_info(0, "%s:%d message delay %.*s", topic_, partition_, len, ptr);
     rd_kafka_message_destroy(rkm);
-    return IGNORE;
+    return ide;
   }
 
   if (intervalCnt == currentIntervalCnt_) currentOffset_ = offset;
@@ -506,54 +519,13 @@ Transform::Idempotent LuaTransform::write(rd_kafka_message_t *rkm, uint64_t *off
 
   if (*fd == -1) openCurrent(intervalCnt, fd, file);
 
-  Json::Value root(Json::objectValue);
-  for (size_t i = 0; i < fields.size(); ++i) {
-    if (fields_[i] == "-" || (deleteRequestField_ && i == requestIndex_) ||
-        fields_[i][0] == '#') continue;
+  std::string json;
+  fieldsToJson(fields, method, path, &query, &json);
 
-    std::map<std::string, std::string>::iterator pos = requestTypeMap_.find(fields_[i]);
-    char type = (pos != requestTypeMap_.end() && !pos->second.empty()) ? pos->second[0] : 's';
-    root[fields_[i]] = toJsonValue(fields[i], type);
-  }
-
-  std::string qskey;
-  for (std::map<std::string, std::string>::iterator ite = requestNameMap_.begin();
-       ite != requestNameMap_.end(); ++ite) {
-    if (ite->second == "__uri__") root[ite->first] = path;
-    else if (ite->second == "__method__") root[ite->first] = path;
-    else if (ite->second == "__query__") qskey = ite->first;
-    else {
-      std::map<std::string, std::string>::iterator pos = query.find(ite->second);
-      if (pos != query.end()) {
-        std::map<std::string, std::string>::iterator pos2 = requestTypeMap_.find(ite->first);
-        if (pos2 != requestTypeMap_.end() && !pos2->second.empty()) {
-          root[ite->first] = toJsonValue(pos->second, pos2->second[0]);
-        } else {
-          root[ite->first] = pos->second;
-        }
-        query.erase(pos);
-      } else if (!root.isMember(ite->first)) {
-        root[ite->first] = Json::nullValue;
-      }
-    }
-  }
-
-  if (!qskey.empty()) {
-    Json::Value q(Json::objectValue);
-    for (std::map<std::string, std::string>::iterator ite = query.begin(); ite != query.end(); ++ite) {
-      q[ite->first] = ite->second;
-    }
-    root[qskey] = q;
-  }
-
-  std::string json = Json::FastWriter().write(root);
   if (::write(*fd, json.c_str(), json.size()) == -1) {
     log_fatal(errno, "%s:%d write %s error", topic_, partition_, file->c_str());
     exit(EXIT_FAILURE);
   }
-
-  Idempotent ide = IGNORE;
-  if (lastIntervalTimeout()) ide = timeout_(offsetPtr);
 
   rd_kafka_message_destroy(rkm);
   return ide;

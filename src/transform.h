@@ -8,6 +8,7 @@
 #include <sys/types.h>
 #include <librdkafka/rdkafka.h>
 #include "luahelper.h"
+#include "cmdnotify.h"
 
 class Transform {
 public:
@@ -15,7 +16,7 @@ public:
   static Format stringToFormat(const char *s, size_t len);
 
   static Transform *create(const char *wdir, const char *topic, int partition,
-                           const char *notify, const char *format, char *errbuf);
+                           CmdNotify *notify, const char *format, char *errbuf);
   virtual ~Transform();
 
   enum Idempotent { GLOBAL, LOCAL, IGNORE };
@@ -24,13 +25,13 @@ public:
   virtual Idempotent timeout(uint64_t * /*offsetPtr*/);
 
 protected:
-  Transform(const char *wdir, const char *topic, int partition, const char *notify)
+  Transform(const char *wdir, const char *topic, int partition, CmdNotify *notify)
     : wdir_(wdir), topic_(topic), partition_(partition), notify_(notify) {}
 
   const char *wdir_;
   const char *topic_;
   int         partition_;
-  const char *notify_;
+  CmdNotify  *notify_;
 };
 
 class MirrorTransform : public Transform {
@@ -59,7 +60,7 @@ public:
     }
   };
 
-  MirrorTransform(const char *wdir, const char *topic, int partition, const char *notify)
+  MirrorTransform(const char *wdir, const char *topic, int partition, CmdNotify *notify)
     : Transform(wdir, topic, partition, notify) {}
   Idempotent write(rd_kafka_message_t *rkm, uint64_t *offsetPtr);
 
@@ -72,7 +73,7 @@ private:
 
 class LuaTransform : public Transform {
 public:
-  LuaTransform(const char *wdir, const char *topic, int partition, const char *notify)
+  LuaTransform(const char *wdir, const char *topic, int partition, CmdNotify *notify)
     : Transform(wdir, topic, partition, notify), helper_(0), currentTimestamp_(0),
       currentIntervalCnt_(-1), currentIntervalFd_(-1), currentOffset_(-1),
       lastIntervalCnt_(-1), lastIntervalFd_(-1), lastOffset_(-1) {}
@@ -87,7 +88,14 @@ private:
   bool selectCurrentFile(int intervalCnt, int **fd, std::string **file);
   void openCurrent(int intervalCnt, int *fd, std::string *file);
 
-  bool lastIntervalTimeout() {
+  void updateTimestamp(time_t timestamp) {
+    if (currentTimestamp_ == -1 || timestamp > currentTimestamp_) currentTimestamp_ = timestamp;
+  }
+
+  bool fieldsToJson(const std::vector<std::string> &fields, const std::string &method, const std::string &path,
+                    std::map<std::string, std::string> *query, std::string *json) const;
+
+  bool lastIntervalTimeout() const {
     return lastIntervalFd_ > 0 && currentTimestamp_ > currentIntervalCnt_ * interval_ + delay_;
   }
   Idempotent timeout_(uint64_t *offsetPtr);

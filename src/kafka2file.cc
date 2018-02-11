@@ -17,6 +17,7 @@
 #include "runstatus.h"
 #include "logger.h"
 #include "uint64offset.h"
+#include "cmdnotify.h"
 #include "transform.h"
 
 LOGGER_INIT();
@@ -73,7 +74,7 @@ int main(int argc, char *argv[])
   } else if (strcmp(offsetstr, "offset-end") == 0) {
     defaultStart = false;
   } else {
-    fprintf(stderr, "unknow default offset, use offset-beginning or offset-end");
+    fprintf(stderr, "unknow default offset, use offset-begining or offset-end");
     return EXIT_FAILURE;
   }
 
@@ -84,7 +85,9 @@ int main(int argc, char *argv[])
   snprintf(buffer, 1024, "%s/%s", datadir, topic);
   mkdir(buffer, 0755);
 
-  std::auto_ptr<Transform> transform(Transform::create(datadir, topic, partition, notify, output, buffer));
+  CmdNotify cmdNotify(notify, datadir, topic, partition);
+
+  std::auto_ptr<Transform> transform(Transform::create(datadir, topic, partition, &cmdNotify, output, buffer));
   if (transform.get() == 0) {
     fprintf(stderr, "create transform error %s\n", buffer);
     return EXIT_FAILURE;

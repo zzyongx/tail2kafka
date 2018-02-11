@@ -110,7 +110,7 @@ mv $LIBDIR/$PRODUCT-$VER $ETCDIR
 RET=0
 if [ -f $PIDFILE ] && [ -d /proc/$(cat $PIDFILE) ]; then
   PID=$(cat $PIDFILE)
-  $CHILDPID=$(pgrep -P$PID)
+  CHILDPID=$(pgrep -P$PID)
   kill -HUP $PID
 
   RET=1

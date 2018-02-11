@@ -301,7 +301,7 @@ void FileReader::tagRotate(int action, const char *fptr)
   }
 
   log_info(0, "%d %s rotate %s to %s", fd_, ctx_->file().c_str(), flagsToString(flags_).c_str(), fptr ? fptr : "");
-  util::Metrics::pingback("TAG_ROTATE", "new=%s&old=%s", ctx_->file().c_str());
+  util::Metrics::pingback("TAG_ROTATE", "new=%s&old=%s", ctx_->file().c_str(), fptr);
 
   if (ctx_->cnf()->fasttime() - fileRotateTime_ < KAFKA_ERROR_TIMEOUT ||
       (ctx_->getRotateDelay() > 0 && ctx_->cnf()->fasttime() - fileRotateTime_ < ctx_->getRotateDelay())) {

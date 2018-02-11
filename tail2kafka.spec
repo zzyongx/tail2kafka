@@ -1,6 +1,6 @@
 Name:      tail2kafka
 Version:   2.0.0
-Release:   4
+Release:   5
 Summary:   stream file data to kafka/stream kafka data to file
 Group:     tail2kafka
 License:   Apache2

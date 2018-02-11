@@ -16,7 +16,7 @@ kafka_global = {
   ["max.in.flight"] = 10000,
   ["queue.buffering.max.messages"] = 100000, -- default 100000
   ["queue.buffering.max.kbytes"]   = 512000, -- default 1048576
-  ["message.send.max.retries"] = "1",
+  ["message.send.max.retries"] = "10",
   ["statistics.interval.ms"] = "60000",
 }
 

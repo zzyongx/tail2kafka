@@ -2,6 +2,7 @@
 #define _LOGGER_H_
 
 #include <cstdio>
+#include <cstdlib>
 #include <cerrno>
 #include <cstring>
 #include <cassert>
@@ -137,6 +138,8 @@ private:
     time_t now = nowPtr_ ? *nowPtr_ : time(0);
     localtime_r(&now, &ltm);
 
+    // timezone off
+    gmtOff_ = ltm.tm_gmtoff;
     return openFile(now, &ltm);
   }
 
@@ -144,6 +147,9 @@ private:
     if (rotate_ == NIL) return reopen_;
 
     time_t fileTime = __sync_fetch_and_add(&fileTime_, 0);
+    now      += gmtOff_;
+    fileTime += gmtOff_;
+
     if (rotate_ == DAY) return now / 86400 != fileTime / 86400;
     else if (rotate_ == HOUR) return now / 3600 != fileTime / 3600;
     else assert(0);
@@ -226,6 +232,8 @@ private:
 
   int handle_;
   std::string file_;
+
+  long   gmtOff_;
   time_t fileTime_;
 };
 

@@ -169,4 +169,29 @@ bool isdir(const char *dir, char *errbuf)
   }
 }
 
+bool file2vector(const char *file, std::vector<std::string> *lines, size_t start, size_t size)
+{
+  FILE *fp = fopen(file, "r");
+  if (!fp) return false;
+
+  char buffer[8192];
+  size_t line = 0;
+
+  while (fgets(buffer, 8192, fp)) {
+    if (line >= start && line - start < size) {
+      size_t len = strlen(buffer);
+      if (buffer[len-1] == '\n') {
+        lines->push_back(std::string(buffer, len-1));
+        line++;
+      } else {
+        fclose(fp);
+        return false;
+      }
+    }
+  }
+
+  fclose(fp);
+  return true;
+}
+
 } // sys

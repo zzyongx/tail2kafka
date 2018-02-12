@@ -56,6 +56,8 @@ bool endsWith(const char *haystack, const char *needle);
 bool readdir(const char *dir, const char *suffix, std::vector<std::string> *files, char *errbuf);
 bool isdir(const char *dir, char *errbuf);
 
+bool file2vector(const char *file, std::vector<std::string> *files, size_t start = 0, size_t end = -1);
+
 bool initSingleton(const char *pidfile, char *errbuf);
 
 } // sys

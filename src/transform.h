@@ -19,10 +19,13 @@ public:
                            CmdNotify *notify, const char *format, char *errbuf);
   virtual ~Transform();
 
-  enum Idempotent { GLOBAL, LOCAL, IGNORE };
+  static const uint32_t GLOBAL  = 0x0001;
+  static const uint32_t LOCAL   = 0x0002;
+  static const uint32_t IGNORE  = 0x0004;
+  static const uint32_t RKMFREE = 0x0008;
 
-  virtual Idempotent write(rd_kafka_message_t *rkm, uint64_t *offsetPtr) = 0;
-  virtual Idempotent timeout(uint64_t * /*offsetPtr*/);
+  virtual uint32_t write(rd_kafka_message_t *rkm, uint64_t *offsetPtr) = 0;
+  virtual uint32_t timeout(uint64_t *offsetPtr);
 
 protected:
   Transform(const char *wdir, const char *topic, int partition, CmdNotify *notify)
@@ -62,7 +65,7 @@ public:
 
   MirrorTransform(const char *wdir, const char *topic, int partition, CmdNotify *notify)
     : Transform(wdir, topic, partition, notify) {}
-  Idempotent write(rd_kafka_message_t *rkm, uint64_t *offsetPtr);
+  uint32_t write(rd_kafka_message_t *rkm, uint64_t *offsetPtr);
 
 private:
   bool addToCache(rd_kafka_message_t *rkm, std::string *host, std::string *file);
@@ -81,13 +84,10 @@ public:
   ~LuaTransform();
 
   bool init(Format inputFormat, Format outputFormat, int interval, int delay, const char *luaFile, char *errbuf);
-  Idempotent write(rd_kafka_message_t *rkm, uint64_t *offsetPtr);
-  Idempotent timeout(uint64_t *offsetPtr);
+  uint32_t write(rd_kafka_message_t *rkm, uint64_t *offsetPtr);
+  uint32_t timeout(uint64_t *offsetPtr);
 
 private:
-  bool selectCurrentFile(int intervalCnt, int **fd, std::string **file);
-  void openCurrent(int intervalCnt, int *fd, std::string *file);
-
   void updateTimestamp(time_t timestamp) {
     if (currentTimestamp_ == -1 || timestamp > currentTimestamp_) currentTimestamp_ = timestamp;
   }
@@ -95,13 +95,17 @@ private:
   bool fieldsToJson(const std::vector<std::string> &fields, const std::string &method, const std::string &path,
                     std::map<std::string, std::string> *query, std::string *json) const;
 
+
+  void initCurrentFile(long intervalCnt, uint64_t offset);
   bool lastIntervalTimeout() const {
     return lastIntervalFd_ > 0 && currentTimestamp_ > currentIntervalCnt_ * interval_ + delay_;
   }
-  Idempotent timeout_(uint64_t *offsetPtr);
+  uint32_t timeout_(uint64_t *offsetPtr);
 
   void rotateCurrentToLast();
   void rotateLastToFinish();
+
+  uint32_t rotate(long intervalCnt, uint64_t offset, uint64_t *offsetPtr);
 
 private:
   LuaHelper *helper_;
@@ -121,12 +125,12 @@ private:
 
   time_t currentTimestamp_;
 
-  int currentIntervalCnt_;
+  long currentIntervalCnt_;
   int currentIntervalFd_;
   std::string currentIntervalFile_;
   uint64_t currentOffset_;
 
-  int lastIntervalCnt_;
+  long lastIntervalCnt_;
   int lastIntervalFd_;
   std::string lastIntervalFile_;
   uint64_t lastOffset_;

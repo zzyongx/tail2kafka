@@ -13,7 +13,12 @@
 #include "transform.h"
 
 Transform::~Transform() {}
-Transform::Idempotent Transform::timeout(uint64_t * /*offsetPtr*/) { return IGNORE; }
+uint32_t Transform::timeout(uint64_t * /*offsetPtr*/) { return IGNORE; }
+
+const uint32_t Transform::GLOBAL;
+const uint32_t Transform::LOCAL;
+const uint32_t Transform::IGNORE;
+const uint32_t Transform::RKMFREE;
 
 enum FormatToken {INFORMAT, LUA, OUTFORMAT, INTERVAL, DELAY};
 static FormatToken FORMAT_TOKENS[] = {INFORMAT, LUA, OUTFORMAT, INTERVAL, DELAY};
@@ -173,13 +178,13 @@ bool MirrorTransform::flushCache(bool eof, const std::string &host)
   return flush;
 }
 
-Transform::Idempotent MirrorTransform::write(rd_kafka_message_t *rkm, uint64_t *offsetPtr)
+uint32_t MirrorTransform::write(rd_kafka_message_t *rkm, uint64_t *offsetPtr)
 {
   uint64_t offset = rkm->offset;
   std::string host, nfile;
 
   bool eof = addToCache(rkm, &host, &nfile);
-  Idempotent ide = flushCache(eof, host) ? LOCAL : IGNORE;
+  uint32_t ide = flushCache(eof, host) ? LOCAL : IGNORE;
 
   if (eof) {
     fdCache_.erase(host);
@@ -197,7 +202,7 @@ Transform::Idempotent MirrorTransform::write(rd_kafka_message_t *rkm, uint64_t *
       exit(EXIT_FAILURE);
     } else {
       log_info(0, "%s:%d rename %s to %s", topic_, partition_, opath, npath);
-      notify_->exec(npath);
+      if (notify_) notify_->exec(npath);
     }
     ide = GLOBAL;
   }
@@ -277,66 +282,44 @@ bool LuaTransform::init(Format inputFormat, Format outputFormat, int interval, i
   return true;
 }
 
-bool LuaTransform::selectCurrentFile(int intervalCnt, int **fdPtr, std::string **filePtr)
+void LuaTransform::initCurrentFile(long intervalCnt, uint64_t offset)
 {
-  if (intervalCnt > currentIntervalCnt_) {
-    lastIntervalCnt_ = currentIntervalCnt_;
-    currentIntervalCnt_ = intervalCnt;
-
-    if (lastIntervalFd_ > 0) close(lastIntervalFd_);
-    lastIntervalFd_= currentIntervalFd_;
-    currentIntervalFd_ = -1;
-
-    *fdPtr   = &currentIntervalFd_;
-    *filePtr = &currentIntervalFile_;
-  } else if (intervalCnt == currentIntervalCnt_) {
-    *fdPtr   = &currentIntervalFd_;
-    *filePtr = &currentIntervalFile_;
-  } else if (intervalCnt == lastIntervalCnt_) {
-    if (lastIntervalFd_ == -1) return false;
-
-    *fdPtr   = &lastIntervalFd_;
-    *filePtr = &lastIntervalFile_;
-  } else {
-    return false;
-  }
-  return true;
-}
-
-void LuaTransform::openCurrent(int intervalCnt, int *fdPtr, std::string *filePtr)
-{
-  assert(intervalCnt == currentIntervalCnt_);
   std::string timeSuffix = sys::timeFormat(intervalCnt * interval_, "%Y-%m-%d_%H-%M-%S");
 
   char path[1024];
   int n = snprintf(path, 1024, "%s/%s/%s.%d_%s.current", wdir_, topic_, topic_, partition_, timeSuffix.c_str());
-  *fdPtr = ::open(path, O_CREAT | O_WRONLY | O_APPEND, 0644);
-  if (*fdPtr == -1) {
+  currentIntervalFd_ = open(path, O_CREAT | O_WRONLY | O_APPEND, 0644);
+  if (currentIntervalFd_ == -1) {
     log_fatal(errno, "open %s error", path);
     exit(EXIT_FAILURE);
   }
-  filePtr->assign(path, n);
+
+  currentIntervalCnt_ = intervalCnt;
+  currentIntervalFile_.assign(path, n);
+  currentOffset_ = offset;
 }
 
 void LuaTransform::rotateCurrentToLast()
 {
   size_t dot = currentIntervalFile_.rfind('.');
-  if (dot != std::string::npos && access(currentIntervalFile_.c_str(), F_OK) == 0) {
-    std::string path = currentIntervalFile_.substr(0, dot);
-    lastIntervalFile_ = path + ".last";
-    if (rename(currentIntervalFile_.c_str(), lastIntervalFile_.c_str()) == 0) {
-      log_info(0, "%s:%d rotate %s to %s", topic_, partition_,
-               currentIntervalFile_.c_str(), lastIntervalFile_.c_str());
-      lastIntervalFd_ = open(lastIntervalFile_.c_str(), O_WRONLY | O_APPEND, 0644);
-      if (lastIntervalFd_ == -1) {
-        log_fatal(errno, "%s:%d open %s error", topic_, partition_, lastIntervalFile_.c_str());
-        exit(EXIT_FAILURE);
-      }
-    } else {
-      log_fatal(errno, "%s:%d rename %s to %s error", topic_, partition_,
-                currentIntervalFile_.c_str(), lastIntervalFile_.c_str());
-      exit(EXIT_FAILURE);
-    }
+  if (dot == std::string::npos || access(currentIntervalFile_.c_str(), F_OK) != 0) {
+    log_fatal(errno, "%s:%d current file %s not exists", topic_, partition_, currentIntervalFile_.c_str());
+    exit(EXIT_FAILURE);
+  }
+
+  std::string path = currentIntervalFile_.substr(0, dot);
+  lastIntervalFile_ = path + ".last";
+  lastIntervalFd_   = currentIntervalFd_;
+  lastIntervalCnt_  = currentIntervalCnt_;
+  lastOffset_       = currentOffset_;
+
+  if (rename(currentIntervalFile_.c_str(), lastIntervalFile_.c_str()) == 0) {
+    log_info(0, "%s:%d rotate %s to %s", topic_, partition_,
+             currentIntervalFile_.c_str(), lastIntervalFile_.c_str());
+  } else {
+    log_fatal(errno, "%s:%d rename %s to %s error", topic_, partition_,
+              currentIntervalFile_.c_str(), lastIntervalFile_.c_str());
+    exit(EXIT_FAILURE);
   }
 }
 
@@ -359,21 +342,23 @@ void LuaTransform::rotateLastToFinish()
     } else {
       log_info(0, "%s:%d rotate %s to %s", topic_, partition_,
                lastIntervalFile_.c_str(), path.c_str());
-      notify_->exec(path.c_str(), lastIntervalCnt_ * interval_);
+      if (notify_) notify_->exec(path.c_str(), lastIntervalCnt_ * interval_);
     }
   }
-  if (lastIntervalFd_ > 0) close(lastIntervalFd_);
+
+  close(lastIntervalFd_);
   lastIntervalFd_ = -1;
+  lastIntervalCnt_ = -1;
 }
 
-LuaTransform::Idempotent LuaTransform::timeout(uint64_t *offsetPtr) {
-  Idempotent ide = IGNORE;
-  if (lastIntervalTimeout()) ide = timeout_(offsetPtr);
-  return ide;
+uint32_t LuaTransform::timeout(uint64_t *offsetPtr) {
+  uint32_t flags = IGNORE;
+  if (lastIntervalTimeout()) flags = timeout_(offsetPtr);
+  return flags;
 }
 
 // WARN: performance issue, don't merge timeout_ and lastIntervalTimeout to one function
-Transform::Idempotent LuaTransform::timeout_(uint64_t *offsetPtr)
+uint32_t LuaTransform::timeout_(uint64_t *offsetPtr)
 {
   rotateLastToFinish();
 
@@ -382,6 +367,27 @@ Transform::Idempotent LuaTransform::timeout_(uint64_t *offsetPtr)
   lastOffset_ = -1;
 
   return GLOBAL;
+}
+
+uint32_t LuaTransform::rotate(long intervalCnt, uint64_t offset, uint64_t *offsetPtr)
+{
+  uint32_t flags = IGNORE;
+
+  if (currentIntervalCnt_ == -1) {
+    initCurrentFile(intervalCnt, offset);
+  } else if (intervalCnt > currentIntervalCnt_) {
+    if (lastIntervalTimeout()) flags = timeout_(offsetPtr);
+
+    rotateCurrentToLast();
+    initCurrentFile(intervalCnt, offset);
+  } else if (intervalCnt == currentIntervalCnt_) {
+    currentOffset_ = offset;
+  } else if (intervalCnt == lastIntervalCnt_) {
+    lastOffset_ = offset;
+  }
+
+  if (lastIntervalTimeout()) flags |= timeout_(offsetPtr);
+  return flags;
 }
 
 Json::Value toJsonValue(const std::string &s, char t)
@@ -439,7 +445,7 @@ bool LuaTransform::fieldsToJson(
   return true;
 }
 
-Transform::Idempotent LuaTransform::write(rd_kafka_message_t *rkm, uint64_t *offsetPtr)
+uint32_t LuaTransform::write(rd_kafka_message_t *rkm, uint64_t *offsetPtr)
 {
   uint64_t offset = rkm->offset;
 
@@ -450,8 +456,7 @@ Transform::Idempotent LuaTransform::write(rd_kafka_message_t *rkm, uint64_t *off
 
   if (*ptr == '#') {
     log_info(0, "%s:%d META %.*s", topic_, partition_, len, ptr);
-    rd_kafka_message_destroy(rkm);
-    return IGNORE;
+    return IGNORE | RKMFREE;
   }
 
   if (*ptr == '*') {
@@ -467,16 +472,14 @@ Transform::Idempotent LuaTransform::write(rd_kafka_message_t *rkm, uint64_t *off
 
   if (fields.size() != fields_.size()) {
     log_error(0, "%s:%d invalid field size %.*s", topic_, partition_, len, ptr);
-    rd_kafka_message_destroy(rkm);
-    return IGNORE;
+    return IGNORE | RKMFREE;
   }
 
   time_t      timestamp;
   std::string isoTime;
   if (!iso8601(fields[timeLocalIndex_], &isoTime, &timestamp)) {
     log_error(0, "%s:%d invalid time_local %.*s", topic_, partition_, len, ptr);
-    rd_kafka_message_destroy(rkm);
-    return IGNORE;
+    return IGNORE | RKMFREE;
   }
   if (timeLocalFormat_ == "iso8601") fields[timeLocalIndex_] = isoTime;
 
@@ -484,49 +487,27 @@ Transform::Idempotent LuaTransform::write(rd_kafka_message_t *rkm, uint64_t *off
   std::map<std::string, std::string> query;
   if (!parseRequest(fields[requestIndex_].c_str(), &method, &path, &query)) {
     log_error(0, "%s:%d invalid request %s", topic_, partition_, fields_[requestIndex_].c_str());
-    rd_kafka_message_destroy(rkm);
-    return IGNORE;
+    return IGNORE | RKMFREE;
   }
 
   updateTimestamp(timestamp);
+  long intervalCnt = timestamp / interval_;
+  uint32_t flags = rotate(intervalCnt, offset, offsetPtr);
 
-  if (timestamp + delay_ < currentTimestamp_) {
-    log_info(0, "%s:%d message delay %.*s", topic_, partition_, len, ptr);
-    rd_kafka_message_destroy(rkm);
-    return IGNORE;
+  if (intervalCnt != currentIntervalCnt_ && intervalCnt != lastIntervalCnt_) {
+    log_info(0, "%s:%d message delay %.*s at %ld", topic_, partition_, len, ptr, currentTimestamp_);
+    return flags | RKMFREE;
   }
-
-  Idempotent ide = IGNORE;
-  if (lastIntervalTimeout()) ide = timeout_(offsetPtr);
-
-  int intervalCnt = timestamp / interval_;
-  if (currentIntervalCnt_ > 0 && intervalCnt > currentIntervalCnt_) {
-    rotateCurrentToLast();
-    lastOffset_ = currentOffset_;
-  }
-
-  int *fd;
-  std::string *file;
-
-  if (!selectCurrentFile(intervalCnt, &fd, &file)) {
-    log_info(0, "%s:%d message delay %.*s", topic_, partition_, len, ptr);
-    rd_kafka_message_destroy(rkm);
-    return ide;
-  }
-
-  if (intervalCnt == currentIntervalCnt_) currentOffset_ = offset;
-  else lastOffset_ = offset;
-
-  if (*fd == -1) openCurrent(intervalCnt, fd, file);
 
   std::string json;
   fieldsToJson(fields, method, path, &query, &json);
 
-  if (::write(*fd, json.c_str(), json.size()) == -1) {
-    log_fatal(errno, "%s:%d write %s error", topic_, partition_, file->c_str());
+  int fd = (intervalCnt == currentIntervalCnt_) ? currentIntervalFd_ : lastIntervalFd_;
+  if (::write(fd, json.c_str(), json.size()) == -1) {
+    const std::string &file = (intervalCnt == currentIntervalCnt_) ? currentIntervalFile_ : lastIntervalFile_;
+    log_fatal(errno, "%s:%d write %s error", topic_, partition_, file.c_str());
     exit(EXIT_FAILURE);
   }
 
-  rd_kafka_message_destroy(rkm);
-  return ide;
+  return flags | RKMFREE;
 }

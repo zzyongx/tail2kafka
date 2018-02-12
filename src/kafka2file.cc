@@ -14,6 +14,7 @@
 
 #include <librdkafka/rdkafka.h>
 #include "sys.h"
+#include "bitshelper.h"
 #include "runstatus.h"
 #include "logger.h"
 #include "uint64offset.h"
@@ -170,14 +171,16 @@ bool KafkaConsumer::loop(RunStatus *runStatus, Transform *transform)
     rd_kafka_message_t *rkm;
     rkm = rd_kafka_consume_queue(rkqu_, 1000);
     if (!rkm) {    // timeout
-      if (transform->timeout(&off) != Transform::IGNORE) { assert(off != (uint64_t) RD_KAFKA_OFFSET_END); offset_.update(off); }
+      if (!bits_test(transform->timeout(&off), Transform::IGNORE)) offset_.update(off);
       log_info(0, "consume %s:%d timeout", topic_, partition_);
       continue;
     }
 
     if (rkm->err) {
-      if (rkm->err == RD_KAFKA_RESP_ERR__PARTITION_EOF) continue;
-      log_error(0, "consume %s:%d error %s", topic_, partition_, rd_kafka_message_errstr(rkm));
+      if (rkm->err != RD_KAFKA_RESP_ERR__PARTITION_EOF) {
+        log_error(0, "consume %s:%d error %s", topic_, partition_, rd_kafka_message_errstr(rkm));
+      }
+      rd_kafka_message_destroy(rkm);
       continue;
     }
 
@@ -188,10 +191,13 @@ bool KafkaConsumer::loop(RunStatus *runStatus, Transform *transform)
     }
 
     log_debug(0, "data @%ld %.*s\n", rkm->offset, (int) rkm->len, (char *) rkm->payload);
-    if (transform->write(rkm, &off)) offset_.update(off);
+
+    uint32_t flags = transform->write(rkm, &off);
+    if (bits_test(flags, Transform::RKMFREE)) rd_kafka_message_destroy(rkm);
+    if (!bits_test(flags, Transform::IGNORE)) offset_.update(off);
   }
 
-  if (transform->timeout(&off) != Transform::IGNORE) { assert(off != (uint64_t) RD_KAFKA_OFFSET_END); offset_.update(off); }
+  if (!bits_test(transform->timeout(&off), Transform::IGNORE)) { assert(off != (uint64_t) RD_KAFKA_OFFSET_END); offset_.update(off); }
   log_info(0, "%s:%d end offset at %ld", topic_, partition_, offset_.get());
 
   return true;

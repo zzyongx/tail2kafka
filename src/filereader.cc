@@ -41,8 +41,6 @@ FileReader::FileReader(LuaCtx *ctx)
   qsize_ = 0;
   lastQueueFullTime_ = ctx_->cnf()->fasttime(TIMEUNIT_MILLI);
 
-  fileRecordsCache_ = 0;
-
   fileRotateTime_ = ctx->cnf()->fasttime();
   holdFd_ = -1;
 }
@@ -486,7 +484,7 @@ bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, const c
     return true;
   }
 
-  if (pos == START || size_ == 0) cacheFileStartRecord();
+  if (pos == START || size_ == 0) propagateRawData(buildFileStartRecord(time(0)));
   if (pos == NIL) {   // limit tailsize
     size_ = stPtr->st_size - off > MAX_TAIL_SIZE ? size_ += MAX_TAIL_SIZE : stPtr->st_size;
   } else {
@@ -511,11 +509,9 @@ bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, const c
 
     propagateTailContent(nn);
     propagateProcessLines(inode_, &loff);
-    propagateSendLines();
   }
 
-  if (pos == END) cacheFileEndRecord(size_, oldFileName);
-  propagateSendLines();
+  if (pos == END) propagateRawData(buildFileEndRecord(time(0), size_, oldFileName));
   return true;
 }
 
@@ -543,69 +539,38 @@ void FileReader::propagateProcessLines(ino_t inode, off_t *off)
   }
 }
 
-void FileReader::propagateSendLines()
+std::string *FileReader::buildFileStartRecord(time_t now)
 {
-  LuaCtx *ctx = ctx_;
-  while (ctx) {
-    ctx->getFileReader()->sendLines();
-    ctx = ctx->next();
-  }
+  std::string dt = sys::timeFormat(now, "%Y-%m-%dT%H:%M:%S");
+
+  char buffer[8192];
+  int n = snprintf(buffer, 8192, "#%s {\"time\":\"%s\", \"event\":\"START\"}",
+                   ctx_->cnf()->host().c_str(), dt.c_str());
+  return new std::string(buffer, n);
 }
 
-void FileReader::cacheFileStartRecord()
+std::string *FileReader::buildFileEndRecord(time_t now, off_t size, const char *oldFileName)
 {
-  std::string line;
-  line.append(1, '#').append(ctx_->cnf()->host()).append(1, ' ');
-  line.append(sys::timeFormat(time(0), "[%Y-%m-%d %H-%M-%S]")).append(1, ' ');
-  line.append("Start");
+  std::string dt = sys::timeFormat(now, "%Y-%m-%dT%H:%M:%S");
 
-  propagateRawData(line, -1);
+  char buffer[8192];
+  int n = snprintf(buffer, 8192, "#%s {\"time\":\"%s\", \"event\":\"END\", \"file\":\"%s\", "
+                   "\"size\":%lu, \"sendsize\":%lu, \"lines\":%lu, \"sendlines\":%lu}",
+                   ctx_->cnf()->host().c_str(), dt.c_str(), oldFileName,
+                   size, dsize_, line_, dline_);
+  return new std::string(buffer, n);
 }
 
-void FileReader::cacheFileEndRecord(off_t size, const char *oldFileName)
-{
-  std::string line;
-  line.append(1, '#').append(ctx_->cnf()->host()).append(1, ' ');
-  if (oldFileName) line.append(1, '@').append(oldFileName).append(1, ' ');
-  line.append(sys::timeFormat(time(0), "[%Y-%m-%d %H-%M-%S]")).append(1, ' ');
-  line.append("End");
-
-  propagateRawData(line, size);
-}
-
-void FileReader::propagateRawData(const std::string &line, off_t size)
+void FileReader::propagateRawData(const std::string *data)
 {
   LuaCtx *ctx = ctx_;
   while (ctx) {
     if (!ctx->withhost()) continue;
 
-    FileReader *fileReader = ctx->getFileReader();
+    std::vector<FileRecord *> *records = new std::vector<FileRecord *>(1, FileRecord::create(-1, -1, data));
+    ctx->getFileReader()->sendLines(-1, records);
 
-    if (!fileReader->fileRecordsCache_) {
-      fileReader->fileRecordsCache_ = new std::vector<FileRecord *>;
-    }
-
-    std::string *linePtr = new std::string(line);
-    if (size != (off_t) -1) {
-      char buffer[128];
-      snprintf(buffer, 128, " size(%lu) send(%lu) lines(%lu), send(%lu)", size,
-               fileReader->dsize_, fileReader->line_, fileReader->dline_);
-      linePtr->append(buffer);
-    }
-    if (ctx->autonl()) linePtr->append(1, NL);
-
-    fileReader->fileRecordsCache_->push_back(FileRecord::create(-1, -1, linePtr));
     ctx = ctx->next();
-  }
-}
-
-void FileReader::cacheFileRecord(ino_t inode, off_t off, const std::vector<std::string *> &lines, size_t n)
-{
-  if (n == 0) return;
-  if (!fileRecordsCache_) fileRecordsCache_ = new std::vector<FileRecord *>;
-
-  for (size_t i = lines.size()-n; i < lines.size(); ++i) {
-    fileRecordsCache_->push_back(FileRecord::create(inode, off, lines[i]));
   }
 }
 
@@ -614,29 +579,29 @@ void FileReader::processLines(ino_t inode, off_t *offPtr)
   size_t n = 0;
   char *pos;
 
-  std::vector<std::string *> lines;
+  std::vector<FileRecord *> *records = new std::vector<FileRecord *>;
   if (ctx_->copyRawRequired()) {
     if ((pos = (char *) memrchr(buffer_, NL, npos_))) {
-      int np = processLine(offPtr ? *offPtr : -1, buffer_, pos - buffer_, &lines);
+      int np = processLine(offPtr ? *offPtr : -1, buffer_, pos - buffer_, records);
 
       if (offPtr) *offPtr += pos - buffer_ + 1;
-      cacheFileRecord(inode, offPtr ? *offPtr : -1, lines, np);
 
       if (np > 0) line_++;
       n = (pos+1) - buffer_;
     }
   } else {
     while ((pos = (char *) memchr(buffer_ + n, NL, npos_ - n))) {
-      int np = processLine(offPtr ? *offPtr : -1, buffer_ + n, pos - (buffer_ + n), &lines);
+      int np = processLine(offPtr ? *offPtr : -1, buffer_ + n, pos - (buffer_ + n), records);
 
       if (offPtr) *offPtr += pos - (buffer_ + n) + 1;
-      cacheFileRecord(inode, offPtr ? *offPtr : -1, lines, np);
 
       if (np > 0) line_++;
       n = (pos+1) - buffer_;
       if (n == npos_) break;
     }
   }
+
+  sendLines(inode, records);
 
   if (n == 0) {
     if (npos_ == MAX_LINE_LEN) {
@@ -652,16 +617,16 @@ void FileReader::processLines(ino_t inode, off_t *offPtr)
 }
 
 /* line without NL */
-int FileReader::processLine(off_t off, char *line, size_t nline, std::vector<std::string *> *lines)
+int FileReader::processLine(off_t off, char *line, size_t nline, std::vector<FileRecord *> *records)
 {
   /* ignore empty line */
   if (nline == 0) return 0;
 
   int n;
   if (line == 0 && nline == (size_t)-1) {
-    n = ctx_->function()->serializeCache(lines);
+    n = ctx_->function()->serializeCache(records);
   } else {
-    n = ctx_->function()->process(off, line, nline, lines);
+    n = ctx_->function()->process(off, line, nline, records);
   }
   return n;
 }
@@ -670,29 +635,27 @@ bool FileReader::checkCache()
 {
   LuaCtx *ctx = ctx_;
   while (ctx) {
-    std::vector<std::string *> lines;
-    int n = processLine(-1, 0, -1, &lines);
-    if (n > 0) {
-      cacheFileRecord(-1, -1, lines, n);
-      ctx->getFileReader()->sendLines();
-    }
+    std::vector<FileRecord *> *records = new std::vector<FileRecord *>;
+    ctx->getFileReader()->processLine(-1, 0, -1, records);
+    ctx->getFileReader()->sendLines(-1, records);
+
     ctx = ctx->next();
   }
   return true;
 }
 
-bool FileReader::sendLines()
+bool FileReader::sendLines(ino_t inode, std::vector<FileRecord *> *records)
 {
-  if (fileRecordsCache_ == 0) {
-    return true;
-  } else if (fileRecordsCache_->empty()) {
-    delete fileRecordsCache_;
-    fileRecordsCache_ = 0;
+  if (records->empty()) {
+    delete records;
     return true;
   } else {
-    size_t size = fileRecordsCache_->size();
-    OneTaskReq req = {ctx_, fileRecordsCache_};
-    fileRecordsCache_ = 0;
+    for (std::vector<FileRecord *>::iterator ite = records->begin(); ite != records->end(); ++ite) {
+      (*ite)->inode = inode;
+    }
+
+    size_t size = records->size();
+    OneTaskReq req = {ctx_, records};
 
     ssize_t nn = write(ctx_->cnf()->server, &req, sizeof(OneTaskReq));
     if (nn == -1) {

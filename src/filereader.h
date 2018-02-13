@@ -53,18 +53,16 @@ private:
   void propagateTailContent(size_t size);
   void propagateProcessLines(ino_t inode, off_t *off);
   void processLines(ino_t inode, off_t *off);
-  int processLine(off_t off, char *line, size_t nline, std::vector<std::string *> *lines);
-  void propagateSendLines();
-  bool sendLines();
+  int processLine(off_t off, char *line, size_t nline, std::vector<FileRecord *> *records);
+  bool sendLines(ino_t inode, std::vector<FileRecord *> *records);
 
   bool tryOpen(char *errbuf);
   bool setStartPosition(off_t fileSize, char *errbuf);
   bool setStartPositionEnd(off_t fileSize, char *errbuf);
 
-  void cacheFileStartRecord();
-  void cacheFileEndRecord(off_t size, const char *oldFileName);
-  void propagateRawData(const std::string &line, off_t size);
-  void cacheFileRecord(ino_t inode, off_t off, const std::vector<std::string *> &lines, size_t n);
+  std::string *buildFileStartRecord(time_t now);
+  std::string *buildFileEndRecord(time_t now, off_t size, const char *oldFileName);
+  void propagateRawData(const std::string *data);
 
   bool checkRewatch();
   void checkHistoryRotate(const struct stat *stPtr);
@@ -91,8 +89,6 @@ private:
   char         *buffer_;
   size_t        npos_;
   LuaCtx       *ctx_;
-
-  std::vector<FileRecord*> *fileRecordsCache_;
 };
 
 #endif

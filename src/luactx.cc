@@ -60,7 +60,6 @@ static bool loadHistoryFile(const std::string &libdir, const std::string &name, 
   std::string flist = util::join(q.begin(), q.end(), ',');
   log_info(0, "write history file %s start %s", path, flist.c_str());
 
-
   int fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
   if (fd == -1) {
     log_fatal(errno, "writeHistoryFile %s error", path);
@@ -86,6 +85,11 @@ bool LuaCtx::testFile(const char *luaFile, char *errbuf)
     filename = timeFormatFile_;
   } else {
     filename = file_;
+  }
+
+  if (filename.size() >= 1024) {
+    snprintf(errbuf, MAX_ERR_LEN, "%s filename %s too long", luaFile, filename.c_str());
+    return false;
   }
 
   struct stat st;

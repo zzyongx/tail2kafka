@@ -171,7 +171,7 @@ DEFINE(loadLuaCtx)
 
 DEFINE(filter)
 {
-  std::vector<std::string *> datas;
+  std::vector<FileRecord *> datas;
   const char *fields1[] = {
     "-", "-", "-", "2015-04-02T12:05:05", "GET / HTTP/1.0",
     "200", "-", "-", "95555"};
@@ -179,13 +179,13 @@ DEFINE(filter)
   LuaFunction *function = getLuaCtx("filter")->function();
   function->filter(0, std::vector<std::string>(fields1, fields1+9), &datas);
   check(datas.size() == 1, "datas size %d", (int) datas.size());
-  check(*datas[0] == "*" + cnf->host() + "@" + std::string(PADDING_LEN, '0') + " 2015-04-02T12:05:05 GET / HTTP/1.0 200 95555", "%s", PTRS(*datas[0]));
-  delete datas[0];
+  check(*datas[0]->data == "*" + cnf->host() + "@" + std::string(PADDING_LEN, '0') + " 2015-04-02T12:05:05 GET / HTTP/1.0 200 95555",
+        "%s", PTRS(*datas[0]->data));
 }
 
 DEFINE(grep)
 {
-  std::vector<std::string *> datas;
+  std::vector<FileRecord *> datas;
   const char *fields1[] = {
     "-", "-", "-", "2015-04-02T12:05:05", "GET / HTTP/1.0",
     "200", "-", "-", "95555"};
@@ -193,35 +193,36 @@ DEFINE(grep)
   LuaFunction *function = getLuaCtx("grep")->function();
   function->grep(0, std::vector<std::string>(fields1, fields1+9), &datas);
   check(datas.size() == 1, "data size %d", (int) datas.size());
-  check(*datas[0] == "*" + cnf->host() + "@" + std::string(PADDING_LEN, '0') + " [2015-04-02T12:05:05] \"GET / HTTP/1.0\" 200 95555", "%s", PTRS(*datas[0]));
-  delete datas[0];
+  check(*datas[0]->data == "*" + cnf->host() + "@" + std::string(PADDING_LEN, '0') + " [2015-04-02T12:05:05] \"GET / HTTP/1.0\" 200 95555",
+        "%s", PTRS(*datas[0]->data));
 }
 
 DEFINE(transform)
 {
-  std::vector<std::string *> datas;
+  std::vector<FileRecord *> datas;
 
   LuaCtx *ctx = getLuaCtx("transform");
   LuaFunction *function = ctx->function();
 
   function->transform(0, "[error] this", sizeof("[error] this")-1, &datas);
   check(datas.size() == 1, "data size %d", (int) datas.size());
-  check(*datas[0] == "*" + cnf->host() + "@" + std::string(PADDING_LEN, '0') + " [error] this", "'%s'", PTRS(*datas[0]));
-  delete datas[0]; datas.clear();
+  check(*datas[0]->data == "*" + cnf->host() + "@" + std::string(PADDING_LEN, '0') + " [error] this",
+        "'%s'", PTRS(*datas[0]->data));
 
+  datas.clear();
   ctx->withhost_ = false;
   function->transform(0, "[error] this", sizeof("[error] this")-1, &datas);
   check(datas.size() == 1, "data size %d", (int) datas.size());
-  check("[error] this", "'%s'", PTRS(*datas[0]));
-  delete datas[0]; datas.clear();
+  check("[error] this", "'%s'", PTRS(*datas[0]->data));
 
+  datas.clear();
   function->transform(0, "[debug] that", sizeof("[debug] that")-1, &datas);
   check(datas.empty(), "data size %d", (int) datas.size());
 }
 
 DEFINE(aggregate)
 {
-  std::vector<std::string *> datas;
+  std::vector<FileRecord *> datas;
 
   LuaCtx *ctx = getLuaCtx("aggregate");
   LuaFunction *function = ctx->function();
@@ -251,12 +252,12 @@ DEFINE(aggregate)
   check(datas.size() == 2, "%d", (int) datas.size());
 
   const char *msg = "2015-04-02T12:05:04 10086 reqt<0.1=1 reqt<0.3=1 size=500 status_200=2";
-  check(*datas[0] == cnf->host() + " " + msg, "%s", PTRS(*datas[0]));
+  check(*datas[0]->data == cnf->host() + " " + msg, "%s", PTRS(*datas[0]->data));
 
   msg = "2015-04-02T12:05:04 yuntu reqt<0.1=1 reqt<0.3=1 size=500 status_200=2";
-  check(*datas[1] == cnf->host() + " " + msg, "%s", PTRS(*datas[1]));
-  delete datas[0]; delete datas[1];
+  check(*datas[1]->data == cnf->host() + " " + msg, "%s", PTRS(*datas[1]->data));
 
+  datas.clear();
   function->serializeCache(&datas);
   check(function->aggregateCache_.empty(), "cache size %d", (int) function->aggregateCache_.size());
 }
@@ -335,6 +336,16 @@ DEFINE(initFileReader)
   check(cnf->initFileReader(), "%s", cnf->errbuf());
   check(ctx->fileReader_->size_ == 0, "empty file seek %d", (int) ctx->fileReader_->size_);
 
+  time_t now = 1518493737;  // 2018-02-13 11:48:57
+
+  std::string *s = ctx->fileReader_->buildFileStartRecord(now);
+  std::string json = "#zzyong {'time':'2018-02-13T11:48:57', 'event':'START'}";
+  check(*s == util::replace(&json, '\'', '"'), "start record error %s != %s", PTRS(*s), PTRS(json));
+
+  s = ctx->fileReader_->buildFileEndRecord(now, 100, "oldFileName");
+  json = "#zzyong {'time':'2018-02-13T11:48:57', 'event':'END', 'file':'oldFileName', 'size':100, 'sendsize':0, 'lines':0, 'sendlines':0}";
+  check(*s == util::replace(&json, '\'', '"'), "end record error %s != %s", PTRS(*s), PTRS(json));
+
   const char *topics[] = {"basic", "basic2", "filter", "grep", "transform", "aggregate"};
   for (int i = 0; i < 5; ++i) {
     ctx = getLuaCtx(topics[i]);
@@ -383,19 +394,27 @@ DEFINE(watchLoop)
   rename(LOG("basic.log"), LOG("basic.log.old"));
 
   OneTaskReq req;
-  read(cnf->accept, &req, sizeof(OneTaskReq));
 
   // ignore memory leak
-  std::vector<FileRecord *> *records = req.records;
+  std::vector<FileRecord *> *records;
   const std::string *ptr;
 
-  check(records->size() == 3, "%d", (int) records->size());
+  read(cnf->accept, &req, sizeof(OneTaskReq));
+  records = req.records;
+
+  check(records->size() == 1, "%d", (int) records->size());
 
   ptr = records->at(0)->data;
-  check(ptr->substr(ptr->size() - 6) == "Start\n", "%s", PTRS(*ptr));
-  ptr = records->at(1)->data;
+  check(ptr->find("\"event\":\"START\"") != std::string::npos, "%s", PTRS(*ptr));
+
+  read(cnf->accept, &req, sizeof(OneTaskReq));
+  records = req.records;
+
+  check(records->size() == 2, "%d", (int) records->size());
+
+  ptr = records->at(0)->data;
   check(*ptr == "*" + cnf->host() + "@" + std::string(PADDING_LEN, '0') + " 456\n", "%s", PTRS(*ptr));
-  ptr = records->at(2)->data;
+  ptr = records->at(1)->data;
   check(*ptr == "*" + cnf->host() + "@" + util::toStr(sizeof("456\n"), PADDING_LEN) + " 789\n", "%s", PTRS(*ptr));
 
   read(cnf->accept, &req, sizeof(OneTaskReq));
@@ -403,7 +422,7 @@ DEFINE(watchLoop)
 
   check(records->size() == 1, "%d", (int) records->size());
   ptr = records->at(0)->data;
-  check(ptr->find("End") != std::string::npos, "%s", PTRS(*ptr));
+  check(ptr->find("\"event\":\"END\"") != std::string::npos, "%s", PTRS(*ptr));
 
   sleep(1);
   for (std::map<int, LuaCtx*>::iterator ite = inotify.fdToCtx_.begin(); ite != inotify.fdToCtx_.end(); ++ite) {
@@ -424,10 +443,17 @@ DEFINE(watchLoop)
   read(cnf->accept, &req, sizeof(OneTaskReq));
   records = req.records;
 
-  check(records->size() == 2, "%d", (int) records->size());
+  check(records->size() == 1, "%d", (int) records->size());
+
   ptr = records->at(0)->data;
-  check(ptr->substr(ptr->size() - 6) == "Start\n", "%s", PTRS(*ptr));
-  ptr = records->at(1)->data;
+  check(ptr->find("\"event\":\"START\"") != std::string::npos, "%s", PTRS(*ptr));
+
+  read(cnf->accept, &req, sizeof(OneTaskReq));
+  records = req.records;
+
+  check(records->size() == 1, "%d", (int) records->size());
+
+  ptr = records->at(0)->data;
   check(*ptr == "*" + cnf->host() + "@" + std::string(PADDING_LEN, '0') + " abcd\nefg\n", "%s", PTRS(*ptr));
 
   runStatus->set(RunStatus::STOP);

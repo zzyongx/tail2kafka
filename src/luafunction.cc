@@ -71,7 +71,7 @@ inline std::string *addHost(std::string *ptr, const std::string &host, off_t off
   return ptr;
 }
 
-int LuaFunction::filter(off_t off, const std::vector<std::string> &fields, std::vector<std::string *> *lines)
+int LuaFunction::filter(off_t off, const std::vector<std::string> &fields, std::vector<FileRecord *> *records)
 {
   std::string *result = new std::string;
   if (ctx_->withhost()) result = addHost(result, ctx_->cnf()->host(), off, false);
@@ -85,11 +85,11 @@ int LuaFunction::filter(off_t off, const std::vector<std::string> &fields, std::
     result->append(fields[idx]);
   }
 
-  lines->push_back(result);
+  records->push_back(FileRecord::create(0, off, result));
   return 1;
 }
 
-int LuaFunction::grep(off_t off, const std::vector<std::string> &fields, std::vector<std::string *> *lines)
+int LuaFunction::grep(off_t off, const std::vector<std::string> &fields, std::vector<FileRecord *> *records)
 {
   if (!helper_->call(funName_.c_str(), fields, 1)) return -1;
   if (helper_->callResultNil()) return 0;
@@ -98,7 +98,7 @@ int LuaFunction::grep(off_t off, const std::vector<std::string> &fields, std::ve
   if (ctx_->withhost()) result = addHost(result, ctx_->cnf()->host(), off, true);
 
   if (helper_->callResultListAsString(funName_.c_str(), result)) {
-    lines->push_back(result);
+    records->push_back(FileRecord::create(0, off, result));
     return 1;
   } else {
     delete result;
@@ -106,7 +106,7 @@ int LuaFunction::grep(off_t off, const std::vector<std::string> &fields, std::ve
   }
 }
 
-int LuaFunction::transform(off_t off, const char *line, size_t nline, std::vector<std::string *> *lines)
+int LuaFunction::transform(off_t off, const char *line, size_t nline, std::vector<FileRecord *> *records)
 {
   if (!helper_->call(funName_.c_str(), line, nline)) return -1;
   if (helper_->callResultNil()) return 0;
@@ -115,7 +115,7 @@ int LuaFunction::transform(off_t off, const char *line, size_t nline, std::vecto
   if (ctx_->withhost()) result = addHost(result, ctx_->cnf()->host(), off, true);
 
   if (helper_->callResultString(funName_.c_str(), result)) {
-    lines->push_back(result);
+    records->push_back(FileRecord::create(0, off, result));
     return 1;
   } else {
     delete result;
@@ -123,7 +123,7 @@ int LuaFunction::transform(off_t off, const char *line, size_t nline, std::vecto
   }
 }
 
-int LuaFunction::serializeCache(std::vector<std::string*> *lines)
+int LuaFunction::serializeCache(std::vector<FileRecord *> *records)
 {
   if (aggregateCache_.empty()) return 0;
 
@@ -138,19 +138,19 @@ int LuaFunction::serializeCache(std::vector<std::string*> *lines)
     for (std::map<std::string, int>::iterator jte = ite->second.begin(); jte != ite->second.end(); ++jte) {
       s->append(1, ' ').append(jte->first).append(1, '=').append(util::toStr(jte->second));
     }
-    lines->push_back(s);
+    records->push_back(FileRecord::create(0, -1, s));
     ++n;
   }
   aggregateCache_.clear();
   return n;
 }
 
-int LuaFunction::aggregate(const std::vector<std::string> &fields, std::vector<std::string *> *lines)
+int LuaFunction::aggregate(const std::vector<std::string> &fields, std::vector<FileRecord *> *records)
 {
   int n = 0;
   std::string curtime = fields[absidx(ctx_->timeidx(), fields.size())];
   if (!lasttime_.empty() && curtime != lasttime_) {
-    n = serializeCache(lines);
+    n = serializeCache(records);
   }
   lasttime_ = curtime;
 
@@ -169,10 +169,10 @@ int LuaFunction::aggregate(const std::vector<std::string> &fields, std::vector<s
   return n;
 }
 
-int LuaFunction::process(off_t off, const char *line, size_t nline, std::vector<std::string *> *lines)
+int LuaFunction::process(off_t off, const char *line, size_t nline, std::vector<FileRecord *> *records)
 {
   if (type_ == TRANSFORM) {
-    return transform(off, line, nline, lines);
+    return transform(off, line, nline, records);
   } else if (type_ == AGGREGATE || type_ == GREP || type_ == FILTER) {
     std::vector<std::string> fields;
     split(line, nline, &fields);
@@ -184,11 +184,11 @@ int LuaFunction::process(off_t off, const char *line, size_t nline, std::vector<
     }
 
     if (type_ == AGGREGATE) {
-      return aggregate(fields, lines);
+      return aggregate(fields, records);
     } else if (type_ == GREP) {
-      return grep(off, fields, lines);
+      return grep(off, fields, records);
     } else if (type_ == FILTER) {
-      return filter(off, fields, lines);
+      return filter(off, fields, records);
     } else {
       return 0;
     }
@@ -199,7 +199,7 @@ int LuaFunction::process(off_t off, const char *line, size_t nline, std::vector<
     ptr->append(line, nline);
     if (ctx_->autonl()) ptr->append(1, '\n');
 
-    lines->push_back(ptr);
+    records->push_back(FileRecord::create(0, off, ptr));
     return 1;
   }
 }

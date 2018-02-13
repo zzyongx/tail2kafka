@@ -37,6 +37,10 @@ CnfCtx *CnfCtx::loadFile(const char *file, char *errbuf)
   if (!helper->getString("hostshell", &hostshell)) return 0;
   if (!shell(hostshell.c_str(), &cnf->host_, errbuf)) return 0;
   if (!hostAddr(cnf->host_, &cnf->addr_, errbuf)) return 0;
+  if (cnf->host_.size() >= 1024) {
+    snprintf(errbuf, MAX_ERR_LEN, "hostname %s is too long", cnf->host_.c_str());
+    return 0;
+  }
 
   if (!helper->getString("pidfile", &cnf->pidfile_)) return 0;
   if (!helper->getString("brokers", &cnf->brokers_)) return 0;

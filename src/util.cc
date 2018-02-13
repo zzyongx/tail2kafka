@@ -42,5 +42,12 @@ std::string trim(const std::string &str, bool left, bool right, const char *spac
   else return "";
 }
 
+std::string &replace(std::string *s, char o, char n)
+{
+  for (size_t i = 0, end = s->size(); i < end; ++i) {
+    if (s->at(i) == o) (*s)[i] = n;
+  }
+  return *s;
+}
 
 } // namespace util

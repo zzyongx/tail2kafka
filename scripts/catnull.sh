@@ -5,6 +5,11 @@ if [ "$NOTIFY_FILE" == "" ]; then
   exit 1
 fi
 
+if [ "$NOTIFY_FILESIZE" == "" ]; then
+  echo "NOTIFY_FILESIZE is required"
+  exit 1
+fi
+
 DT=$(date +%F_%H-%M-%S)
 
 DIR=$(dirname $NOTIFY_FILE)

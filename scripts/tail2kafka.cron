@@ -1,4 +1,5 @@
-30 0 * * * root find /var/log/tail2kafka -type f -mtime +10 -delete
-*  * * * * root /usr/local/bin/tail2kafka-auto-config.sh >/dev/null 2>&1
+30   0 * * * root find /var/log/tail2kafka -type f -mtime +10 -delete
+*    * * * * root /usr/local/bin/tail2kafka-auto-upgrade.sh config >/dev/null 2>&1
+*/10 * * * * root sleep $(($RANDOM\%300)); /usr/local/bin/tail2kafka-auto-upgrade.sh rpm >/dev/null 2>&1
 
 # WARN: NL is nessary for cron

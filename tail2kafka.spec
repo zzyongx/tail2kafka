@@ -1,6 +1,6 @@
 Name:      tail2kafka
 Version:   2.0.0
-Release:   5
+Release:   7
 Summary:   stream file data to kafka/stream kafka data to file
 Group:     tail2kafka
 License:   Apache2
@@ -25,7 +25,7 @@ make
 mkdir -p $RPM_BUILD_ROOT/usr/local/bin
 cp build/tail2kafka  $RPM_BUILD_ROOT/usr/local/bin
 cp build/kafka2file  $RPM_BUILD_ROOT/usr/local/bin
-cp scripts/auto-config.sh $RPM_BUILD_ROOT/usr/local/bin/tail2kafka-auto-config.sh
+cp scripts/auto-upgrade.sh $RPM_BUILD_ROOT/usr/local/bin/tail2kafka-auto-upgrade.sh
 
 mkdir -p $RPM_BUILD_ROOT/etc/cron.d
 cp scripts/tail2kafka.cron $RPM_BUILD_ROOT/etc/cron.d/tail2kafka

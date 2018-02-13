@@ -19,3 +19,4 @@ cd -
 
 rpmbuild -bb $SPECFILE
 mv /root/rpmbuild/RPMS/x86_64/$RPMNAM-$RPMVER-$RPMREL.x86_64.rpm .
+mv /root/rpmbuild/RPMS/x86_64/$RPMNAM-debuginfo-$RPMVER-$RPMREL.x86_64.rpm .

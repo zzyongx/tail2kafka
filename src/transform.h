@@ -10,6 +10,22 @@
 #include "luahelper.h"
 #include "cmdnotify.h"
 
+struct MessageInfo {
+  enum InfoType { META, NMSG, MSG };
+  static bool extract(const char *payload, size_t len, MessageInfo *info, bool nonl);
+
+  InfoType type;
+
+  std::string host;
+  long pos;
+
+  std::string file;
+  size_t size;
+
+  const char *ptr;
+  int len;
+};
+
 class Transform {
 public:
   enum Format { NGINX, RAW, ORC, JSON, NIL };
@@ -68,7 +84,7 @@ public:
   uint32_t write(rd_kafka_message_t *rkm, uint64_t *offsetPtr);
 
 private:
-  bool addToCache(rd_kafka_message_t *rkm, std::string *host, std::string *file);
+  void addToCache(rd_kafka_message_t *rkm, const MessageInfo &info);
   bool flushCache(bool eof, const std::string &host);
 
   std::map<std::string, FdCache> fdCache_;

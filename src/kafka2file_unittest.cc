@@ -2,6 +2,7 @@
 #include <map>
 
 #include "sys.h"
+#include "util.h"
 #include "unittesthelper.h"
 #include "logger.h"
 #include "common.h"
@@ -32,6 +33,40 @@ DEFINE(parseRequest)
   check(query["event"] == "UPGRADE_ERROR", "query['event'] %s", PTRS(query["event"]));
   check(query["product"] == "test.tail2kafka", "query['product'] %s", PTRS(query["product"]));
   check(query["error"] == "upgrade config from to 0.0.2, reload failed", "query['error'] %s", PTRS(query["error"]));
+}
+
+DEFINE(messageInfoExtrace)
+{
+  MessageInfo info;
+
+  std::string payload("#zzyong {'time':'2018-02-13T11:48:57', 'event':'END', 'file':'oldFileName','size':100, 'sendsize':0, 'lines':0, 'sendlines':0}");
+  util::replace(&payload, '\'', '"');
+  bool rc = MessageInfo::extract(payload.c_str(), payload.size(), &info, false);
+  check(rc, "extrace %s error", PTRS(payload));
+  check(info.type == MessageInfo::META, "info type error");
+  check(info.host == "zzyong", "info host error %s", PTRS(info.host));
+  check(info.file == "oldFileName", "info file error %s", PTRS(info.file));
+  check(info.size == 100, "info size error %d", (int) info.size);
+
+  payload = "#zzyong {'time':'2018-02-13T11:48:57', 'event':'START'}";
+  util::replace(&payload, '\'', '"');
+  rc = MessageInfo::extract(payload.c_str(), payload.size(), &info, false);
+  check(!rc, "extrace %s error", PTRS(payload));
+
+  payload = "*zzyong@123456789 Hello World\n";
+  rc = MessageInfo::extract(payload.c_str(), payload.size(), &info, true);
+  check(rc, "extrace %s error", PTRS(payload));
+  check(info.type == MessageInfo::NMSG, "info type error");
+  check(info.host == "zzyong", "info host error %s", PTRS(info.host));
+  check(info.pos == 123456789, "info pos error %lu", info.pos);
+  check(info.len == 11, "info payload len error %d", info.len);
+  check(strncmp(info.ptr, "Hello World", info.len) == 0, "info payload error %.*s", info.len, info.ptr);
+
+  payload = "zzyong Hello World\n";
+  rc = MessageInfo::extract(payload.c_str(), payload.size(), &info, true);
+  check(rc, "extrace %s error", PTRS(payload));
+  check(info.len == 18, "info payload len error %d", info.len);
+  check(strncmp(info.ptr, payload.c_str(), info.len) == 0, "info payload error %.*s", info.len, info.ptr);
 }
 
 inline rd_kafka_message_t *initKafkaMessage(rd_kafka_message_t *rkm, const char *payload, uint64_t offset)
@@ -134,6 +169,7 @@ int main()
   DO(prepare);
 
   TEST(parseRequest);
+  TEST(messageInfoExtrace);
 
   bool withTimeout;
   ENV_SET("WITH_TIMEOUT", &withTimeout);

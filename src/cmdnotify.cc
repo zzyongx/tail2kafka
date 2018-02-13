@@ -7,7 +7,7 @@
 #include "logger.h"
 #include "cmdnotify.h"
 
-char * const *CmdNotify::buildEnv(const char *file, time_t timestamp)
+char * const *CmdNotify::buildEnv(const char *file, const char *oriFile, time_t timestamp, uint64_t size)
 {
   int i = 0;
   static char *envp[10];
@@ -24,17 +24,29 @@ char * const *CmdNotify::buildEnv(const char *file, time_t timestamp)
   snprintf(filePtr, 1024, "NOTIFY_FILE=%s", file);
   envp[i++] = filePtr;
 
+  char oriFilePtr[1024];
+  if (oriFile) {
+    snprintf(oriFilePtr, 1024, "NOTIFY_ORIFILE=%s", oriFile);
+    envp[i++] = oriFilePtr;
+  }
+
   char timestampPtr[64];
   if (timestamp != (time_t) -1) {
     snprintf(timestampPtr, 64, "NOTIFY_TIMESTAMP=%ld", timestamp);
     envp[i++] = timestampPtr;
   }
 
+  char sizePtr[64];
+  if (size != (uint64_t) -1) {
+    snprintf(timestampPtr, 64, "NOTIFY_FILESIZE=%lu", size);
+    envp[i++] = sizePtr;
+  }
+
   envp[i] = 0;
   return envp;
 }
 
-bool CmdNotify::exec(const char *file, time_t timestamp)
+bool CmdNotify::exec(const char *file, const char *oriFile, time_t timestamp, uint64_t size)
 {
   if (!cmd_) return false;
 
@@ -49,7 +61,7 @@ bool CmdNotify::exec(const char *file, time_t timestamp)
     }
 
     char * const argv[] = { (char *) cmd_, NULL };
-    char * const *envp = buildEnv(file, timestamp);
+    char * const *envp = buildEnv(file, oriFile, timestamp, size);
 
     if (execve(cmd_, argv, envp) == -1) {
       log_fatal(errno, "exec cmd %s error", cmd_);

@@ -75,7 +75,12 @@ int main(int argc, char *argv[])
   } else if (strcmp(offsetstr, "offset-end") == 0) {
     defaultStart = false;
   } else {
-    fprintf(stderr, "unknow default offset, use offset-begining or offset-end");
+    fprintf(stderr, "unknow default offset, use offset-begining or offset-end\n");
+    return EXIT_FAILURE;
+  }
+
+  if (!initSingleton(datadir, topic, partition)) {
+    fprintf(stderr, "%s:%d instance already exists\n", topic, partition);
     return EXIT_FAILURE;
   }
 
@@ -104,12 +109,13 @@ int main(int argc, char *argv[])
     return EXIT_FAILURE;
   }
 
-  if (!initSingleton(datadir, topic, partition)) return EXIT_FAILURE;
-
   std::auto_ptr<KafkaConsumer> ctx(KafkaConsumer::create(datadir, brokers, topic, partition, defaultStart));
   if (!ctx.get()) return EXIT_FAILURE;
 
   bool rc = ctx->loop(runStatus, transform.get());
+
+  // rd_kafka_destroy may block forever, kill before kill -9 is a safe way
+  transform.release();
 
   log_info(0, "exit");
   return rc ? EXIT_SUCCESS : EXIT_FAILURE;

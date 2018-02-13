@@ -25,7 +25,7 @@ echo "kill tail2kafka"
 echo "kill kafka2file"
 for TOPIC in "basic" "filter" "grep" "aggregate" "transform"; do
   K2FPID=$K2FDIR/$TOPIC.0.lock
-  (test -f $K2FPID && test -d /proc/$(cat $K2FPID)) && kill $(cat $K2FPID); sleep 2
+  (test -f $K2FPID && test -d /proc/$(cat $K2FPID)) && kill $(cat $K2FPID); sleep 2;  kill -9 $(cat $K2FPID)
 done
 
 find logs -type f -name "*.log" -delete
@@ -78,9 +78,3 @@ if [ "$NUM" != 200 ]; then
 fi
 
 echo "$0 test ok"
-
-# kafka2file
-# current/last file was deleted after kill
-# if current/last file exists, start failed
-# current/last appear at the same time
-# lost message plus.pingback.storage.1_2018-01-31_05-07-00 plus.pingback.storage.1_2018-01-31_05-20-00.current

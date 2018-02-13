@@ -85,61 +85,78 @@ Transform *Transform::create(
   }
 }
 
-bool MirrorTransform::addToCache(rd_kafka_message_t *rkm, std::string *host, std::string *file)
+bool MessageInfo::extract(const char *payload, size_t len, MessageInfo *info, bool nonl)
 {
-  bool eof = false;
-  char flag = ((char *) rkm->payload) [0];
-  if (flag == '*' || flag == '#') {
-    char *sp = (char *) memchr(rkm->payload, ' ', rkm->len);
-    assert(sp);
+  char flag = payload[0];
+  if (flag == '*') info->type = NMSG;
+  else if (flag == '#') info->type = META;
+  else info->type = MSG;
 
-    long pos = -1;
-    char *at = (char *) memchr(rkm->payload, '@', sp - (char *) rkm->payload -1);
-    if (at) {
-      host->assign((char *) rkm->payload + 1, at - (char *) rkm->payload -1);
-      pos = util::toLong(at+1, sp - (at+1));
+  char *spacePos = 0;
+  if (info->type == META || info->type == NMSG) {
+    spacePos = (char *) memchr(payload, ' ', len);
+    if (!spacePos) return false;
+
+    if (info->type == META) {
+      info->host.assign(payload+1, spacePos - (payload+1));
     } else {
-      host->assign((char *) rkm->payload + 1, sp - (char *) rkm->payload -1);
-    }
-
-    if (flag == '*') {
-      FdCache &fdCache = fdCache_[*host];
-
-      if (fdCache.pos != -1) {
-        if (fdCache.pos == pos) {
-          log_error(0, "%s:%d duplicate %ld message %.*s", topic_, partition_,
-                    rkm->offset, (int) rkm->len, (char *) rkm->payload);
-          rd_kafka_message_destroy(rkm);
-          return eof;
-        } else if (fdCache.pos > pos) {
-          log_fatal(0, "%s:%d unorder %ld > %ld %ld message %.*s", topic_, partition_, fdCache.pos, pos,
-                    rkm->offset, (int) rkm->len, (char *) rkm->payload);
-        }
-      }
-
-      fdCache.pos = pos;
-      if (!fdCache.rkms) fdCache.rkms = new rd_kafka_message_t*[IOV_MAX];
-
-      struct iovec iov = { sp+1, rkm->len - (sp+1 - (char *) rkm->payload) };
-      fdCache.iovs.push_back(iov);
-      fdCache.rkms[fdCache.rkmSize++] = rkm;
-    } else {
-      log_info(0, "%s:%d META %ld %.*s", topic_, partition_, rkm->offset, (int) rkm->len, (char *) rkm->payload);
-
-      std::string s((char *)rkm->payload, rkm->len);
-      if (s.find("End") != std::string::npos) {
-        at = (char *) memchr(rkm->payload, '@', rkm->len);
-        if (at) {
-          eof = true;
-          at++;
-          const char *end = (char *) rkm->payload + rkm->len;
-          while (*at != ' ' && at < end) file->append(1, *at++);
-        }
-      }
-      rd_kafka_message_destroy(rkm);
+      char *atPos = (char *) memchr(payload, '@', spacePos - payload);
+      if (!atPos) return false;
+      info->host.assign(payload+1, atPos - (payload+1));
+      info->pos = util::toLong(atPos+1, spacePos - (atPos+1));
     }
   }
-  return eof;
+
+  if (info->type == META) {
+    Json::Value root;
+    Json::Reader reader;
+
+    bool rc = reader.parse(spacePos + 1, payload + len, root);
+    if (!rc) return false;
+
+    std::string event = root["event"].asString();
+    if (event != "END") return false;
+
+    info->size = root["size"].asUInt64();
+    info->file = root["file"].asString();
+  } else if (info->type == NMSG) {
+    info->ptr = spacePos + 1;
+    if (nonl && payload[len-1] == '\n') {
+      info->len = payload + len - info->ptr - 1;
+    } else {
+      info->len = payload + len - info->ptr;
+    }
+  } else {
+    info->ptr = payload;
+    if (nonl && payload[len-1] == '\n') {
+      info->len = len - 1;
+    } else {
+      info->len = len;
+    }
+  }
+
+  return true;
+}
+
+void MirrorTransform::addToCache(rd_kafka_message_t *rkm, const MessageInfo &info)
+{
+  FdCache &fdCache = fdCache_[info.host];
+
+  if (fdCache.pos == info.pos) {
+    log_error(0, "%s:%d duplicate %ld message %.*s", topic_, partition_,
+              rkm->offset, (int) rkm->len, (char *) rkm->payload);
+    rd_kafka_message_destroy(rkm);
+  } else if (fdCache.pos > info.pos) {
+    log_fatal(0, "%s:%d unorder %ld > %ld %ld message %.*s", topic_, partition_, fdCache.pos, info.pos,
+              rkm->offset, (int) rkm->len, (char *) rkm->payload);
+  }
+
+  fdCache.pos = info.pos;
+  if (!fdCache.rkms) fdCache.rkms = new rd_kafka_message_t*[IOV_MAX];
+
+  struct iovec iov = { (void *) info.ptr, info.len };
+  fdCache.iovs.push_back(iov);
+  fdCache.rkms[fdCache.rkmSize++] = rkm;
 }
 
 bool MirrorTransform::flushCache(bool eof, const std::string &host)
@@ -181,30 +198,41 @@ bool MirrorTransform::flushCache(bool eof, const std::string &host)
 uint32_t MirrorTransform::write(rd_kafka_message_t *rkm, uint64_t *offsetPtr)
 {
   uint64_t offset = rkm->offset;
-  std::string host, nfile;
 
-  bool eof = addToCache(rkm, &host, &nfile);
-  uint32_t ide = flushCache(eof, host) ? LOCAL : IGNORE;
+  MessageInfo info;
+  if (!MessageInfo::extract((char *) rkm->payload, rkm->len, &info, false) || info.type == MessageInfo::MSG) {
+    log_error(0, "%s:%d unknow message %.*s", topic_, partition_, (int) rkm->len, (char *) rkm->payload);
+    return IGNORE | RKMFREE;
+  }
+
+  if (info.type == MessageInfo::NMSG) {
+    addToCache(rkm, info);
+  } else {
+    log_info(0, "%s:%d META %ld %.*s", topic_, partition_, rkm->offset, (int) rkm->len, (char *) rkm->payload);
+  }
+
+  bool eof = info.type == MessageInfo::META;
+  uint32_t ide = flushCache(eof, info.host) ? LOCAL : IGNORE;
 
   if (eof) {
-    fdCache_.erase(host);
+    fdCache_.erase(info.host);
 
     char opath[1024];
-    snprintf(opath, 2048, "%s/%s/%s", wdir_, topic_, host.c_str());
+    snprintf(opath, 2048, "%s/%s/%s", wdir_, topic_, info.host.c_str());
 
-    size_t slash = nfile.rfind('/');
+    size_t slash = info.file.rfind('/');
     char npath[1024];
     snprintf(npath, 1024, "%s_%s", opath,
-             (slash == std::string::npos) ? nfile.c_str() : nfile.substr(slash+1).c_str());
+             (slash == std::string::npos) ? info.file.c_str() : info.file.substr(slash+1).c_str());
 
     if (rename(opath, npath) == -1) {
       log_fatal(errno, "%s:%d rename %s to %s error", topic_, partition_, opath, npath);
       exit(EXIT_FAILURE);
     } else {
       log_info(0, "%s:%d rename %s to %s", topic_, partition_, opath, npath);
-      if (notify_) notify_->exec(npath);
+      if (notify_) notify_->exec(npath, info.file.c_str(), -1, info.size);
     }
-    ide = GLOBAL;
+    ide = GLOBAL | RKMFREE;
   }
 
   if (ide != IGNORE) *offsetPtr = offset;
@@ -342,7 +370,7 @@ void LuaTransform::rotateLastToFinish()
     } else {
       log_info(0, "%s:%d rotate %s to %s", topic_, partition_,
                lastIntervalFile_.c_str(), path.c_str());
-      if (notify_) notify_->exec(path.c_str(), lastIntervalCnt_ * interval_);
+      if (notify_) notify_->exec(path.c_str(), 0, lastIntervalCnt_ * interval_);
     }
   }
 

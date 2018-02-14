@@ -147,10 +147,10 @@ get_rpm_version()
   for line in $ulist; do
     local id=$(echo $line | cut -d'=' -f1)
     local ver=$(echo $line | cut -d'=' -f2)
-    if echo $host_id | grep -Pq $id; then
+    if [ "$id" = "*" ]; then
       version=$ver
-      break
-    elif [ "$id" = "*" ]; then
+      break;
+    elif echo $host_id | grep -Pq $id; then
       version=$ver
       break
     fi

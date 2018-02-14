@@ -226,7 +226,7 @@ uint32_t MirrorTransform::write(rd_kafka_message_t *rkm, uint64_t *offsetPtr)
              (slash == std::string::npos) ? info.file.c_str() : info.file.substr(slash+1).c_str());
 
     if (rename(opath, npath) == -1) {
-      log_fatal(errno, "%s:%d rename %s to %s error", topic_, partition_, opath, npath);
+      log_fatal(errno, "%s:%d rename %s to %s error, exit", topic_, partition_, opath, npath);
       exit(EXIT_FAILURE);
     } else {
       log_info(0, "%s:%d rename %s to %s", topic_, partition_, opath, npath);

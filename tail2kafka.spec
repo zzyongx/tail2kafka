@@ -1,6 +1,6 @@
 Name:      tail2kafka
 Version:   2.0.0
-Release:   7
+Release:   8
 Summary:   stream file data to kafka/stream kafka data to file
 Group:     tail2kafka
 License:   Apache2
@@ -70,5 +70,5 @@ rm -rf $RPM_BUILD_ROOT
 ln -sf ../init.d/tail2kafka /etc/rc.d/rc3.d/S88jetty
 
 %changelog
-* Fri Feb  9 2018 zzyongx <iamzhengzhiyong@gmail.com> -2.0.0-1
+* Wed Feb 14 2018 zzyongx <iamzhengzhiyong@gmail.com> -2.0.0-8
 - Feature: first release

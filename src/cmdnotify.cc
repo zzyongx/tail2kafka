@@ -7,40 +7,45 @@
 #include "logger.h"
 #include "cmdnotify.h"
 
+#define MAX_ENVP_NUM 511
+extern char **environ;
+
 char * const *CmdNotify::buildEnv(const char *file, const char *oriFile, time_t timestamp, uint64_t size)
 {
   int i = 0;
-  static char *envp[10];
+  static char *envp[MAX_ENVP_NUM+1];
 
-  char topicPtr[128];
+  static char topicPtr[128];
   snprintf(topicPtr, 128, "NOTIFY_TOPIC=%s", topic_);
   envp[i++] = topicPtr;
 
-  char partitionPtr[128];
+  static char partitionPtr[128];
   snprintf(partitionPtr, 128, "NOTIFY_PARTITION=%d", partition_);
   envp[i++] = partitionPtr;
 
-  char filePtr[1024];
+  static char filePtr[1024];
   snprintf(filePtr, 1024, "NOTIFY_FILE=%s", file);
   envp[i++] = filePtr;
 
-  char oriFilePtr[1024];
+  static char oriFilePtr[1024];
   if (oriFile) {
     snprintf(oriFilePtr, 1024, "NOTIFY_ORIFILE=%s", oriFile);
     envp[i++] = oriFilePtr;
   }
 
-  char timestampPtr[64];
+  static char timestampPtr[64];
   if (timestamp != (time_t) -1) {
     snprintf(timestampPtr, 64, "NOTIFY_TIMESTAMP=%ld", timestamp);
     envp[i++] = timestampPtr;
   }
 
-  char sizePtr[64];
+  static char sizePtr[64];
   if (size != (uint64_t) -1) {
-    snprintf(timestampPtr, 64, "NOTIFY_FILESIZE=%lu", size);
+    snprintf(sizePtr, 64, "NOTIFY_FILESIZE=%lu", size);
     envp[i++] = sizePtr;
   }
+
+  for (int j = 0; i < MAX_ENVP_NUM && environ[j]; ++j) envp[i++] = environ[j];
 
   envp[i] = 0;
   return envp;
@@ -63,8 +68,12 @@ bool CmdNotify::exec(const char *file, const char *oriFile, time_t timestamp, ui
     char * const argv[] = { (char *) cmd_, NULL };
     char * const *envp = buildEnv(file, oriFile, timestamp, size);
 
+    std::string buffer;
+    for (int i = 0; envp[i]; ++i) buffer.append(envp[i]).append(1, ' ');
+    log_info(0, "exec cmd %s with env %s", cmd_, buffer.c_str());
+
     if (execve(cmd_, argv, envp) == -1) {
-      log_fatal(errno, "exec cmd %s error", cmd_);
+      log_fatal(errno, "exec cmd %s with env %s error", cmd_, buffer.c_str());
     }
     exit(0);
   } else if (pid > 0) {

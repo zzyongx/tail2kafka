@@ -25,7 +25,7 @@ echo "kill tail2kafka"
 echo "kill kafka2file"
 for TOPIC in "basic" "filter" "grep" "aggregate" "transform"; do
   K2FPID=$K2FDIR/$TOPIC.0.lock
-  (test -f $K2FPID && test -d /proc/$(cat $K2FPID)) && kill $(cat $K2FPID); sleep 2;  kill -9 $(cat $K2FPID)
+  (test -f $K2FPID && test -d /proc/$(cat $K2FPID)) && kill $(cat $K2FPID); sleep 2;  kill -9 $(cat $K2FPID 2>/dev/null) 2>/dev/null
 done
 
 find logs -type f -name "*.log" -delete
@@ -47,8 +47,10 @@ OLDFILE=$K2FDIR/basic/zzyong_basic.log.old
 test -d $K2FDIR || mkdir $K2FDIR
 rm -f $K2FDIR/basic.0.offset $OLDFILE
 
+export BLACKBOXTEST_OUTFILE=$K2FDIR/catnull
+
 K2FPID=$K2FDIR/basic.0.lock
-$BUILDDIR/kafka2file 127.0.0.1:9092 basic 0 offset-end $K2FDIR &
+$BUILDDIR/kafka2file 127.0.0.1:9092 basic 0 offset-end $K2FDIR $BUILDDIR/../scripts/catnull.sh &
 sleep 5
 if [ ! -f $K2FPID ] || [ ! -d /proc/$(cat $K2FPID) ]; then
   echo "start kafka2file failed"
@@ -74,6 +76,34 @@ fi
 NUM=$(wc -l $OLDFILE | cut -d' ' -f 1)
 if [ "$NUM" != 200 ]; then
   echo "line of $OLDFILE is $NUM should be 200"
+  exit 1
+fi
+
+source $BLACKBOXTEST_OUTFILE
+if [ "$NOTIFY_TOPIC" = "" ] || [ $NOTIFY_TOPIC != "basic" ]; then
+  echo "NOTIFY_TOPIC $NOTIFY_TOPIC != basic"
+  exit 1
+fi
+
+if [ "$NOTIFY_ORIFILE" = "" ]; then
+  echo "NOTIFY_ORIFIL is not set"
+  exit 1
+fi
+
+if [ "$NOTIFY_FILE" = "" ]; then
+  echo "NOTIFY_FILE is not set"
+  exit 1
+fi
+
+if [ "$NOTIFY_FILESIZE" = "" ]; then
+  echo "NOTIFY_FILESIZE is not set"
+  exit 1
+fi
+
+MD5FILE=$(md5sum $NOTIFY_FILE | cut -d' ' -f1)
+MD5ORIFILE=$(md5sum $NOTIFY_ORIFILE | cut -d' ' -f1)
+if [ "$MD5FILE" != "$MD5ORIFILE" ]; then
+  echo "$NOTIFY_FILE and $NOTIFY_ORIFILE are not the same md5"
   exit 1
 fi
 

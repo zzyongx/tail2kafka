@@ -119,6 +119,9 @@ bool MessageInfo::extract(const char *payload, size_t len, MessageInfo *info, bo
 
     info->size = root["size"].asUInt64();
     info->file = root["file"].asString();
+
+    Json::Value &val = root["md5"];
+    if (!val.isNull()) info->md5  = val.asString();
   } else if (info->type == NMSG) {
     info->ptr = spacePos + 1;
     if (nonl && payload[len-1] == '\n') {
@@ -230,7 +233,7 @@ uint32_t MirrorTransform::write(rd_kafka_message_t *rkm, uint64_t *offsetPtr)
       exit(EXIT_FAILURE);
     } else {
       log_info(0, "%s:%d rename %s to %s", topic_, partition_, opath, npath);
-      if (notify_) notify_->exec(npath, info.file.c_str(), -1, info.size);
+      if (notify_) notify_->exec(npath, info.file.c_str(), -1, info.size, info.md5.c_str());
     }
     ide = GLOBAL | RKMFREE;
   }

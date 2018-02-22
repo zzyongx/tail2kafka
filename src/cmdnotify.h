@@ -8,10 +8,10 @@ class CmdNotify {
 public:
   CmdNotify(const char *cmd, const char *wdir, const char *topic, int partition)
     : cmd_(cmd), wdir_(wdir), topic_(topic), partition_(partition) {}
-  bool exec(const char *file, const char *oriFile = 0, time_t timestamp = -1, uint64_t size = -1);
+  bool exec(const char *file, const char *oriFile = 0, time_t timestamp = -1, uint64_t size = -1, const char *md5 = 0);
 
 private:
-  char * const *buildEnv(const char *file, const char *oriFile, time_t timestamp, uint64_t size);
+  char * const *buildEnv(const char *file, const char *oriFile, time_t timestamp, uint64_t size, const char *md5);
 
 private:
   const char *cmd_;

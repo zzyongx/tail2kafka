@@ -21,6 +21,7 @@ struct MessageInfo {
 
   std::string file;
   size_t size;
+  std::string md5;
 
   const char *ptr;
   int len;

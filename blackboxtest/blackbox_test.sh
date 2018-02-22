@@ -100,6 +100,11 @@ if [ "$NOTIFY_FILESIZE" = "" ]; then
   exit 1
 fi
 
+if [ "$NOTIFY_FILEMD5" = "" ]; then
+  echo "NOTIFY_FILEMD5 is not set"
+  exit 1
+fi
+
 MD5FILE=$(md5sum $NOTIFY_FILE | cut -d' ' -f1)
 MD5ORIFILE=$(md5sum $NOTIFY_ORIFILE | cut -d' ' -f1)
 if [ "$MD5FILE" != "$MD5ORIFILE" ]; then

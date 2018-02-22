@@ -10,7 +10,7 @@
 #define MAX_ENVP_NUM 511
 extern char **environ;
 
-char * const *CmdNotify::buildEnv(const char *file, const char *oriFile, time_t timestamp, uint64_t size)
+char * const *CmdNotify::buildEnv(const char *file, const char *oriFile, time_t timestamp, uint64_t size, const char *md5)
 {
   int i = 0;
   static char *envp[MAX_ENVP_NUM+1];
@@ -45,13 +45,19 @@ char * const *CmdNotify::buildEnv(const char *file, const char *oriFile, time_t 
     envp[i++] = sizePtr;
   }
 
+  static char md5Ptr[32];
+  if (md5) {
+    snprintf(md5Ptr, 32, "NOTIFY_FILEMD5=%s", md5);
+    envp[i++] = md5Ptr;
+  }
+
   for (int j = 0; i < MAX_ENVP_NUM && environ[j]; ++j) envp[i++] = environ[j];
 
   envp[i] = 0;
   return envp;
 }
 
-bool CmdNotify::exec(const char *file, const char *oriFile, time_t timestamp, uint64_t size)
+bool CmdNotify::exec(const char *file, const char *oriFile, time_t timestamp, uint64_t size, const char *md5)
 {
   if (!cmd_) return false;
 
@@ -66,7 +72,7 @@ bool CmdNotify::exec(const char *file, const char *oriFile, time_t timestamp, ui
     }
 
     char * const argv[] = { (char *) cmd_, NULL };
-    char * const *envp = buildEnv(file, oriFile, timestamp, size);
+    char * const *envp = buildEnv(file, oriFile, timestamp, size, md5);
 
     std::string buffer;
     for (int i = 0; envp[i]; ++i) buffer.append(envp[i]).append(1, ' ');

@@ -17,8 +17,8 @@ fi
 
 test -f /etc/sysconfig/tail2kafka && source /etc/sysconfig/tail2kafka
 
-if [ "$NOTIFY_ORIFILE" != "" ] && [ "$PINGBACKURL" != "" ]; then
-  curl -Ss "$PINGBACKURL?event=CATNULL&file=$NOTIFY_ORIFILE&size=$NOTIFY_FILESIZE&topic=$NOTIFY_TOPIC"
+if [ "$NOTIFY_ORIFILE" != "" ] && [ "$PINGBACKURL" != "" ] && [ "$NOTIFY_FILEMD5" != "" ]; then
+  curl -Ss "$PINGBACKURL?event=CATNULL&file=$NOTIFY_ORIFILE&size=$NOTIFY_FILESIZE&md5=$NOTIFY_FILEMD5&topic=$NOTIFY_TOPIC"
 fi
 
 DT=$(date +%F_%H-%M-%S)

@@ -21,7 +21,7 @@ struct UNITTEST_HELPER {
   if ((r)) break;                                                  \
   fprintf(stderr, "%s@%-5d %s -> ["COLOR_RED fmt COLOR_RESET"]\n", \
           name, __LINE__, #r, ##arg);                              \
-  assert(!(r));                                                    \
+  assert((r));                                                    \
 } while(0)
 
 #define check(r, fmt, arg...)  CHECK_IMPL(r, __FILE__, fmt, ##arg)

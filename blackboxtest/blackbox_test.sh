@@ -23,7 +23,7 @@ K2FDIR=kafka2filedir
 echo "kill tail2kafka"
 (test -f $PIDF && test -d /proc/$(cat $PIDF)) && kill $(cat $PIDF); sleep 2
 echo "kill kafka2file"
-for TOPIC in "basic" "filter" "grep" "aggregate" "transform"; do
+for TOPIC in "basic" "basic2" "filter" "grep" "aggregate" "transform"; do
   K2FPID=$K2FDIR/$TOPIC.0.lock
   (test -f $K2FPID && test -d /proc/$(cat $K2FPID)) && kill $(cat $K2FPID); sleep 2;  kill -9 $(cat $K2FPID 2>/dev/null) 2>/dev/null
 done
@@ -33,7 +33,7 @@ find logs -type f -name "*.log" -delete
 ZK=localhost:2181/kafka
 # delete.topic.enable=true
 cd /opt/kafka
-for TOPIC in "basic" "filter" "grep" "aggregate" "transform"; do
+for TOPIC in "basic" "basic2" "filter" "grep" "aggregate" "transform"; do
   bin/kafka-topics.sh --delete --if-exists --zookeeper $ZK  --topic $TOPIC
   bin/kafka-topics.sh --create --zookeeper $ZK --replication-factor 1 --partitions 1 --topic $TOPIC
 done

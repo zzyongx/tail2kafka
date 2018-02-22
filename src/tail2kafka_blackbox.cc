@@ -29,7 +29,7 @@ int main()
   start_producer();
   sleep(1);
   start_consumer();
-	printf("OK\n");
+  printf("OK\n");
   return EXIT_SUCCESS;
 }
 
@@ -67,7 +67,7 @@ BasicProducer basicPro;
 
 void *basic_routine(void *)
 {
-  FILE *fp = fopen(LOG("basic.log"), "a");
+  FILE *fp = fopen(LOG("basic.log"), "w");
   assert(fp);
 
   for (int i = 0; i < 100; ++i) {
@@ -285,16 +285,64 @@ void *transform_routine(void *)
   return NULL;
 }
 
+class AutoRotateProducer {
+public:
+  AutoRotateProducer() : i_(0), result_(false) {}
+  void reset(bool result = true) {
+    i_ = 0;
+    result_ = result;
+    if (!result_) files_.clear();
+  }
+
+  const char *operator()() {
+    if (result_) {
+      std::string id = util::toStr(0, PADDING_LEN);
+      snprintf(buffer_, 256, "*%s@%s %s\n", hostname, id.c_str(), files_[i_].c_str());
+    } else {
+      time_t now;
+      time(&now);
+
+      struct tm ltm;
+      localtime_r(&now, &ltm);
+
+      int n = strftime(buffer_, 256, "logs/basic.%Y-%m-%d_%H-%M.log", &ltm);
+      files_.push_back(std::string(buffer_, n));
+    }
+    ++i_;
+    return buffer_;
+  }
+private:
+  int i_;
+  bool result_;
+  char buffer_[256];
+  std::vector<std::string> files_;
+};
+AutoRotateProducer autoRotatePro;
+
+void *basic2_routine(void *)
+{
+  for (int i = 0; i < 3; ++i) {
+    const char *file = autoRotatePro();
+    FILE *fp = fopen(file, "w");
+    assert(fp);
+    fprintf(fp, "%s\n", file);
+    fclose(fp);
+    sleep(60);
+  }
+  autoRotatePro.reset();
+  return NULL;
+}
 
 void start_producer()
 {
   int max = 0;
-  pthread_t ptids[5];
+  pthread_t ptids[6];
   pthread_create(&ptids[max++], NULL, basic_routine, NULL);
   pthread_create(&ptids[max++], NULL, filter_routine, NULL);
   pthread_create(&ptids[max++], NULL, grep_routine, NULL);
   pthread_create(&ptids[max++], NULL, aggregate_routine, NULL);
   pthread_create(&ptids[max++], NULL, transform_routine, NULL);
+  pthread_create(&ptids[max++], NULL, basic2_routine, NULL);
   for (int i = 0; i < max; ++i) {
     pthread_join(ptids[i], NULL);
   }
@@ -362,7 +410,18 @@ void basic_consumer(rd_kafka_message_t *rkm)
   if (memcmp(rkm->payload, "#", 1) == 0) return;   // skip comment line
 
   const char *ptr = basicPro();
-	check(rkm->len == strlen(ptr),
+  check(rkm->len == strlen(ptr),
+        "basic: length(%.*s) != length(%s)", (int) rkm->len, (char *) rkm->payload, ptr);
+  check(memcmp(rkm->payload, ptr, rkm->len) == 0,
+        "basic: %.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
+}
+
+void basic2_consumer(rd_kafka_message_t *rkm)
+{
+  if (memcmp(rkm->payload, "#", 1) == 0) return;   // skip comment line
+
+  const char *ptr = autoRotatePro();
+  check(rkm->len == strlen(ptr),
         "basic: length(%.*s) != length(%s)", (int) rkm->len, (char *) rkm->payload, ptr);
   check(memcmp(rkm->payload, ptr, rkm->len) == 0,
         "basic: %.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
@@ -373,7 +432,7 @@ void filter_consumer(rd_kafka_message_t *rkm)
   if (memcmp(rkm->payload, "#", 1) == 0) return;   // skip comment line
 
   const char *ptr = filterPro();
-	check(rkm->len == strlen(ptr),
+  check(rkm->len == strlen(ptr),
         "filter: length(%.*s) != length(%s)", (int) rkm->len, (char *) rkm->payload, ptr);
   check(memcmp(rkm->payload, ptr, rkm->len) == 0,
         "filter: %.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
@@ -384,7 +443,7 @@ void grep_consumer(rd_kafka_message_t *rkm)
   if (memcmp(rkm->payload, "#", 1) == 0) return;   // skip comment line
 
   const char *ptr = grepPro();
-	check(rkm->len == strlen(ptr),
+  check(rkm->len == strlen(ptr),
         "grep: length(%.*s) != length(%s)", (int) rkm->len, (char *) rkm->payload, ptr);
   check(memcmp(rkm->payload, ptr, rkm->len) == 0,
         "grep: %.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
@@ -395,7 +454,7 @@ void aggregate_consumer(rd_kafka_message_t *rkm)
   if (memcmp(rkm->payload, "#", 1) == 0) return;   // skip comment line
 
   const char *ptr = aggregatePro(true);
-	check(rkm->len == strlen(ptr),
+  check(rkm->len == strlen(ptr),
         "aggregate: length(%.*s) != length(%s)", (int) rkm->len, (char *) rkm->payload, ptr);
   check(memcmp(rkm->payload, ptr, rkm->len) == 0,
         "aggregate: %.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
@@ -406,7 +465,7 @@ void transform_consumer(rd_kafka_message_t *rkm)
   if (memcmp(rkm->payload, "#", 1) == 0) return;   // skip comment line
 
   const char *ptr = transformPro();
-	check(rkm->len == strlen(ptr),
+  check(rkm->len == strlen(ptr),
         "transform: length(%.*s) != length(%s)", (int) rkm->len, (char *) rkm->payload, ptr);
   check(memcmp(rkm->payload, ptr, rkm->len) == 0,
         "transform: %.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
@@ -416,6 +475,7 @@ void start_consumer()
 {
   ConsumerCtx ctxs[] = {
     {"basic",     basic_consumer},
+    {"basic2",    basic2_consumer},
     {"filter",    filter_consumer},
     {"grep",      grep_consumer},
     {"aggregate", aggregate_consumer},

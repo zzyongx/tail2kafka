@@ -151,7 +151,7 @@ bool FileReader::reinit()
       fd_ = holdFd_;
       holdFd_ = -1;
     } else {
-      fd_ = open(file.c_str(), (ctx_->autocreat() ? O_CREAT : 0) | O_RDONLY);
+      fd_ = open(file.c_str(), (ctx_->autocreat() ? O_CREAT : 0) | O_RDONLY, 0644);
       doOpen = true;
     }
 
@@ -494,8 +494,9 @@ bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::st
     return true;
   }
 
-  if (size_ == 0 && rawData == 0) rawDataPtr.reset(buildFileStartRecord(time(0)));
-  if (pos == START || size_ == 0) propagateRawData(rawDataPtr.release());
+  if (pos == START) propagateRawData(rawDataPtr.release());
+  else if (size_ == 0) propagateRawData(buildFileStartRecord(time(0)));
+
   if (pos == NIL) {   // limit tailsize
     size_ = stPtr->st_size - off > MAX_TAIL_SIZE ? size_ += MAX_TAIL_SIZE : stPtr->st_size;
   } else {

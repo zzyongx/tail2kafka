@@ -55,6 +55,7 @@ public:
   bool withtime() const { return withtime_; }
   int timeidx() const { return timeidx_; }
   bool autonl() const { return autonl_; }
+  bool md5sum() const { return md5sum_; }
   const std::string &pkey() const { return pkey_; }
 
   const char *getStartPosition() const { return startPosition_.c_str(); }
@@ -120,6 +121,7 @@ private:
   bool          autoparti_;
   int           partition_;
   bool          rawcopy_;
+  bool          md5sum_;
 
   LuaFunction  *function_;
   std::string   startPosition_;

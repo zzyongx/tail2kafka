@@ -147,6 +147,7 @@ LuaCtx *LuaCtx::loadFile(CnfCtx *cnf, const char *file)
     if (!hostAddr(cnf->host(), &ctx->addr_, cnf->errbuf())) return 0;
   }
 
+  if (!helper->getBool("md5sum", &ctx->md5sum_, true)) return 0;
   if (!helper->getBool("rawcopy", &ctx->rawcopy_, false)) return 0;
   if (!helper->getInt("timeidx", &ctx->timeidx_, -1)) return 0;
   if (!helper->getBool("withtime", &ctx->withtime_, true)) return 0;

@@ -1,7 +1,7 @@
 CC      = gcc
 CXX     = g++
 INSTALL = install
-LDFLAGS = -lcurl -lrt -ldl -lpthread -lz
+LDFLAGS = -lcurl -lrt -ldl -lpthread -lz -lcrypto
 DEPSDIR = ".deps"
 ARLIBS  = $(DEPSDIR)/librdkafka.a $(DEPSDIR)/libluajit-5.1.a $(DEPSDIR)/libjsoncpp.a
 CFLAGS  += -I/usr/local/include/luajit-2.0

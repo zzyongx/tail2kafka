@@ -38,6 +38,19 @@ inline bool hexToInt(const char *ptr, int *val)
   return true;
 }
 
+#define HEXMAP "0123456789abcdef"
+inline const char *binToHex(const unsigned char *bin, size_t len, char *buffer)
+{
+  const static char *hexmap = HEXMAP;
+  char *ptr = buffer;
+  for (size_t i = 0; i < len; ++i) {
+    *ptr++ = hexmap[(bin[i] >> 4)];
+    *ptr++ = hexmap[bin[i] & 0x0F];
+  }
+  *ptr = '\0';
+  return buffer;
+}
+
 inline int toInt(const char *ptr, size_t maxlen = -1)
 {
   int i = 0;

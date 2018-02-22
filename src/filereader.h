@@ -5,6 +5,7 @@
 #include <vector>
 #include <stdint.h>
 #include <sys/types.h>
+#include <openssl/md5.h>
 
 #include "filerecord.h"
 class LuaCtx;
@@ -43,7 +44,7 @@ public:
   void tagRotate(int action = FILE_MOVED, const char *fptr = 0);
   bool remove();
 
-  bool tail2kafka(StartPosition pos = NIL, const struct stat *stPtr = 0, const char *oldFileName = 0);
+  bool tail2kafka(StartPosition pos = NIL, const struct stat *stPtr = 0, std::string *rawData = 0);
   bool checkCache();
 
   void initFileOffRecord(FileOffRecord * fileOffRecord);
@@ -82,6 +83,9 @@ private:
   size_t line_;
   size_t dline_;  // send line
   off_t  dsize_;  // send size
+
+  MD5_CTX md5Ctx_;
+  std::string md5_;
 
   size_t   qsize_;  // send queue size
   int64_t  lastQueueFullTime_;

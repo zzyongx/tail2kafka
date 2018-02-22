@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include "util.h"
 #include "gnuatomic.h"
 #include "bitshelper.h"
 #include "logger.h"
@@ -83,6 +84,8 @@ bool FileReader::init(char *errbuf)
   bits_set(flags_, FILE_WATCHED);
   if (ctx_->datafile() != ctx_->file()) bits_set(flags_, FILE_HISTORY);
 
+  MD5_Init(&md5Ctx_);
+  md5_.clear();
   return setStartPosition(st.st_size, errbuf);
 }
 
@@ -161,10 +164,13 @@ bool FileReader::reinit()
       inode_ = st.st_ino;
       bits_clear(flags_, FILE_OPENONLY);
 
+      MD5_Init(&md5Ctx_);
+      md5_.clear();
+
       if (doOpen) log_info(0, "open file %s fd %d inode %ld", file.c_str(), fd_, inode_);
       else log_info(0, "%d %s use holdFd instead of reopen inode %ld", fd_, ctx_->datafile().c_str(), inode_);
 
-      tail2kafka(START, &st);
+      tail2kafka(START, &st, buildFileStartRecord(time(0)));
     } else if (bits_test(flags_, FILE_HISTORY)) {
       if (ctx_->removeHistoryFile()) bits_clear(flags_, FILE_HISTORY);
       log_fatal(errno, "history file %s reinit error, try next %s", file.c_str(), ctx_->datafile().c_str());
@@ -312,10 +318,11 @@ void FileReader::checkHistoryRotate(const struct stat *stPtr)
 {
   if (bits_test(flags_, FILE_HISTORY) && stPtr->st_size == size_) {
     std::string oldFile = ctx_->datafile();
-    if (tail2kafka(END, stPtr, oldFile.c_str())) {
-      log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) historyrotate %s", fd_, oldFile.c_str(),
-               size_, dsize_, line_, dline_, oldFile.c_str());
-      util::Metrics::pingback("ROTATE", "file=%s&size=%lu", oldFile.c_str(), size_);
+
+    if (tail2kafka(END, stPtr, buildFileEndRecord(time(0), size_, oldFile.c_str()))) {
+      log_info(0, "%d %s size=%lu sendsize=%lu lines=%lu sendlines=%lu md5=%s historyrotate %s", fd_, oldFile.c_str(),
+               size_, dsize_, line_, dline_, md5_.c_str(), oldFile.c_str());
+      util::Metrics::pingback("ROTATE", "file=%s&size=%lu&md5=%s", oldFile.c_str(), size_, md5_.c_str());
 
       bits_set(flags_, FILE_OPENONLY);
       if (ctx_->removeHistoryFile()) bits_clear(flags_, FILE_HISTORY);
@@ -383,7 +390,8 @@ bool FileReader::remove()
 
     std::string oldFileName = rotateFileName;
     if (oldFileName.empty()) oldFileName = ctx_->file() + "." + sys::timeFormat(time(0), "%Y-%m-%d_%H:%M:%S");
-    rc = tail2kafka(END, &st, oldFileName.c_str());
+
+    rc = tail2kafka(END, &st, buildFileEndRecord(time(0), size_, oldFileName.c_str()));
 
     bool closeFd = true;
     if (bits_test(flags_, FILE_HISTORY)) rc = false;  // FILE_HISTORY exec flow #HISTORY_ROTATE
@@ -408,10 +416,10 @@ bool FileReader::remove()
     if (rc) {
       if (closeFd) {
         const char *oldFile = rotateFileName.empty() ? "NIL" : rotateFileName.c_str();
-        log_info(0, "%d %s size(%lu) send(%lu) line(%lu) send(%lu) %s %s, close fd %d", fd_, ctx_->file().c_str(),
-                 size_, dsize_, line_, dline_, flagsToString(flags_).c_str(), oldFile, fd_);
+        log_info(0, "%d %s size=%lu sendsize=%lu lines=%lu sendlines=%lu md5=%s %s %s, close fd %d", fd_, ctx_->file().c_str(),
+                 size_, dsize_, line_, dline_, md5_.c_str(), flagsToString(flags_).c_str(), oldFile, fd_);
 
-        util::Metrics::pingback("ROTATE", "file=%s&size=%lu", oldFile, size_);
+        util::Metrics::pingback("ROTATE", "file=%s&size=%lu&md5=%s", oldFile, size_, md5_.c_str());
 
         // TODO add inode file
         close(fd_);
@@ -452,8 +460,10 @@ bool FileReader::setStartPositionEnd(off_t fileSize, char *errbuf)
   return true;
 }
 
-bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, const char *oldFileName)
+bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::string *rawData)
 {
+  std::auto_ptr<std::string> rawDataPtr(rawData);
+
   if (util::atomic_get(&qsize_) > SEND_QUEUE_SIZE) {
     int queueFullTimeDuration = ctx_->cnf()->fasttime(TIMEUNIT_MILLI) - lastQueueFullTime_;
     if (queueFullTimeDuration > 1500) {    // suppress queue exceed log
@@ -484,7 +494,8 @@ bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, const c
     return true;
   }
 
-  if (pos == START || size_ == 0) propagateRawData(buildFileStartRecord(time(0)));
+  if (size_ == 0 && rawData == 0) rawDataPtr.reset(buildFileStartRecord(time(0)));
+  if (pos == START || size_ == 0) propagateRawData(rawDataPtr.release());
   if (pos == NIL) {   // limit tailsize
     size_ = stPtr->st_size - off > MAX_TAIL_SIZE ? size_ += MAX_TAIL_SIZE : stPtr->st_size;
   } else {
@@ -511,7 +522,7 @@ bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, const c
     propagateProcessLines(inode_, &loff);
   }
 
-  if (pos == END) propagateRawData(buildFileEndRecord(time(0), size_, oldFileName));
+  if (pos == END) propagateRawData(rawDataPtr.release());
   return true;
 }
 
@@ -553,16 +564,26 @@ std::string *FileReader::buildFileEndRecord(time_t now, off_t size, const char *
 {
   std::string dt = sys::timeFormat(now, "%Y-%m-%dT%H:%M:%S");
 
+  if (ctx_->md5sum() && md5_.empty()) {
+    char md5[33] = "";
+    unsigned char digest[16];
+    MD5_Final(digest, &md5Ctx_);   // MD5_final can only be called once
+    util::binToHex(digest, 16, md5);
+    md5_.assign(md5, 32);
+  }
+
   char buffer[8192];
   int n = snprintf(buffer, 8192, "#%s {\"time\":\"%s\", \"event\":\"END\", \"file\":\"%s\", "
-                   "\"size\":%lu, \"sendsize\":%lu, \"lines\":%lu, \"sendlines\":%lu}",
+                   "\"size\":%lu, \"sendsize\":%lu, \"lines\":%lu, \"sendlines\":%lu, \"md5\":\"%s\"}",
                    ctx_->cnf()->host().c_str(), dt.c_str(), oldFileName,
-                   size, dsize_, line_, dline_);
+                   size, dsize_, line_, dline_, md5_.c_str());
   return new std::string(buffer, n);
 }
 
 void FileReader::propagateRawData(const std::string *data)
 {
+  assert(data != 0);
+
   LuaCtx *ctx = ctx_;
   while (ctx) {
     if (!ctx->withhost()) continue;
@@ -587,6 +608,7 @@ void FileReader::processLines(ino_t inode, off_t *offPtr)
       if (offPtr) *offPtr += pos - buffer_ + 1;
 
       if (np > 0) line_++;
+      if (ctx_->md5sum() && pos != buffer_) MD5_Update(&md5Ctx_, buffer_, pos - buffer_ + 1);
       n = (pos+1) - buffer_;
     }
   } else {
@@ -596,6 +618,7 @@ void FileReader::processLines(ino_t inode, off_t *offPtr)
       if (offPtr) *offPtr += pos - (buffer_ + n) + 1;
 
       if (np > 0) line_++;
+      if (ctx_->md5sum() && pos != buffer_ + n) MD5_Update(&md5Ctx_, buffer_ + n, pos - (buffer_ + n) + 1);
       n = (pos+1) - buffer_;
       if (n == npos_) break;
     }

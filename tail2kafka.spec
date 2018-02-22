@@ -7,7 +7,9 @@ License:   Apache2
 Source0:   tail2kafka-2.0.0.tar.gz
 BuildRoot: /var/tmp/tail2kafka
 BuildRequires: libcurl-devel >= 7.19.7
+BuildRequires: openssl-devel >= 1.0.1e-30
 Requires: libcurl >= 7.19.7
+Requires: openssl >= 1.0.1e-30
 AutoReqProv: no
 
 %description

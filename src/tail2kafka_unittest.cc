@@ -338,12 +338,13 @@ DEFINE(initFileReader)
 
   time_t now = 1518493737;  // 2018-02-13 11:48:57
 
+  ctx->md5sum_ = false;
   std::string *s = ctx->fileReader_->buildFileStartRecord(now);
   std::string json = "#zzyong {'time':'2018-02-13T11:48:57', 'event':'START'}";
   check(*s == util::replace(&json, '\'', '"'), "start record error %s != %s", PTRS(*s), PTRS(json));
 
   s = ctx->fileReader_->buildFileEndRecord(now, 100, "oldFileName");
-  json = "#zzyong {'time':'2018-02-13T11:48:57', 'event':'END', 'file':'oldFileName', 'size':100, 'sendsize':0, 'lines':0, 'sendlines':0}";
+  json = "#zzyong {'time':'2018-02-13T11:48:57', 'event':'END', 'file':'oldFileName', 'size':100, 'sendsize':0, 'lines':0, 'sendlines':0, 'md5':''}";
   check(*s == util::replace(&json, '\'', '"'), "end record error %s != %s", PTRS(*s), PTRS(json));
 
   const char *topics[] = {"basic", "basic2", "filter", "grep", "transform", "aggregate"};
@@ -369,6 +370,7 @@ DEFINE(watchLoop)
   LuaCtx *ctx = getLuaCtx("basic");
   ctx->withhost_ = true;
   ctx->autocreat_ = false;
+  ctx->md5sum_ = true;
 
   InotifyCtx inotify(cnf);
   check(inotify.init(), "%s", cnf->errbuf());
@@ -423,14 +425,10 @@ DEFINE(watchLoop)
   check(records->size() == 1, "%d", (int) records->size());
   ptr = records->at(0)->data;
   check(ptr->find("\"event\":\"END\"") != std::string::npos, "%s", PTRS(*ptr));
-
-  sleep(1);
-  for (std::map<int, LuaCtx*>::iterator ite = inotify.fdToCtx_.begin(); ite != inotify.fdToCtx_.end(); ++ite) {
-    check(ite->second != ctx, "%s should be remove from inotify", PTRS(ctx->file()));
-  }
+  check(ptr->find("\"md5\":\"7b88e495713969b037e50ca7b9b54af5\"") != std::string::npos, "%s", PTRS(*ptr));
 
   time_t renameEndTime = cnf->fasttime(true, TIMEUNIT_SECONDS);
-  check(renameEndTime - renameStartTime > cnf->rotateDelay_, "%d", (int) (renameEndTime - renameStartTime));
+  check(renameEndTime - renameStartTime >= cnf->rotateDelay_, "%d", (int) (renameEndTime - renameStartTime));
 
   cnf->pollLimit_ = 300;
   ctx->rawcopy_ = true;

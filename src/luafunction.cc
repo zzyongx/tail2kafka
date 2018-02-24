@@ -180,7 +180,7 @@ int LuaFunction::process(off_t off, const char *line, size_t nline, std::vector<
     if (ctx_->timeidx() >= 0) {
       int idx = absidx(ctx_->timeidx(), fields.size());
       if (idx < 0 || (size_t) idx >= fields.size()) return false;
-      iso8601(fields[idx], &fields[idx]);
+      timeLocalToIso8601(fields[idx], &fields[idx]);
     }
 
     if (type_ == AGGREGATE) {

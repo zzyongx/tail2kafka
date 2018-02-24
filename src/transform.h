@@ -29,8 +29,11 @@ struct MessageInfo {
 
 class Transform {
 public:
-  enum Format { NGINX, RAW, ORC, JSON, NIL };
+  enum Format { NGINX, TSV, RAW, ORC, JSON, NIL };
   static Format stringToFormat(const char *s, size_t len);
+
+  enum TimeFormat { TIMELOCAL, ISO8601, TIMEFORMAT_NIL };
+  static TimeFormat stringToTimeFormat(const char *s);
 
   static Transform *create(const char *wdir, const char *topic, int partition,
                            CmdNotify *notify, const char *format, char *errbuf);
@@ -109,6 +112,7 @@ private:
     if (currentTimestamp_ == -1 || timestamp > currentTimestamp_) currentTimestamp_ = timestamp;
   }
 
+  bool parseFields(const char *ptr, size_t len, std::vector<std::string> *fields, time_t *timestamp);
   bool fieldsToJson(const std::vector<std::string> &fields, const std::string &method, const std::string &path,
                     std::map<std::string, std::string> *query, std::string *json) const;
 
@@ -126,10 +130,12 @@ private:
 
 private:
   LuaHelper *helper_;
+  Format inputFormat_;
 
   std::vector<std::string> fields_;
+  TimeFormat timestampFormat_;
   size_t timeLocalIndex_;
-  size_t requestIndex_;
+  int requestIndex_;
 
   bool deleteRequestField_;
   std::string timeLocalFormat_;

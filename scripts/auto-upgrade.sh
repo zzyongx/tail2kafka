@@ -13,7 +13,7 @@ log()
 
   if [ "$PINGBACKURL" != "" ]; then
     error=$(echo $error | sed -e 's| |%20|g')
-    curl -Ss "$PINGBACKURL?event=$event&product=$PRODUCT&error=$error" -o /dev/null
+    curl -Ss "$PINGBACKURL?event=$event&product=$PRODUCT&hostid=$HOSTID&error=$error" -o /dev/null
   fi
 }
 

@@ -52,7 +52,7 @@ bool hostAddr(const std::string &host, uint32_t *addr, char *errbuf)
   return true;
 }
 
-void split(const char *line, size_t nline, std::vector<std::string> *items)
+void split(const char *line, size_t nline, std::vector<std::string> *items, char delimiter)
 {
   bool esc = false;
   char want = '\0';
@@ -82,7 +82,7 @@ void split(const char *line, size_t nline, std::vector<std::string> *items)
       } else if (line[i] == '[') {
         want = ']';
         pos++;
-      } else if (line[i] == ' ') {
+      } else if (line[i] == delimiter) {
         if (i != pos) items->push_back(std::string(line + pos, i - pos));
         pos = i+1;
       }
@@ -91,14 +91,16 @@ void split(const char *line, size_t nline, std::vector<std::string> *items)
   if (pos != nline) items->push_back(std::string(line + pos, nline - pos));
 }
 
+enum DateTimeStatus { WaitYear, WaitMonth, WaitDay, WaitHour, WaitMin, WaitSec };
+
 static const char *MonthAlpha[12] = {
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
 
 // 28/Feb/2015:12:30:23 +0800 -> 2015-03-30T16:31:53
-bool iso8601(const std::string &t, std::string *iso, time_t *time)
+bool timeLocalToIso8601(const std::string &t, std::string *iso, time_t *time)
 {
-  enum { WaitYear, WaitMonth, WaitDay, WaitHour, WaitMin, WaitSec } status = WaitDay;
+  DateTimeStatus status = WaitDay;
   int year, mon, day, hour, min, sec;
   year = mon = day = hour = min = sec = 0;
 
@@ -140,18 +142,49 @@ bool iso8601(const std::string &t, std::string *iso, time_t *time)
   sprintf((char *) iso->data(), "%04d-%02d-%02dT%02d:%02d:%02d",
           year, mon, day, hour, min, sec);
 
-  if (time) {
-    struct tm tm;
-    tm.tm_sec  = sec;
-    tm.tm_min  = min;
-    tm.tm_hour = hour;
-    tm.tm_mday = day;
-    tm.tm_mon  = mon-1;
-    tm.tm_year = year-1900;
+  if (time) *time = mktime(year, mon, day, hour, min, sec);
+  return true;
+}
 
-    *time = mktime(&tm);
+// 2018-02-22 17:40:00.000
+bool parseIso8601(const std::string &t, time_t *timestamp)
+{
+  DateTimeStatus status = WaitYear;
+  int year, mon, day, hour, min, sec;
+  year = mon = day = hour = min = sec = 0;
+
+  const char *p = t.c_str();
+  while (*p && *p != ' ') {
+    if (*p == '-') {
+      if (status == WaitYear) status = WaitMonth;
+      else if (status == WaitMonth) status = WaitDay;
+      else return false;
+    } else if (*p == ' ' || *p == 'T') {
+      if (status == WaitDay) status = WaitHour;
+      else return false;
+    } else if (*p == ':') {
+      if (status == WaitHour) status = WaitMin;
+      else if (status == WaitMin) status = WaitSec;
+      else return false;
+    } else if (*p >= '0' && *p <= '9') {
+      int n = *p - '0';
+      if (status == WaitYear) year = year * 10 + n;
+      else if (status == WaitMonth) mon = mon * 10 + n;
+      else if (status == WaitDay) day = day * 10 + n;
+      else if (status == WaitHour) hour = hour * 10 + n;
+      else if (status == WaitMin) min = min * 10 + n;
+      else if (status == WaitSec) sec = sec * 10 + n;
+      else return false;
+    } else if (*p == '.') {
+      if (status == WaitSec) break;
+      else return false;
+    } else {
+      return false;
+    }
+    p++;
   }
 
+  *timestamp = mktime(year, mon, day, hour, min, sec);
   return true;
 }
 

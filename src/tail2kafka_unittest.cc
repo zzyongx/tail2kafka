@@ -47,16 +47,25 @@ DEFINE(iso8601)
   std::string iso;
   bool rc;
 
-  rc = iso8601("28/Feb/2015:12:30:23", &iso);
+  rc = timeLocalToIso8601("28/Feb/2015:12:30:23", &iso);
   check(rc, "%s", "28/Feb/2015:12:30:23");
   check(iso == "2015-02-28T12:30:23", "%s", iso.c_str());
 
-  rc = iso8601("28/Feb:12:30:23", &iso);
+  rc = timeLocalToIso8601("28/Feb:12:30:23", &iso);
   check(rc == false, "%s", "28/Feb:12:30:23");
 
-  rc = iso8601("28/Feb/2015:12:30", &iso);
+  rc = timeLocalToIso8601("28/Feb/2015:12:30", &iso);
   check(rc, "%s", "28/Feb/2015:12:30");
   check(iso == "2015-02-28T12:30:00", "%s", iso.c_str());
+
+  time_t timestamp;
+  rc = parseIso8601("2018-02-22 17:40:00.000", &timestamp);
+  check(rc, "%s", "2018-02-22 17:40:00.000");
+  check(timestamp == 1519292400, "%ld", timestamp);
+
+  rc = parseIso8601("2018-02-22T17:40:33", &timestamp);
+  check(rc, "%s", "2018-02-22T17:40:33");
+  check(timestamp == 1519292433, "%ld", timestamp);
 }
 
 DEFINE(hostshell)

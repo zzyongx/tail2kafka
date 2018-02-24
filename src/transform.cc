@@ -27,10 +27,18 @@ static size_t MAX_TOKEN_SIZE = sizeof(FORMAT_TOKENS)/sizeof(FORMAT_TOKENS[0]);
 Transform::Format Transform::stringToFormat(const char *ptr, size_t len)
 {
   if (strncmp(ptr, "nginx", len) == 0) return NGINX;
+  else if (strncmp(ptr, "tsv", len) == 0) return TSV;
   else if (strncmp(ptr, "raw", len) == 0) return RAW;
   else if (strncmp(ptr, "orc", len) == 0) return ORC;
   else if (strncmp(ptr, "json", len) == 0) return JSON;
   else return NIL;
+}
+
+Transform::TimeFormat Transform::stringToTimeFormat(const char *ptr)
+{
+  if (strcmp(ptr, "time_local") == 0) return TIMELOCAL;
+  else if (strcmp(ptr, "iso8601") == 0) return ISO8601;
+  else return TIMEFORMAT_NIL;
 }
 
 Transform *Transform::create(
@@ -259,8 +267,10 @@ LuaTransform::~LuaTransform()
 
 bool LuaTransform::init(Format inputFormat, Format outputFormat, int interval, int delay, const char *luaFile, char *errbuf)
 {
-  assert(inputFormat == NGINX);
+  assert(inputFormat == NGINX || inputFormat == TSV);
   assert(outputFormat == JSON);
+
+  inputFormat_ = inputFormat;
 
   if (interval > 3600 || interval < 60) {
     sprintf(errbuf, "use interval %d > 3600 or %d < 60 is meaningless", interval, interval);
@@ -290,19 +300,34 @@ bool LuaTransform::init(Format inputFormat, Format outputFormat, int interval, i
 
   if (!helper_->getArray("informat", &fields_, true)) return false;
 
-  std::vector<std::string>::iterator pos = std::find(fields_.begin(), fields_.end(), "time_local");
+  std::string timestampName;
+  if (!helper_->getString("timestamp_name", &timestampName, "time_local")) return false;
+
+  std::vector<std::string>::iterator pos = std::find(fields_.begin(), fields_.end(), timestampName.c_str());
   if (pos == fields_.end()) {
-    sprintf(errbuf, "time_local notfound in %s informat", luaFile);
+    sprintf(errbuf, "timestamp %s notfound in %s informat", timestampName.c_str(), luaFile);
     return false;
   }
   timeLocalIndex_ = pos - fields_.begin();
 
-  pos = std::find(fields_.begin(), fields_.end(), "request");
-  if (pos == fields_.end()) {
-    sprintf(errbuf, "request notfound in %s informat", luaFile);
+  std::string timestampFormat;
+  if (!helper_->getString("timestamp_format", &timestampFormat, "timelocal")) return false;
+  timestampFormat_ = stringToTimeFormat(timestampFormat.c_str());
+  if (timestampFormat_ == TIMEFORMAT_NIL) {
+    sprintf(errbuf, "unknow timestamp format %s in %s informat", timestampFormat.c_str(), luaFile);
     return false;
   }
-  requestIndex_ = pos - fields_.begin();
+
+  if (inputFormat == NGINX) {
+    pos = std::find(fields_.begin(), fields_.end(), "request");
+    if (pos == fields_.end()) {
+      sprintf(errbuf, "request notfound in %s informat", luaFile);
+      return false;
+    }
+    requestIndex_ = pos - fields_.begin();
+  } else {
+    requestIndex_ = -1;
+  }
 
   if (!helper_->getBool("delete_request_field", &deleteRequestField_, true)) return false;
   if (!helper_->getString("time_local_format", &timeLocalFormat_, "iso8601")) return false;
@@ -425,6 +450,12 @@ Json::Value toJsonValue(const std::string &s, char t)
 {
   if (t == 'i') return Json::Value(atoi(s.c_str()));
   else if (t == 'f') return Json::Value(atof(s.c_str()));
+  else if (t == 'j') {
+    Json::Value root;
+    Json::Reader reader;
+    if (reader.parse(s, root)) return root;
+    else return Json::Value(Json::objectValue);
+  }
   else return Json::Value(s);
 }
 
@@ -434,7 +465,7 @@ bool LuaTransform::fieldsToJson(
 {
   Json::Value root(Json::objectValue);
   for (size_t i = 0; i < fields.size(); ++i) {
-    if (fields_[i] == "-" || (deleteRequestField_ && i == requestIndex_) ||
+    if (fields_[i] == "-" || (deleteRequestField_ && (int) i == requestIndex_) ||
         fields_[i][0] == '#') continue;
 
     std::map<std::string, std::string>::const_iterator pos = requestTypeMap_.find(fields_[i]);
@@ -476,49 +507,61 @@ bool LuaTransform::fieldsToJson(
   return true;
 }
 
+bool LuaTransform::parseFields(const char *ptr, size_t len, std::vector<std::string> *fields, time_t *timestamp)
+{
+  char delimiter = ' ';
+  if (inputFormat_ == TSV) delimiter = '\t';
+
+  split(ptr, len, fields, delimiter);
+
+  if (fields->size() != fields_.size()) {
+    log_error(0, "%s:%d invalid field size %.*s", topic_, partition_, len, ptr);
+    return false;
+  }
+
+  if (timestampFormat_ == TIMELOCAL) {
+    std::string isoTime;
+    if (!timeLocalToIso8601(fields->at(timeLocalIndex_), &isoTime, timestamp)) {
+      log_error(0, "%s:%d invalid timestamp %.*s", topic_, partition_, len, ptr);
+      return false;
+    }
+    if (timeLocalFormat_ == "iso8601") (*fields)[timeLocalIndex_] = isoTime;
+  } else if (timestampFormat_ == ISO8601) {
+    if (!parseIso8601(fields->at(timeLocalIndex_), timestamp)) {
+      log_error(0, "%s:%d invalid timestamp %.*s", topic_, partition_, len, ptr);
+      return false;
+    }
+  } else {
+    assert(0);
+  }
+  return true;
+}
+
 uint32_t LuaTransform::write(rd_kafka_message_t *rkm, uint64_t *offsetPtr)
 {
   uint64_t offset = rkm->offset;
 
-  const char *ptr = (char *) rkm->payload;
-  int len = rkm->len;
-
-  if (ptr[len-1] == '\n') --len;
-
-  if (*ptr == '#') {
-    log_info(0, "%s:%d META %.*s", topic_, partition_, len, ptr);
+  MessageInfo info;
+  if (!MessageInfo::extract((char *) rkm->payload, rkm->len, &info, true) || info.type == MessageInfo::MSG) {
+    log_error(0, "%s:%d unknow message %.*s", topic_, partition_, (int) rkm->len, (char *) rkm->payload);
     return IGNORE | RKMFREE;
   }
-
-  if (*ptr == '*') {
-    const char *sp = (char *) memchr(ptr, ' ', len);
-    if (sp) {
-      len -= sp + 1 - ptr;
-      ptr = sp + 1;
-    }
+  if (info.type == MessageInfo::META) {
+    log_info(0, "%s:%d META %ld %.*s", topic_, partition_, (int) rkm->len, (char *) rkm->payload);
+    return IGNORE | RKMFREE;
   }
 
   std::vector<std::string> fields;
-  split(ptr, len, &fields);
-
-  if (fields.size() != fields_.size()) {
-    log_error(0, "%s:%d invalid field size %.*s", topic_, partition_, len, ptr);
-    return IGNORE | RKMFREE;
-  }
-
-  time_t      timestamp;
-  std::string isoTime;
-  if (!iso8601(fields[timeLocalIndex_], &isoTime, &timestamp)) {
-    log_error(0, "%s:%d invalid time_local %.*s", topic_, partition_, len, ptr);
-    return IGNORE | RKMFREE;
-  }
-  if (timeLocalFormat_ == "iso8601") fields[timeLocalIndex_] = isoTime;
+  time_t timestamp;
+  if (!parseFields(info.ptr, info.len, &fields, &timestamp)) return IGNORE | RKMFREE;
 
   std::string method, path;
   std::map<std::string, std::string> query;
-  if (!parseRequest(fields[requestIndex_].c_str(), &method, &path, &query)) {
-    log_error(0, "%s:%d invalid request %s", topic_, partition_, fields_[requestIndex_].c_str());
-    return IGNORE | RKMFREE;
+  if (requestIndex_ >= 0) {
+    if (!parseRequest(fields[requestIndex_].c_str(), &method, &path, &query)) {
+      log_error(0, "%s:%d invalid request %s", topic_, partition_, fields_[requestIndex_].c_str());
+      return IGNORE | RKMFREE;
+    }
   }
 
   updateTimestamp(timestamp);
@@ -526,7 +569,7 @@ uint32_t LuaTransform::write(rd_kafka_message_t *rkm, uint64_t *offsetPtr)
   uint32_t flags = rotate(intervalCnt, offset, offsetPtr);
 
   if (intervalCnt != currentIntervalCnt_ && intervalCnt != lastIntervalCnt_) {
-    log_info(0, "%s:%d message delay %.*s at %ld", topic_, partition_, len, ptr, currentTimestamp_);
+    log_info(0, "%s:%d message delay %.*s at %ld", topic_, partition_, info.len, info.ptr, currentTimestamp_);
     return flags | RKMFREE;
   }
 

@@ -124,7 +124,7 @@ LuaCtx *LuaCtx::loadFile(CnfCtx *cnf, const char *file)
   if (!helper->getString("file", &ctx->file_)) return 0;
   if (!ctx->testFile(file, cnf->errbuf())) return 0;
 
-  if (!helper->getString("fileAlias", &ctx->fileAlias_, ctx->topic_)) return false;
+  if (!helper->getString("fileAlias", &ctx->fileAlias_, ctx->topic_)) return 0;
   for (std::vector<LuaCtx *>::iterator ite = cnf->getLuaCtxs().begin(); ite != cnf->getLuaCtxs().end(); ++ite) {
     for (LuaCtx *existCtx = *ite; existCtx; existCtx = existCtx->next_) {
       if (ctx->fileAlias_ == existCtx->fileAlias_) {
@@ -138,7 +138,7 @@ LuaCtx *LuaCtx::loadFile(CnfCtx *cnf, const char *file)
   if (!helper->getString("startpos", &ctx->startPosition_, "LOG_START")) return 0;
   if (FileReader::stringToStartPosition(ctx->startPosition_.c_str()) == FileReader::NIL) {
     snprintf(cnf->errbuf(), MAX_ERR_LEN, "%s unknow start position %s", file, ctx->startPosition_.c_str());
-    return false;
+    return 0;
   }
 
   if (!helper->getInt("partition", &ctx->partition_, -1)) return 0;

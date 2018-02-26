@@ -15,6 +15,7 @@
 #include <sys/stat.h>
 #include <sys/uio.h>
 #include <fcntl.h>
+#include <unistd.h>
 #include <sys/time.h>
 #include <pthread.h>
 
@@ -115,7 +116,7 @@ public:
 
   bool print(const char *ptr, int len, bool autonl) {
     if (autonl) {
-      struct iovec iovs[2] = {{(void *) ptr, len}, {(void*) "\n", 1}};
+      struct iovec iovs[2] = {{(void *) ptr, static_cast<size_t>(len)}, {(void*) "\n", 1}};
       return writev(handle_, iovs, 2) != -1;
     } else {
       return write(handle_, ptr, len) != -1;
@@ -188,7 +189,7 @@ private:
     pthread_mutex_lock(&LOGGER_MUTEX);
     if (canRotate(now)) rc = openFile(now, tm);
     pthread_mutex_unlock(&LOGGER_MUTEX);
-    return 0;
+    return rc;
   }
 
   static int microseconds() {

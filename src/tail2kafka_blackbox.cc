@@ -15,6 +15,7 @@
 #include "unittesthelper.h"
 
 #define PADDING_LEN 13
+static const char *BROKERS = "127.0.0.1:9092";
 
 typedef std::vector<std::string> StringList;
 static const char *hostname = "zzyong";
@@ -26,6 +27,9 @@ void start_consumer();
 
 int main()
 {
+  const char *env = getenv("KAFKASERVER");
+  if (env) BROKERS = env;
+
   start_producer();
   sleep(1);
   start_consumer();
@@ -347,8 +351,6 @@ void start_producer()
     pthread_join(ptids[i], NULL);
   }
 }
-
-static const char *BROKERS = "127.0.0.1:9092";
 
 typedef void (*ConsumerFun)(rd_kafka_message_t *rkm);
 struct ConsumerCtx {

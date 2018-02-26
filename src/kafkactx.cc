@@ -97,7 +97,7 @@ rd_kafka_topic_t *KafkaCtx::initKafkaTopic(LuaCtx *ctx, const std::map<std::stri
     if (res != RD_KAFKA_CONF_OK) {
       snprintf(errbuf, MAX_ERR_LEN, "kafka topic conf %s=%s %s", ite->first.c_str(), ite->second.c_str(), errstr);
       rd_kafka_topic_conf_destroy(tconf);
-      return false;
+      return 0;
     }
   }
 

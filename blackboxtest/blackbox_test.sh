@@ -15,6 +15,14 @@ if [ ! -d $CFGDIR ]; then
   exit 1
 fi
 
+# delete.topic.enable=true
+test -f $BINDIR/../ENV.sh && source $BINDIR/../ENV.sh
+KAFKAHOME=${KAFKAHOME:-"/opt/kafka"}
+ZOOKEEPER=${ZOOKEEPER:-"localhost:2181/kafka"}
+KAFKASERVER=${KAFKASERVER:-"localhost:9092"}
+cp $CFGDIR/main.lua $CFGDIR/main.lua.backup
+sed -i -E "s|localhost:9092|$KAFKASERVER|g" $CFGDIR/main.lua
+
 echo "WARN: YOU MUST KILL tail2kafka and kafka2file first, both may create topic automatic"
 
 T2KDIR=logs
@@ -28,16 +36,14 @@ for TOPIC in "basic" "basic2" "filter" "grep" "aggregate" "transform"; do
   (test -f $K2FPID && test -d /proc/$(cat $K2FPID)) && kill $(cat $K2FPID); sleep 2;  kill -9 $(cat $K2FPID 2>/dev/null) 2>/dev/null
 done
 
-find logs -type f -name "*.log" -delete
+find $T2KDIR -type f -name "*.log" -delete
 
-ZK=localhost:2181/kafka
-# delete.topic.enable=true
-cd /opt/kafka
+cd $KAFKAHOME
 for TOPIC in "basic" "basic2" "filter" "grep" "aggregate" "transform"; do
-  bin/kafka-topics.sh --delete --if-exists --zookeeper $ZK  --topic $TOPIC
-  bin/kafka-topics.sh --create --zookeeper $ZK --replication-factor 1 --partitions 1 --topic $TOPIC
+  bin/kafka-topics.sh --delete --if-exists --zookeeper $ZOOKEEPER  --topic $TOPIC
+  bin/kafka-topics.sh --create --zookeeper $ZOOKEEPER --replication-factor 1 --partitions 1 --topic $TOPIC
 done
-if bin/kafka-topics.sh --list --zookeeper $ZK | grep -e 'aggregate|basic|filter|grep|transform'; then
+if bin/kafka-topics.sh --list --zookeeper $ZOOKEEPER | grep -e 'aggregate|basic|filter|grep|transform'; then
   echo "delete kafka topic error"
   exit 1
 fi
@@ -50,7 +56,7 @@ rm -f $K2FDIR/basic.0.offset $OLDFILE
 export BLACKBOXTEST_OUTFILE=$K2FDIR/catnull
 
 K2FPID=$K2FDIR/basic.0.lock
-$BUILDDIR/kafka2file 127.0.0.1:9092 basic 0 offset-end $K2FDIR $BUILDDIR/../scripts/catnull.sh &
+$BUILDDIR/kafka2file $KAFKASERVER basic 0 offset-end $K2FDIR $BUILDDIR/../scripts/catnull.sh &
 sleep 5
 if [ ! -f $K2FPID ] || [ ! -d /proc/$(cat $K2FPID) ]; then
   echo "start kafka2file failed"
@@ -62,8 +68,10 @@ if [ ! -f $PIDF ] || [ ! -d /proc/$(cat $PIDF) ]; then
   echo "start tail2kafka failed"
   exit 1;
 fi
+mv $CFGDIR/main.lua.backup $CFGDIR/main.lua
 
 sleep 1
+export KAFKASERVER
 $BUILDDIR/tail2kafka_blackbox
 
 echo "WAIT kafka2file ... "; sleep 20

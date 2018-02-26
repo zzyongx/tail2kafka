@@ -73,7 +73,7 @@ public:
   void run();
 
   void stop(bool force = false) {
-    submit((Task *) (force ? 0 : -1));
+    submit(static_cast<Task *>(force ? 0 : (void *) 0x01));
 
     for (std::vector<pthread_t>::iterator ite = tids_.begin(); ite != tids_.end(); ++ite) {
       pthread_join(*ite, 0);

@@ -498,7 +498,7 @@ bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::st
   else if (size_ == 0) propagateRawData(buildFileStartRecord(time(0)));
 
   if (pos == NIL) {   // limit tailsize
-    size_ = stPtr->st_size - off > MAX_TAIL_SIZE ? size_ += MAX_TAIL_SIZE : stPtr->st_size;
+    size_ = stPtr->st_size - off > MAX_TAIL_SIZE ? off + MAX_TAIL_SIZE : stPtr->st_size;
   } else {
     size_ = stPtr->st_size;
   }

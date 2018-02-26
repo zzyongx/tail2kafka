@@ -36,7 +36,7 @@ Transform::Format Transform::stringToFormat(const char *ptr, size_t len)
 
 Transform::TimeFormat Transform::stringToTimeFormat(const char *ptr)
 {
-  if (strcmp(ptr, "time_local") == 0) return TIMELOCAL;
+  if (strcmp(ptr, "timelocal") == 0) return TIMELOCAL;
   else if (strcmp(ptr, "iso8601") == 0) return ISO8601;
   else return TIMEFORMAT_NIL;
 }
@@ -165,7 +165,7 @@ void MirrorTransform::addToCache(rd_kafka_message_t *rkm, const MessageInfo &inf
   fdCache.pos = info.pos;
   if (!fdCache.rkms) fdCache.rkms = new rd_kafka_message_t*[IOV_MAX];
 
-  struct iovec iov = { (void *) info.ptr, info.len };
+  struct iovec iov = { (void *) info.ptr, static_cast<size_t>(info.len) };
   fdCache.iovs.push_back(iov);
   fdCache.rkms[fdCache.rkmSize++] = rkm;
 }
@@ -515,20 +515,20 @@ bool LuaTransform::parseFields(const char *ptr, size_t len, std::vector<std::str
   split(ptr, len, fields, delimiter);
 
   if (fields->size() != fields_.size()) {
-    log_error(0, "%s:%d invalid field size %.*s", topic_, partition_, len, ptr);
+    log_error(0, "%s:%d invalid field size %.*s", topic_, partition_, static_cast<int>(len), ptr);
     return false;
   }
 
   if (timestampFormat_ == TIMELOCAL) {
     std::string isoTime;
     if (!timeLocalToIso8601(fields->at(timeLocalIndex_), &isoTime, timestamp)) {
-      log_error(0, "%s:%d invalid timestamp %.*s", topic_, partition_, len, ptr);
+      log_error(0, "%s:%d invalid timestamp %.*s", topic_, partition_, static_cast<int>(len), ptr);
       return false;
     }
     if (timeLocalFormat_ == "iso8601") (*fields)[timeLocalIndex_] = isoTime;
   } else if (timestampFormat_ == ISO8601) {
     if (!parseIso8601(fields->at(timeLocalIndex_), timestamp)) {
-      log_error(0, "%s:%d invalid timestamp %.*s", topic_, partition_, len, ptr);
+      log_error(0, "%s:%d invalid timestamp %.*s", topic_, partition_, static_cast<int>(len), ptr);
       return false;
     }
   } else {
@@ -547,7 +547,7 @@ uint32_t LuaTransform::write(rd_kafka_message_t *rkm, uint64_t *offsetPtr)
     return IGNORE | RKMFREE;
   }
   if (info.type == MessageInfo::META) {
-    log_info(0, "%s:%d META %ld %.*s", topic_, partition_, (int) rkm->len, (char *) rkm->payload);
+    log_info(0, "%s:%d META %lu %.*s", topic_, partition_, offset, (int) rkm->len, (char *) rkm->payload);
     return IGNORE | RKMFREE;
   }
 

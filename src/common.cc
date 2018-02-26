@@ -154,7 +154,7 @@ bool parseIso8601(const std::string &t, time_t *timestamp)
   year = mon = day = hour = min = sec = 0;
 
   const char *p = t.c_str();
-  while (*p && *p != ' ') {
+  while (*p && *p != '.') {
     if (*p == '-') {
       if (status == WaitYear) status = WaitMonth;
       else if (status == WaitMonth) status = WaitDay;
@@ -175,14 +175,12 @@ bool parseIso8601(const std::string &t, time_t *timestamp)
       else if (status == WaitMin) min = min * 10 + n;
       else if (status == WaitSec) sec = sec * 10 + n;
       else return false;
-    } else if (*p == '.') {
-      if (status == WaitSec) break;
-      else return false;
     } else {
       return false;
     }
     p++;
   }
+  if (status != WaitSec) return false;
 
   *timestamp = mktime(year, mon, day, hour, min, sec);
   return true;

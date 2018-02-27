@@ -45,9 +45,9 @@ char * const *CmdNotify::buildEnv(const char *file, const char *oriFile, time_t 
     envp[i++] = sizePtr;
   }
 
-  static char md5Ptr[32];
+  static char md5Ptr[64];
   if (md5) {
-    snprintf(md5Ptr, 32, "NOTIFY_FILEMD5=%s", md5);
+    snprintf(md5Ptr, 64, "NOTIFY_FILEMD5=%s", md5);
     envp[i++] = md5Ptr;
   }
 

@@ -68,6 +68,7 @@ private:
   bool checkRewatch();
   void checkHistoryRotate(const struct stat *stPtr);
   bool waitRotate();
+  bool checkRotate(const struct stat *stPtr, std::string *rotateFileName, bool *closeFd);
 
 private:
   int      fd_;

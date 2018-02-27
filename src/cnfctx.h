@@ -81,6 +81,9 @@ public:
   const std::string &libdir() const { return libdir_; }
   const std::string &logdir() const { return logdir_; }
 
+  void setTailLimit(bool tailLimit) { tailLimit_ = tailLimit; }
+  bool getTailLimit() const { return tailLimit_; }
+
 private:
   CnfCtx();
 
@@ -108,6 +111,8 @@ private:
 
   LuaHelper  *helper_;
   FileOff    *fileOff_;
+
+  bool tailLimit_;
 };
 
 #endif

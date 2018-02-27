@@ -33,3 +33,8 @@ done
 if [ "$BLACKBOXTEST_OUTFILE" != "" ]; then
   printenv | grep NOTIFY_ > $BLACKBOXTEST_OUTFILE
 fi
+
+if [ "$BLACKBOXTEST_OUTFILE_TPL" != "" ]; then
+  ORIFILE=$(basename $NOTIFY_ORIFILE)
+  printenv | grep NOTIFY_ > $BLACKBOXTEST_OUTFILE_TPL.$ORIFILE
+fi

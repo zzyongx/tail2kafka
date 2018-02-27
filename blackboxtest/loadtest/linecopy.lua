@@ -1,4 +1,5 @@
-file      = "/search/ted/biglog"
+file      = "BIGLOG"
 topic     = "biglog"
 autocreat = true
+autoparti = false
 rawcopy   = false

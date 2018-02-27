@@ -116,8 +116,9 @@ void InotifyCtx::loop()
 
   long savedTime = cnf_->fasttime(true, TIMEUNIT_MILLI);
   while (runStatus->get() == RunStatus::WAIT) {
-    int nfd = poll(fds, 1, 500);
+    int nfd = poll(fds, 1, cnf_->getTailLimit() ? 1 : 500);
     cnf_->fasttime(true, TIMEUNIT_SECONDS);
+    cnf_->setTailLimit(false);
 
     if (nfd == -1) {
       if (errno != EINTR) return;

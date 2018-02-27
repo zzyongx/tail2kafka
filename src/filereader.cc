@@ -522,6 +522,7 @@ bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::st
   if (stPtr->st_size - off > MAX_TAIL_SIZE) { // limit tailsize
     log_info(0, "%d %s limit tail, off %ld, size %ld", fd_, ctx_->datafile().c_str(), off, stPtr->st_size);
     size_ = off + MAX_TAIL_SIZE;
+    ctx_->cnf()->setTailLimit(true);
   } else {
     size_ = stPtr->st_size;
   }

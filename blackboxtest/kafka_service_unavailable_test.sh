@@ -11,15 +11,20 @@ BUILDDIR=$BINDIR/../build
 
 if [ ! -d $CFGDIR ]; then
   echo "$CFGDIR NOT FOUND"
-  echo "disable autoparti"
-  echo "main.lua partition=0"
-  echo "main.lua pidfile=$PIDF"
   exit 1
 fi
 
 UNBLOCK_KAFKA="iptables -D OUTPUT -p tcp --dport 9092 -j REJECT --reject-with tcp-reset"
 BLOCK_KAFKA="iptables -A OUTPUT -p tcp --dport 9092 -j REJECT --reject-with tcp-reset"
 echo "UNBLOCK_KAFKA $UNBLOCK_KAFKA"; $UNBLOCK_KAFKA
+
+# delete.topic.enable=true
+test -f $BINDIR/../ENV.sh && source $BINDIR/../ENV.sh
+KAFKAHOME=${KAFKAHOME:-"/opt/kafka"}
+ZOOKEEPER=${ZOOKEEPER:-"localhost:2181/kafka"}
+KAFKASERVER=${KAFKASERVER:-"localhost:9092"}
+cp $CFGDIR/main.lua $CFGDIR/main.lua.backup
+sed -i -E "s|localhost:9092|$KAFKASERVER|g" $CFGDIR/main.lua
 
 echo "WARN: YOU MUST KILL tail2kafka and kafka2file first, both may create topic automatic"
 
@@ -39,18 +44,16 @@ find $T2KDIR -type f -name "*.log*" -delete
 test -d $K2FDIR || mkdir $K2FDIR
 find $K2FDIR -type f -delete
 
-ZK=localhost:2181/kafka
-# delete.topic.enable=true
-cd /opt/kafka
-bin/kafka-topics.sh --delete --if-exists --zookeeper $ZK  --topic $TOPIC
-if bin/kafka-topics.sh --list --zookeeper $ZK | grep -q '\<basic\>'; then
+cd $KAFKAHOME
+bin/kafka-topics.sh --delete --if-exists --zookeeper $ZOOKEEPER  --topic $TOPIC
+if bin/kafka-topics.sh --list --zookeeper $ZOOKEEPER | grep -q '\<basic\>'; then
   echo "delete kafka topic $TOPIC error"
   exit 1
 fi
-bin/kafka-topics.sh --create --zookeeper $ZK --replication-factor 1 --partitions 1 --topic $TOPIC
+bin/kafka-topics.sh --create --zookeeper $ZOOKEEPER --replication-factor 1 --partitions 1 --topic $TOPIC
 cd -
 
-$BUILDDIR/kafka2file 127.0.0.1:9092 basic 0 offset-end $K2FDIR &
+$BUILDDIR/kafka2file $KAFKASERVER basic 0 offset-end $K2FDIR &
 sleep 5
 if [ ! -f $K2FPID ] || [ ! -d /proc/$(cat $K2FPID) ]; then
   echo "start kafka2file failed"
@@ -72,6 +75,7 @@ if [ ! -f $PIDF ] || [ ! -d /proc/$(cat $PIDF) ]; then
   echo "start tail2kafka failed"
   exit 1;
 fi
+mv $CFGDIR/main.lua.backup $CFGDIR/main.lua
 
 echo "wait history file be consumed ..."; sleep 30
 if [ -f $LIBDIR/basic.history ]; then
@@ -154,7 +158,7 @@ done
 CHILDPID=$(pgrep -P $(cat $PIDF))
 OPENFILENUM=0;
 for f in $(ls /proc/$CHILDPID/fd/); do
-  if readlink /proc/$CHILDPID/fd/$f | grep basic.log; then
+  if readlink /proc/$CHILDPID/fd/$f | grep -q basic.log; then
     OPENFILENUM=$((OPENFILENUM+1));
   fi
 done
@@ -165,5 +169,3 @@ if [ $OPENFILENUM != 1 ]; then
 fi
 
 echo "OK"
-
-# qsize has bug, if set start, but without tail2kafka, should tail2kafka after init

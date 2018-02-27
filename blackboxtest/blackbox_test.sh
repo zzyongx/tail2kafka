@@ -63,7 +63,7 @@ if [ ! -f $K2FPID ] || [ ! -d /proc/$(cat $K2FPID) ]; then
   exit 1
 fi
 
-$BUILDDIR/tail2kafka $CFGDIR
+$BUILDDIR/tail2kafka $CFGDIR; sleep 2
 if [ ! -f $PIDF ] || [ ! -d /proc/$(cat $PIDF) ]; then
   echo "start tail2kafka failed"
   exit 1;

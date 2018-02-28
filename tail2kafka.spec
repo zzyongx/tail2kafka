@@ -1,6 +1,6 @@
 Name:      tail2kafka
 Version:   2.0.0
-Release:   9
+Release:   10
 Summary:   stream file data to kafka/stream kafka data to file
 Group:     tail2kafka
 License:   Apache2
@@ -72,6 +72,9 @@ rm -rf $RPM_BUILD_ROOT
 ln -sf ../init.d/tail2kafka /etc/rc.d/rc3.d/S88jetty
 
 %changelog
+* Tue Feb 27 2018 zzyongx <iamzhengzhiyong@gmail.com> -2.0.0-10
+- bugfix: history file may lost
+
 * Thu Feb 22 2018 zzyongx <iamzhengzhiyong@gmail.com> -2.0.0-9
 - Feature: support md5 checksum
 

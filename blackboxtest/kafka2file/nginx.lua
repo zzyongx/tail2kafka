@@ -27,6 +27,7 @@ request_map = {
 request_type = {
   ["status"]          = "i",
   ["request_time"]    = 'f',
+  ["uri"]             = {"prefix", "/host"}
 }
 
 -- if transform_param_fields is not nil, pass the selected fields to transform

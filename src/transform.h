@@ -7,6 +7,8 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <librdkafka/rdkafka.h>
+#include <json/json.h>
+
 #include "luahelper.h"
 #include "cmdnotify.h"
 
@@ -94,7 +96,34 @@ private:
   std::map<std::string, FdCache> fdCache_;
 };
 
+struct JsonValueTransform {
+  virtual const char *name() const { return "undefine"; }
+  virtual Json::Value call(const std::string &val) const = 0;
+};
+
+class JsonValueTypeTransform : public JsonValueTransform {
+public:
+  enum Type { INT, DOUBLE, JSON };
+  JsonValueTypeTransform(Type type) : type_(type) {}
+  const char *name() const { return "JsonValueTypeTransform"; }
+  Json::Value call(const std::string &val) const;
+
+private:
+  Type type_;
+};
+
+class JsonValuePrefixTransform : public JsonValueTransform {
+public:
+  JsonValuePrefixTransform(const std::string &prefix) : prefix_(prefix) {}
+  const char *name() const { return "JsonValuePrefixTransform"; }
+  Json::Value call(const std::string &val) const;
+
+private:
+  std::string prefix_;
+};
+
 class LuaTransform : public Transform {
+  template<class T> friend class UNITTEST_HELPER;
 public:
   LuaTransform(const char *wdir, const char *topic, int partition, CmdNotify *notify)
     : Transform(wdir, topic, partition, notify), helper_(0), currentTimestamp_(0),
@@ -141,7 +170,7 @@ private:
   std::string timeLocalFormat_;
 
   std::map<std::string, std::string> requestNameMap_;
-  std::map<std::string, std::string> requestTypeMap_;
+  std::map<std::string, JsonValueTransform *> requestValueMap_;
 
   int interval_;
   int delay_;

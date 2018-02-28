@@ -69,6 +69,25 @@ DEFINE(messageInfoExtrace)
   check(strncmp(info.ptr, payload.c_str(), info.len) == 0, "info payload error %.*s", info.len, info.ptr);
 }
 
+DEFINE(luaTransformInit)
+{
+  LuaTransform *luaTransform = new LuaTransform(WDIR, TOPIC, atoi(PARTITION), 0);
+  bool rc = luaTransform->init(Transform::NGINX, Transform::JSON, 60, 10, LUAFILE("nginx.lua"), errbuf);
+  check(rc, "luaTransform.init error %s", errbuf);
+
+  JsonValueTransform *fun = luaTransform->requestValueMap_["status"];
+  check(fun, "status fun not found");
+  check(strcmp(fun->name(), "JsonValueTypeTransform") == 0, "status fun name %s", fun->name());
+  Json::Value value = fun->call("1234");
+  check(value.isInt() && value.asInt() == 1234, "status fun call ok");
+
+  fun = luaTransform->requestValueMap_["uri"];
+  check(fun, "uri fun not found");
+  check(strcmp(fun->name(), "JsonValuePrefixTransform") == 0, "uri fun name %s", fun->name());
+  value = fun->call("/api/null");
+  check(value.isString() && value.asString() == "/host/api/null", "uri fun call error");
+}
+
 inline rd_kafka_message_t *initKafkaMessage(rd_kafka_message_t *rkm, const char *payload, uint64_t offset)
 {
   rkm->payload = (void *) payload;
@@ -171,6 +190,8 @@ int main()
 
   TEST(parseRequest);
   TEST(messageInfoExtrace);
+
+  TEST(luaTransformInit);
 
   bool withTimeout;
   ENV_SET("WITH_TIMEOUT", &withTimeout);

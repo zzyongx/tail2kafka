@@ -136,6 +136,62 @@ public:
     return rc;
   }
 
+  bool getTable(const char *name, std::map<std::string, std::vector<std::string> > *map, bool required = true) {
+    bool rc = true;
+    lua_getglobal(L_, name);
+
+    if (lua_isnil(L_, 1)) {
+      if (required) {
+        snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be hash table", file_.c_str(), name);
+        rc = false;
+      }
+    } else if (lua_istable(L_, 1)) {
+      lua_pushnil(L_);
+      while (rc && lua_next(L_, 1) != 0) {
+        std::string key;
+        if (lua_type(L_, -2) == LUA_TSTRING) {
+          key = lua_tostring(L_, -2);
+        } else {
+          snprintf(errbuf_, MAX_ERR_LEN, "%s %s key must be string", file_.c_str(), name);
+          rc = false;
+          break;
+        }
+
+        std::vector<std::string> value;
+        if (lua_type(L_, -1) == LUA_TSTRING || lua_type(L_, -1) == LUA_TNUMBER) {
+          value.push_back(lua_tostring(L_, -1));
+          map->insert(std::make_pair(key, value));
+        } else if (lua_type(L_, -1) == LUA_TTABLE) {
+          int size = lua_objlen(L_, -1);
+          int top = lua_gettop(L_);
+          for (int i = 0; rc && i < size; ++i) {
+            lua_pushinteger(L_, i+1);
+            lua_gettable(L_, -2);
+            if (lua_type(L_, -1) == LUA_TSTRING || lua_type(L_, -1) == LUA_TNUMBER) {
+              value.push_back(lua_tostring(L_, -1));
+            } else {
+              snprintf(errbuf_, MAX_ERR_LEN, "%s %s->%s element #%d must be string",
+                       file_.c_str(), name, key.c_str(), i);
+              rc = false;
+            }
+            lua_settop(L_, top);
+          }
+          if (rc) map->insert(std::make_pair(lua_tostring(L_, -2), value));
+        } else {
+          snprintf(errbuf_, MAX_ERR_LEN, "%s %s->%s value must be string/array", file_.c_str(), name, key.c_str());
+          rc = false;
+        }
+        lua_pop(L_, 1);
+      }
+    } else {
+      snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be hash table", file_.c_str(), name);
+      rc = false;
+    }
+
+    lua_settop(L_, 0);
+    return rc;
+  }
+
   bool getArray(const char *name, std::vector<int> *value, bool required = true) {
     bool rc = true;
     lua_getglobal(L_, name);

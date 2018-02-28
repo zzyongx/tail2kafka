@@ -5,7 +5,6 @@
 #include <unistd.h>
 #include <limits.h>
 #include <sys/uio.h>
-#include <json/json.h>
 
 #include "logger.h"
 #include "util.h"
@@ -265,6 +264,53 @@ LuaTransform::~LuaTransform()
   }
 }
 
+Json::Value JsonValueTypeTransform::call(const std::string &s) const
+{
+  switch(type_) {
+  case INT: return Json::Value(atoi(s.c_str()));
+  case DOUBLE: return Json::Value(atof(s.c_str()));
+  case JSON:
+    Json::Value root;
+    Json::Reader reader;
+    if (reader.parse(s, root)) return root;
+    else return Json::Value(Json::objectValue);
+  }
+  return Json::nullValue;
+}
+
+Json::Value JsonValuePrefixTransform::call(const std::string &s) const
+{
+  return Json::Value(prefix_ + s);
+}
+
+static bool initJsonValueTransform(const std::map<std::string, std::vector<std::string> > &valueMap,
+                                   std::map<std::string, JsonValueTransform *> *funMap, char *errbuf)
+{
+  for (std::map<std::string, std::vector<std::string> >::const_iterator ite = valueMap.begin();
+       ite != valueMap.end(); ++ite) {
+    JsonValueTransform *fun;
+    if (ite->second[0] == "i") {
+      fun = new JsonValueTypeTransform(JsonValueTypeTransform::INT);
+    } else if (ite->second[0] == "f") {
+      fun = new JsonValueTypeTransform(JsonValueTypeTransform::DOUBLE);
+    } else if (ite->second[0] == "j") {
+      fun = new JsonValueTypeTransform(JsonValueTypeTransform::JSON);
+    } else if (ite->second[0] == "prefix") {
+      if (ite->second.size() == 2) {
+        fun = new JsonValuePrefixTransform(ite->second[1]);
+      } else {
+        snprintf(errbuf, 1024, "function prefix required 1 parameter");
+        return false;
+      }
+    } else {
+      snprintf(errbuf, 1024, "unknow function %s", ite->first.c_str());
+      return false;
+    }
+    (*funMap)[ite->first] = fun;
+  }
+  return true;
+}
+
 bool LuaTransform::init(Format inputFormat, Format outputFormat, int interval, int delay, const char *luaFile, char *errbuf)
 {
   assert(inputFormat == NGINX || inputFormat == TSV);
@@ -333,8 +379,13 @@ bool LuaTransform::init(Format inputFormat, Format outputFormat, int interval, i
   if (!helper_->getString("time_local_format", &timeLocalFormat_, "iso8601")) return false;
 
   if (!helper_->getTable("request_map", &requestNameMap_, false)) return false;
-  if (!helper_->getTable("request_type", &requestTypeMap_, false)) return false;
 
+  std::map<std::string, std::vector<std::string> > requestValueMap;
+  if (!helper_->getTable("request_type", &requestValueMap, false)) return false;
+
+  if (!initJsonValueTransform(requestValueMap, &requestValueMap_, errbuf)) return false;
+
+  currentTimestamp_ = -1;
   return true;
 }
 
@@ -446,17 +497,12 @@ uint32_t LuaTransform::rotate(long intervalCnt, uint64_t offset, uint64_t *offse
   return flags;
 }
 
-Json::Value toJsonValue(const std::string &s, char t)
+inline Json::Value toJsonValue(const std::map<std::string, JsonValueTransform *> &map,
+                               const std::string &name, const std::string &value)
 {
-  if (t == 'i') return Json::Value(atoi(s.c_str()));
-  else if (t == 'f') return Json::Value(atof(s.c_str()));
-  else if (t == 'j') {
-    Json::Value root;
-    Json::Reader reader;
-    if (reader.parse(s, root)) return root;
-    else return Json::Value(Json::objectValue);
-  }
-  else return Json::Value(s);
+  std::map<std::string, JsonValueTransform *>::const_iterator pos = map.find(name);
+  if (pos == map.end()) return Json::Value(value);
+  else return pos->second->call(value);
 }
 
 bool LuaTransform::fieldsToJson(
@@ -468,30 +514,31 @@ bool LuaTransform::fieldsToJson(
     if (fields_[i] == "-" || (deleteRequestField_ && (int) i == requestIndex_) ||
         fields_[i][0] == '#') continue;
 
-    std::map<std::string, std::string>::const_iterator pos = requestTypeMap_.find(fields_[i]);
-    char type = (pos != requestTypeMap_.end() && !pos->second.empty()) ? pos->second[0] : 's';
-    root[fields_[i]] = toJsonValue(fields[i], type);
+    root[fields_[i]] = toJsonValue(requestValueMap_, fields_[i], fields[i]);
   }
 
   std::string qskey;
   for (std::map<std::string, std::string>::const_iterator ite = requestNameMap_.begin();
        ite != requestNameMap_.end(); ++ite) {
-    if (ite->second == "__uri__") root[ite->first] = path;
-    else if (ite->second == "__method__") root[ite->first] = method;
-    else if (ite->second == "__query__") qskey = ite->first;
-    else {
+    if (ite->second == "__query__") {
+      qskey = ite->first;
+      continue;
+    }
+
+    const std::string *valuePtr = 0;
+    if (ite->second == "__uri__") {
+      valuePtr = &path;
+    } else if (ite->second == "__method__") {
+      valuePtr = &method;
+    } else {
       std::map<std::string, std::string>::iterator pos = query->find(ite->second);
-      if (pos != query->end()) {
-        std::map<std::string, std::string>::const_iterator pos2 = requestTypeMap_.find(ite->first);
-        if (pos2 != requestTypeMap_.end() && !pos2->second.empty()) {
-          root[ite->first] = toJsonValue(pos->second, pos2->second[0]);
-        } else {
-          root[ite->first] = pos->second;
-        }
-        query->erase(pos);
-      } else if (!root.isMember(ite->first)) {
-        root[ite->first] = Json::nullValue;
-      }
+      if (pos != query->end()) valuePtr = &pos->second;
+    }
+
+    if (valuePtr) {
+      root[ite->first] = toJsonValue(requestValueMap_, ite->first, *valuePtr);
+    } else if (!root.isMember(ite->first)) {
+      root[ite->first] = Json::nullValue;
     }
   }
 

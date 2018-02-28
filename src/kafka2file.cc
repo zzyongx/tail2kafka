@@ -79,17 +79,20 @@ int main(int argc, char *argv[])
     return EXIT_FAILURE;
   }
 
+  char buffer[1024];
+  snprintf(buffer, 1024, "%s/%s", datadir, topic);
+  if (mkdir(buffer, 0755) != 0 && errno != EEXIST) {
+    fprintf(stderr, "create work dir %s error, %d:%s\n", buffer, errno, strerror(errno));
+    return EXIT_FAILURE;
+  }
+
   if (!initSingleton(datadir, topic, partition)) {
     fprintf(stderr, "%s:%d instance already exists\n", topic, partition);
     return EXIT_FAILURE;
   }
 
-  char buffer[1024];
   snprintf(buffer, 1024, "%s/%s.%d.log", datadir, topic, partition);
   Logger::create(buffer, Logger::DAY, true);
-
-  snprintf(buffer, 1024, "%s/%s", datadir, topic);
-  mkdir(buffer, 0755);
 
   CmdNotify cmdNotify(notify, datadir, topic, partition);
 

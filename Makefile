@@ -57,8 +57,8 @@ get-deps:
 
 	@echo "compile librdkafka" && \
 	  cd $(DEPSDIR) && \
-    (test -f v0.11.3 || wget https://github.com/edenhill/librdkafka/archive/v0.11.3.tar.gz) && \
-	  rm -rf librdkafka-0.11.3 && tar xzf v0.11.3 && cd librdkafka-0.11.3 && \
+    (test -f v0.11.3.tar.gz || wget https://github.com/edenhill/librdkafka/archive/v0.11.3.tar.gz) && \
+	  rm -rf librdkafka-0.11.3 && tar xzf v0.11.3.tar.gz && cd librdkafka-0.11.3 && \
     ./configure --disable-ssl --disable-sasl && make -j2 && make install
 	cp /usr/local/lib/librdkafka.a $(DEPSDIR)
 

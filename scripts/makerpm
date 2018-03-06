@@ -11,6 +11,7 @@ TMPDIR=/tmp/$RPMNAM-$RPMVER
 rm -rf $TMPDIR && mkdir $TMPDIR
 
 cp . $TMPDIR -a
+mkdir -p /root/rpmbuild/SOURCES/
 
 cd /tmp
 tar czf $RPMNAM-$RPMVER.tar.gz $RPMNAM-$RPMVER

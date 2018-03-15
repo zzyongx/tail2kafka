@@ -89,8 +89,12 @@ public:
   bool removeHistoryFile();
 
   const std::string &topic() const { return topic_; }
-  bool autocreat() const { return autocreat_; }
   LuaFunction *function() const { return function_; }
+
+  bool autocreat() const { return autocreat_; }
+  const char *fileOwner() const { return autocreat_ && !fileOwner_.empty() ? fileOwner_.c_str() : 0; }
+  int uid() const { return uid_; }
+  int gid() const { return gid_; }
 
 private:
   LuaCtx();
@@ -103,6 +107,10 @@ private:
   std::string   fileAlias_;
 
   bool          autocreat_;
+  std::string   fileOwner_;
+  uid_t         uid_;
+  gid_t         gid_;
+
   std::string   file_;
   std::string   topic_;
 

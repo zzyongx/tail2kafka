@@ -76,7 +76,7 @@ public:
       *value = def;
     } else {
       if (lua_isnumber(L_, 1)) {
-        *value = lua_tonumber(L_, 1);
+        *value = (int) lua_tonumber(L_, 1);
       } else {
         snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be number", file_.c_str(), name);
         rc = false;
@@ -207,7 +207,7 @@ public:
         lua_pushinteger(L_, i+1);
         lua_gettable(L_, 1);
         if (lua_isnumber(L_, -1)) {
-          value->push_back(lua_tonumber(L_, -1));
+          value->push_back((int) lua_tonumber(L_, -1));
         } else {
           snprintf(errbuf_, MAX_ERR_LEN, "%s %s element must be number", file_.c_str(), name);
           rc = false;
@@ -373,7 +373,7 @@ public:
         lua_settop(L_, 0);
         return false;
       }
-      map->insert(std::make_pair(lua_tostring(L_, -2), lua_tonumber(L_, -1)));
+      map->insert(std::make_pair(lua_tostring(L_, -2), (int) lua_tonumber(L_, -1)));
       lua_pop(L_, 1);
     }
 

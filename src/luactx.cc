@@ -7,6 +7,8 @@
 #include <sys/uio.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <pwd.h>
+#include <grp.h>
 
 #include "util.h"
 #include "sys.h"
@@ -42,7 +44,7 @@ static bool loadHistoryFile(const std::string &libdir, const std::string &name, 
   return true;
 }
 
- bool writeHistoryFile(const std::string &libdir, const std::string &name, const std::deque<std::string> &q)
+static bool writeHistoryFile(const std::string &libdir, const std::string &name, const std::deque<std::string> &q)
 {
   char path[2048];
   snprintf(path, 2048, "%s/%s.history", libdir.c_str(), name.c_str());
@@ -77,6 +79,35 @@ static bool loadHistoryFile(const std::string &libdir, const std::string &name, 
   return true;
 }
 
+static bool parseUserGroup(const char *username, uid_t *uid, gid_t *gid, char *errbuf)
+{
+  const char *colon = strchr(username, ':');
+  std::string u, g;
+  if (colon) {
+    u.assign(username, colon - username);
+    g.assign(colon+1);
+  } else {
+    u.assign(username);
+    g.assign(u);
+  }
+
+  struct passwd *pwd = getpwnam(u.c_str());
+  if (!pwd) {
+    snprintf(errbuf, MAX_ERR_LEN, "getpwnam(%s) error, %s", u.c_str(), strerror(errno));
+    return false;
+  }
+
+  struct group *grp = getgrnam(g.c_str());
+  if (!grp) {
+    snprintf(errbuf, MAX_ERR_LEN, "getgrnam(%s) error, %s", g.c_str(), strerror(errno));
+    return false;
+  }
+
+  *uid = pwd->pw_uid;
+  *gid = grp->gr_gid;
+  return true;
+}
+
 bool LuaCtx::testFile(const char *luaFile, char *errbuf)
 {
   std::string filename;
@@ -100,6 +131,11 @@ bool LuaCtx::testFile(const char *luaFile, char *errbuf)
         snprintf(errbuf, MAX_ERR_LEN, "%s file %s autocreat failed", luaFile, filename.c_str());
         return false;
       }
+      if (!fileOwner_.empty() && chown(filename.c_str(), uid_, gid_) != 0) {
+        snprintf(errbuf, MAX_ERR_LEN, "%s file %s chown(%s) failed",
+                 luaFile, filename.c_str(), fileOwner_.c_str());
+        return false;
+      }
       close(fd);
     } else {
       snprintf(errbuf, MAX_ERR_LEN, "%s file %s stat failed", luaFile, filename.c_str());
@@ -118,6 +154,14 @@ LuaCtx *LuaCtx::loadFile(CnfCtx *cnf, const char *file)
   if (!helper->dofile(file, cnf->errbuf())) return 0;
 
   if (!helper->getBool("autocreat", &ctx->autocreat_, false)) return 0;
+  if (!helper->getString("fileOwner", &ctx->fileOwner_, "")) return 0;
+  if (ctx->fileOwner_.empty()) {
+    ctx->uid_ = 0;
+    ctx->gid_ = 0;
+  } else {
+    if (!parseUserGroup(ctx->fileOwner_.c_str(), &ctx->uid_, &ctx->gid_, cnf->errbuf())) return 0;
+  }
+
   if (!helper->getBool("fileWithTimeFormat", &ctx->fileWithTimeFormat_, false)) return 0;
 
   if (!helper->getString("topic", &ctx->topic_)) return 0;

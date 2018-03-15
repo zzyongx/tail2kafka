@@ -11,13 +11,15 @@ TMPDIR=/tmp/$RPMNAM-$RPMVER
 rm -rf $TMPDIR && mkdir $TMPDIR
 
 cp . $TMPDIR -a
-mkdir -p /root/rpmbuild/SOURCES/
+RPMROOT=/usr/src/redhat
+test -d $RPMROOT || RPMROOT="/root/rpmbuild"
+mkdir -p $RPMROOT/SOURCES/
 
 cd /tmp
 tar czf $RPMNAM-$RPMVER.tar.gz $RPMNAM-$RPMVER
-mv -f $RPMNAM-$RPMVER.tar.gz /root/rpmbuild/SOURCES/
+mv -f $RPMNAM-$RPMVER.tar.gz $RPMROOT/SOURCES/
 cd -
 
 rpmbuild -bb $SPECFILE
-mv /root/rpmbuild/RPMS/x86_64/$RPMNAM-$RPMVER-$RPMREL.x86_64.rpm .
-mv /root/rpmbuild/RPMS/x86_64/$RPMNAM-debuginfo-$RPMVER-$RPMREL.x86_64.rpm .
+mv $RPMROOT/RPMS/x86_64/$RPMNAM-$RPMVER-$RPMREL.x86_64.rpm .
+mv $RPMROOT/RPMS/x86_64/$RPMNAM-debuginfo-$RPMVER-$RPMREL.x86_64.rpm .

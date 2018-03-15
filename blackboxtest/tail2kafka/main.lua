@@ -13,6 +13,7 @@ kafka_global = {
   ["client.id"] = "tail2kafka",
   ["broker.version.fallback"] = "0.8.2.1",
   ["compression.codec"] = "snappy",
+  ["message.max.bytes"] = 2000000,
   ["max.in.flight"] = 10000,
   ["queue.buffering.max.messages"] = 100000, -- default 100000
   ["queue.buffering.max.kbytes"]   = 512000, -- default 1048576

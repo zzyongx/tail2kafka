@@ -14,8 +14,8 @@
 #include "filereader.h"
 
 #define NL                  '\n'
-#define MAX_LINE_LEN        1024 * 1024         // 1M
-#define MAX_TAIL_SIZE       100 * MAX_LINE_LEN  // 100M
+#define MAX_LINE_LEN        2 * 1024 * 1024     // 2M
+#define MAX_TAIL_SIZE       100 * MAX_LINE_LEN  // 200M
 #define SEND_QUEUE_SIZE     2000
 #define KAFKA_ERROR_TIMEOUT 60
 
@@ -107,6 +107,9 @@ bool FileReader::checkRewatch()
     tmpFd = open(ctx_->file().c_str(), O_CREAT | O_RDONLY, 0644);
     if (tmpFd != -1) {
       rewatch = true;
+      if (ctx_->fileOwner() && chown(ctx_->file().c_str(), ctx_->uid(), ctx_->gid()) != 0) {
+        log_fatal(errno, "file %s chown(%s) error", ctx_->file().c_str(), ctx_->fileOwner());
+      }
     } else {
       log_fatal(errno, "create file %s error", ctx_->file().c_str());
     }
@@ -161,6 +164,9 @@ bool FileReader::reinit()
       holdFd_ = -1;
     } else {
       fd_ = open(file.c_str(), (ctx_->autocreat() ? O_CREAT : 0) | O_RDONLY, 0644);
+      if (fd_ != -1 && ctx_->fileOwner() && chown(ctx_->file().c_str(), ctx_->uid(), ctx_->gid()) != 0) {
+        log_fatal(errno, "file %s chown(%s) error", ctx_->file().c_str(), ctx_->fileOwner());
+      }
       doOpen = true;
     }
 

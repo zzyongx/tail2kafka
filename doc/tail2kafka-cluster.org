@@ -1,0 +1,40 @@
+* 为什么要有集群部署
+=tail2kafka= 是采集数据的客户端，肯定部署在很多机器上，这些机器甚至不是大数据团队能控制的，但是大数据团队却要对tail2kafka的运行情况负责，例如tail2kafka是否有崩溃，tail2kafka有急需修复的BUG。为此需要有机制管理这些客户端。集群部署主要关注三个问题，tail2kafka配置管理，tail2kafka升级，tail2kafka运行数据。
+
+* 配置中心
+rpm方式安装后，会自动配置一个cron，用来自动升级配置，升级tail2kafka自身。为此需要一个配置中心。
+
+** 相关配置
+假设配置中心域名是 ~configcenter~ ，销售部门有客户数据需要上传，给此类数据定义ID ~sales.client~ 。配置文件的位置是 ~/etc/sysconfig/tail2kafka~
+
+1. 配置 ~RPMURL="http://configcenter/tail2kafka/rpm"~ 和 ~CONFIGURL="http://configcenter/tail2kafka/config"~
+2. 配置产品ID ~PRODUCT="sales.client"~
+3. 配置机器ID，例如 ~HOSTID=$(hostname)~
+
+** 配置中心目录结构
+#+BEGIN_EXAMPLE
+tail2kafka/
+├── config
+│   └── sales.client
+│       ├── access_log.lua
+│       ├── main.lua
+│       ├── meta
+│       ├── sales.client-0.0.1.tar.gz
+│       └── tail2kafka.config
+└── rpm
+    ├── tail2kafka-2.0.0-10.x86_64.rpm
+    ├── tail2kafka-2.0.0-11.x86_64.rpm
+    └── version
+#+END_EXAMPLE
+
+更新配置版本命令 ~PRODUCT=sales.client; VER=0.0.1; mkdir $PRODUCT-$VER; cp *.lua $PRODUCT-$VER; tar czf $PRODUCT-$VER.tar.gz $PRODUCT-$VER && rm -rf $PRODUCT-$VER; MD5=$(md5sum $PRODUCT-$VER.tar.gz | cut -d' ' -f1); echo "$VER-$MD5" > meta~
+
+rpm的version文件样例，这里 =HOSTID= 包含web01的rpm版本是2.0.0-11，其它机器的版本是2.0.0-10。这里没有区分rpm的os版本，如果有多个os版本，需要用不同目录区分下。
+#+BEGIN_EXAMPLE
+web01=2.0.0-11
+*=2.0.0-10
+#+END_EXAMPLE
+
+* 回调数据收集
+1. 在 ~main.lua~ 配置回调地址 ~pingbackurl="http://configcenter/tail2kafka/pingback"~ ，tail2kafka 的运行信息回调到这个地址
+2. 在 ~/etc/sysconfig/tail2kafka~ 中配置回调地址 ~PINGBACKURL="http://configcenter/tail2kafka/pingback"~ ，tail2kafka-auto-upgrade.sh 的运行信息会回调到这个地址

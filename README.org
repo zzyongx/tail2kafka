@@ -25,6 +25,9 @@ tail2kafka 是一个小工具，用于把文件内容实时 *逐行* 发送到 [
 * 配置
 参考 [[./doc/tail2kafka-config.org][tail2kafka 配置]]
 
+* 内置集群部署支持
+参考 [[./doc/tail2kafka_cluster.org][tail2kafka 集群]]
+
 * 性能
 15万行每秒。有需要可以继续优化。
 

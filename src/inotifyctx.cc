@@ -119,6 +119,7 @@ void InotifyCtx::loop()
     int nfd = poll(fds, 1, cnf_->getTailLimit() ? 1 : 500);
     cnf_->fasttime(true, TIMEUNIT_SECONDS);
     cnf_->setTailLimit(false);
+    cnf_->setKafkaBlock(false);
 
     if (nfd == -1) {
       if (errno != EINTR) return;
@@ -162,7 +163,7 @@ void InotifyCtx::loop()
     tryRmWatch();
     tryReWatch();
 
-    cnf_->getKafka()->poll(0);  // if send queue is full, we rely on this poll
+    if (cnf_->getKafkaBlock()) cnf_->getKafka()->poll(100);  // poll kafka
     if (cnf_->getPollLimit()) sys::nanosleep(cnf_->getPollLimit());
   }
 

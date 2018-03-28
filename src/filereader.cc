@@ -499,6 +499,7 @@ bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::st
                SEND_QUEUE_SIZE, queueFullTimeDuration);
       lastQueueFullTime_ = ctx_->cnf()->fasttime(TIMEUNIT_MILLI);
     }
+    ctx_->cnf()->setKafkaBlock(true);
     return false;
   }
 

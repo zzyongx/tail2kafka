@@ -84,8 +84,8 @@ public:
   void setTailLimit(bool tailLimit) { tailLimit_ = tailLimit; }
   bool getTailLimit() const { return tailLimit_; }
 
-  void setKafkaBlock(bool kafkaBlock) { kafkaBlock_ = kafkaBlock; }
-  bool getKafkaBlock() const { return kafkaBlock_; }
+  void setKafkaBlock(bool kafkaBlock) { util::atomic_set(&kafkaBlock_, kafkaBlock ? 1 : 0); }
+  bool getKafkaBlock() const { return util::atomic_get((int *) &kafkaBlock_); }
 
 private:
   CnfCtx();
@@ -116,7 +116,7 @@ private:
   FileOff    *fileOff_;
 
   bool tailLimit_;
-  bool kafkaBlock_;
+  int kafkaBlock_;
 };
 
 #endif

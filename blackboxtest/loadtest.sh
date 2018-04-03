@@ -9,9 +9,11 @@ K2FDIR=$HOME/data/kafka2file
 
 test -f $BINDIR/../ENV.sh && source $BINDIR/../ENV.sh
 KAFKASERVER=${KAFKASERVER:-"localhost:9092"}
+ACK=${ACK:-1}
 cp $CFGDIR/main.lua $CFGDIR/main.lua.backup
 cp $CFGDIR/linecopy.lua $CFGDIR/linecopy.lua.backup
 sed -i -E "s|localhost:9092|$KAFKASERVER|g" $CFGDIR/main.lua
+sed -i -E "s|_ACK_|$ACK|g" $CFGDIR/main.lua
 sed -i -E "s|BIGLOG|$T2KDIR/big.log|g" $CFGDIR/linecopy.lua
 
 mkdir -p $K2FDIR

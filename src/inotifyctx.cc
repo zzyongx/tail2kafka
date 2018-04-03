@@ -119,7 +119,6 @@ void InotifyCtx::loop()
     int nfd = poll(fds, 1, cnf_->getTailLimit() ? 1 : 500);
     cnf_->fasttime(true, TIMEUNIT_SECONDS);
     cnf_->setTailLimit(false);
-    cnf_->setKafkaBlock(false);
 
     if (nfd == -1) {
       if (errno != EINTR) return;

@@ -175,6 +175,8 @@ void KafkaCtx::produce(LuaCtx *ctx, FileRecord *record)
   while ((rc = rd_kafka_produce(rkt, RD_KAFKA_PARTITION_UA, 0, (void *) record->data->c_str(),
                                 record->data->size(), 0, 0, record)) != 0) {
     if (errno == ENOBUFS) {
+      ctx->cnf()->setKafkaBlock(true);
+
       log_error(0, "%s kafka produce error(#%d) %s", rd_kafka_topic_name(rkt), ++i, strerror(errno));
       rd_kafka_poll(rk_, i < 1000 ? 100 * i : 1000);
     } else {
@@ -183,6 +185,8 @@ void KafkaCtx::produce(LuaCtx *ctx, FileRecord *record)
       break;
     }
   }
+
+  ctx->cnf()->setKafkaBlock(false);
 }
 
 bool KafkaCtx::produce(LuaCtx *ctx, std::vector<FileRecord *> *datas)

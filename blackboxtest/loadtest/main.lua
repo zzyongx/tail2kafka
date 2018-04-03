@@ -21,6 +21,6 @@ kafka_global = {
 }
 
 kafka_topic  = {
-  ["request.required.acks"] = 1,
+  ["request.required.acks"] = _ACK_,
   ["message.timeout.ms"]    = 0,  -- infinite
 }

@@ -16,7 +16,6 @@
 #define NL                  '\n'
 #define MAX_LINE_LEN        2 * 1024 * 1024     // 2M
 #define MAX_TAIL_SIZE       100 * MAX_LINE_LEN  // 200M
-#define SEND_QUEUE_SIZE     2000
 #define KAFKA_ERROR_TIMEOUT 60
 
 FileReader::StartPosition FileReader::stringToStartPosition(const char *s)
@@ -492,16 +491,13 @@ bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::st
 {
   std::auto_ptr<std::string> rawDataPtr(rawData);
 
-  if (util::atomic_get(&qsize_) > SEND_QUEUE_SIZE) {
-    int queueFullTimeDuration = ctx_->cnf()->fasttime(TIMEUNIT_MILLI) - lastQueueFullTime_;
-    if (queueFullTimeDuration > 1500) {    // suppress queue exceed log
-      log_info(0, "%d %s queue exceed %d duration %d", fd_, ctx_->datafile().c_str(),
-               SEND_QUEUE_SIZE, queueFullTimeDuration);
-      lastQueueFullTime_ = ctx_->cnf()->fasttime(TIMEUNIT_MILLI);
-    }
-    ctx_->cnf()->setKafkaBlock(true);
-    return false;
+  bool kafkaBlock = ctx_->cnf()->getKafkaBlock();
+  if (ctx_->cnf()->fasttime(TIMEUNIT_MILLI) - lastQueueFullTime_ > 1500) {  // suppress log
+    log_info(0, "%d %s queue size %d, kafka status %s", fd_, ctx_->datafile().c_str(), (int) qsize_,
+             kafkaBlock ? "block" : "ok");
+    lastQueueFullTime_ = ctx_->cnf()->fasttime(TIMEUNIT_MILLI);
   }
+  if (kafkaBlock) return false;
 
   struct stat stat;
   if (stPtr == 0) {

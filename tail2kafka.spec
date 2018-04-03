@@ -1,6 +1,6 @@
 Name:      tail2kafka
 Version:   2.0.0
-Release:   11
+Release:   13
 Summary:   stream file data to kafka/stream kafka data to file
 Group:     tail2kafka
 License:   Apache2
@@ -69,11 +69,11 @@ mkdir -p $RPM_BUILD_ROOT/var/log/tail2kafka
 rm -rf $RPM_BUILD_ROOT
 
 %post
-ln -sf ../init.d/tail2kafka /etc/rc.d/rc3.d/S88jetty
+ln -sf ../init.d/tail2kafka /etc/rc.d/rc3.d/S88tail2kafka
 
 %changelog
-* Mon Mar 26 2018 zzyongx <iamzhengzhiyong@gmail.com> -2.0.0-11
-- bugfix: when queue full, poll kafka
+* Tue Apr  3 2018 zzyongx <iamzhengzhiyong@gmail.com> -2.0.0-13
+- changes: refactor kafka block
 
 * Tue Feb 27 2018 zzyongx <iamzhengzhiyong@gmail.com> -2.0.0-10
 - bugfix: history file may lost

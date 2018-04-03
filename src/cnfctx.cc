@@ -129,6 +129,9 @@ CnfCtx::CnfCtx() {
   server = -1;
   count_  = 0;
   gettimeofday(&timeval_, 0);
+
+  tailLimit_ = false;
+  kafkaBlock_ = 0;
 }
 
 CnfCtx::~CnfCtx()

@@ -3,7 +3,7 @@ hostshell = "hostname"
 pidfile   = "/var/run/tail2kafka.pid"
 partition = 0
 polllimit = 50
-brokers   = "127.0.0.1:9092"
+brokers   = "localhost:9092"
 
 rotatedelay = 10
 -- optional
@@ -13,10 +13,12 @@ kafka_global = {
   ["client.id"] = "tail2kafka",
   ["broker.version.fallback"] = "0.8.2.1",
   ["compression.codec"] = "snappy",
-  ["message.max.bytes"] = 2000000,
+  ["message.max.bytes"] = 2000000,       -- 2M
   ["max.in.flight"] = 10000,
   ["queue.buffering.max.messages"] = 100000, -- default 100000
   ["queue.buffering.max.kbytes"]   = 512000, -- default 1048576
+  ["queue.buffering.max.ms"]       = 0,
+  ["batch.num.messages"]           = 10000,
   ["message.send.max.retries"] = "10",
   ["statistics.interval.ms"] = "60000",
 }

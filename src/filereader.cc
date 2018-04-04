@@ -308,18 +308,21 @@ inline std::string flagsToString(uint32_t flags)
   return s;
 }
 
-void FileReader::tagRotate(int action, const char *fptr)
+void FileReader::tagRotate(int action, const char *oldFile, const char *newFile)
 {
   bits_set(flags_, action);
 
-  std::string newFileName;
-  if (!fptr && bits_test(flags_, FILE_MOVED)) {
-    newFileName = getFileNameFromFd(holdFd_ > 0 ? holdFd_ : fd_);
-    fptr = newFileName.c_str();
+  std::string oldFileName;
+  if (!oldFile && bits_test(flags_, FILE_MOVED)) {
+    oldFileName = getFileNameFromFd(holdFd_ > 0 ? holdFd_ : fd_);
+    oldFile = oldFileName.c_str();
+    newFile = ctx_->file().c_str();
   }
 
-  log_info(0, "%d %s rotate %s to %s", fd_, ctx_->file().c_str(), flagsToString(flags_).c_str(), fptr ? fptr : "");
-  util::Metrics::pingback("TAG_ROTATE", "new=%s&old=%s", ctx_->file().c_str(), fptr);
+  if (oldFile && newFile) {
+    log_info(0, "%d %s rotate %s to %s", fd_, oldFile, flagsToString(flags_).c_str(), newFile);
+    util::Metrics::pingback("TAG_ROTATE", "new=%s&old=%s", newFile, oldFile);
+  }
 
   if (ctx_->cnf()->fasttime() - fileRotateTime_ < KAFKA_ERROR_TIMEOUT ||
       (ctx_->getRotateDelay() > 0 && ctx_->cnf()->fasttime() - fileRotateTime_ < ctx_->getRotateDelay())) {
@@ -429,7 +432,7 @@ bool FileReader::remove()
 
   std::string timeFormatFile;
   if (ctx_->getTimeFormatFile(&timeFormatFile) && access(timeFormatFile.c_str(), F_OK) == 0) {
-    tagRotate(FILE_CREATED, timeFormatFile.c_str());
+    if (!bits_test(flags_, FILE_CREATED)) tagRotate(FILE_CREATED, ctx_->file().c_str(), timeFormatFile.c_str());
   }
 
   bool rc = bits_test(flags_, FILE_MOVED) || bits_test(flags_, FILE_CREATED) ||

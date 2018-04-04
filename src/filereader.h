@@ -41,7 +41,7 @@ public:
   bool init(char *errbuf);
   bool reinit();
 
-  void tagRotate(int action = FILE_MOVED, const char *fptr = 0);
+  void tagRotate(int action, const char *oldFile = 0, const char *newFile = 0);
   bool remove();
 
   bool tail2kafka(StartPosition pos = NIL, const struct stat *stPtr = 0, std::string *rawData = 0);

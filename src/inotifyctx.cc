@@ -83,7 +83,7 @@ bool InotifyCtx::tryReWatch()
 void InotifyCtx::tryRmWatch(LuaCtx *ctx, int wd)
 {
   log_info(0, "tag remove %d %s", wd, ctx->file().c_str());
-  ctx->getFileReader()->tagRotate();
+  ctx->getFileReader()->tagRotate(FILE_MOVED);
 }
 
 /* unlink or truncate */

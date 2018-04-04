@@ -289,6 +289,7 @@ void *transform_routine(void *)
   return NULL;
 }
 
+#define AUTO_ROTATE_INTERVAL 60
 class AutoRotateProducer {
 public:
   AutoRotateProducer() : i_(0), result_(false) {}
@@ -305,6 +306,7 @@ public:
     } else {
       time_t now;
       time(&now);
+      now += AUTO_ROTATE_INTERVAL;
 
       struct tm ltm;
       localtime_r(&now, &ltm);
@@ -331,7 +333,7 @@ void *basic2_routine(void *)
     assert(fp);
     fprintf(fp, "%s\n", file);
     fclose(fp);
-    sleep(60);
+    sleep(AUTO_ROTATE_INTERVAL);
   }
   autoRotatePro.reset();
   return NULL;

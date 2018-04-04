@@ -41,12 +41,15 @@ find $T2KDIR -type f -name "*.log" -delete
 cd $KAFKAHOME
 for TOPIC in "basic" "basic2" "filter" "grep" "aggregate" "transform"; do
   bin/kafka-topics.sh --delete --if-exists --zookeeper $ZOOKEEPER  --topic $TOPIC
+done
+bin/kafka-topics.sh --list --zookeeper $ZOOKEEPER | egrep 'aggregate|basic|filter|grep|transform' && {
+  echo "$LINENO delete kafka topic error"
+  exit 1
+}
+for TOPIC in "basic" "basic2" "filter" "grep" "aggregate" "transform"; do
   bin/kafka-topics.sh --create --zookeeper $ZOOKEEPER --replication-factor 1 --partitions 1 --topic $TOPIC
 done
-if bin/kafka-topics.sh --list --zookeeper $ZOOKEEPER | grep -e 'aggregate|basic|filter|grep|transform'; then
-  echo "delete kafka topic error"
-  exit 1
-fi
+
 cd -
 
 OLDFILE=$K2FDIR/basic/zzyong_basic.log.old

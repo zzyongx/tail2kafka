@@ -20,8 +20,6 @@ test -f $BINDIR/../ENV.sh && source $BINDIR/../ENV.sh
 KAFKAHOME=${KAFKAHOME:-"/opt/kafka"}
 ZOOKEEPER=${ZOOKEEPER:-"localhost:2181/kafka"}
 KAFKASERVER=${KAFKASERVER:-"localhost:9092"}
-cp $CFGDIR/main.lua $CFGDIR/main.lua.backup
-sed -i -E "s|localhost:9092|$KAFKASERVER|g" $CFGDIR/main.lua
 
 echo "WARN: YOU MUST KILL tail2kafka and kafka2file first, both may create topic automatic"
 
@@ -66,12 +64,16 @@ if [ ! -f $K2FPID ] || [ ! -d /proc/$(cat $K2FPID) ]; then
   exit 1
 fi
 
+cp $CFGDIR/main.lua $CFGDIR/main.lua.backup
+sed -i -E "s|localhost:9092|$KAFKASERVER|g" $CFGDIR/main.lua
 $BUILDDIR/tail2kafka $CFGDIR; sleep 2
+mv $CFGDIR/main.lua.backup $CFGDIR/main.lua
+
 if [ ! -f $PIDF ] || [ ! -d /proc/$(cat $PIDF) ]; then
   echo "start tail2kafka failed"
   exit 1;
 fi
-mv $CFGDIR/main.lua.backup $CFGDIR/main.lua
+
 
 sleep 1
 export KAFKASERVER

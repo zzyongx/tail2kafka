@@ -386,11 +386,9 @@ bool FileReader::checkRotate(const struct stat *stPtr, std::string *rotateFileNa
   if (bits_test(flags_, FILE_HISTORY) || fd_ == -1) { // FILE_HISTORY exec flow #HISTORY_ROTATE
     rc = false;
   } else {
+    if (stPtr->st_size != size_) rc = tail2kafka(NIL, stPtr, 0);   // waiting for file sending to complete
     if (stPtr->st_size == size_) {
       rc = tail2kafka(END, stPtr, buildFileEndRecord(time(0), size_, oldFileName.c_str()));
-    } else {
-      tail2kafka(NIL, stPtr, 0);   // waiting for file sending to complete
-      return false;
     }
   }
 
@@ -663,7 +661,7 @@ void FileReader::processLines(ino_t inode, off_t *offPtr)
 
   if (n == 0) {
     if (npos_ == MAX_LINE_LEN) {
-      log_error(0, "%s line length exceed, truncate\n", ctx_->file().c_str());
+      log_error(0, "%s line length exceed, truncate", ctx_->file().c_str());
       npos_ = 0;
     }
   } else if (npos_ > n) {

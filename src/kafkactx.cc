@@ -176,9 +176,9 @@ void KafkaCtx::produce(LuaCtx *ctx, FileRecord *record)
                                 record->data->size(), 0, 0, record)) != 0) {
     if (errno == ENOBUFS) {
       ctx->cnf()->setKafkaBlock(true);
-
-      log_error(0, "%s kafka produce error(#%d) %s", rd_kafka_topic_name(rkt), ++i, strerror(errno));
-      rd_kafka_poll(rk_, i < 1000 ? 100 * i : 1000);
+      const char *err = strerror(errno);
+      int nevent = rd_kafka_poll(rk_, i < 1000 ? 100 * i : 1000);
+      log_error(0, "%s kafka produce error(#%d) %s, poll event %d", rd_kafka_topic_name(rkt), ++i, err, nevent);
     } else {
       log_fatal(0, "%s kafka produce error %d:%s", rd_kafka_topic_name(rkt), errno, strerror(errno));
       FileRecord::destroy(record);

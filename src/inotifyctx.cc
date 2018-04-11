@@ -162,7 +162,6 @@ void InotifyCtx::loop()
     tryRmWatch();
     tryReWatch();
 
-    if (cnf_->getKafkaBlock()) cnf_->getKafka()->poll(100);  // poll kafka
     if (cnf_->getPollLimit()) sys::nanosleep(cnf_->getPollLimit());
   }
 

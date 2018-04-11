@@ -102,7 +102,11 @@ rd_kafka_topic_t *KafkaCtx::initKafkaTopic(LuaCtx *ctx, const std::map<std::stri
   }
 
   rd_kafka_topic_conf_set_opaque(tconf, ctx);
-  rd_kafka_topic_conf_set_partitioner_cb(tconf, partitioner_cb);
+  if (ctx->getPartitioner() == PARTITIONER_RANDOM) {
+    rd_kafka_topic_conf_set_partitioner_cb(tconf, rd_kafka_msg_partitioner_random);
+  } else {
+    rd_kafka_topic_conf_set_partitioner_cb(tconf, partitioner_cb);
+  }
 
   rd_kafka_topic_t *rkt;
   /* rd_kafka_topic_t will own tconf */

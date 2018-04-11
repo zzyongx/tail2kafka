@@ -169,7 +169,7 @@ void *routine(void *data)
       log_fatal(0, "rd_kafka_poll timeout, librdkafka may have bug or kafka servuce is unavailable, exit");
       runStatus->set(RunStatus::STOP);
     }
-
+    kafka->poll(10);  // poll kafka
     delete req.records;
   }
 

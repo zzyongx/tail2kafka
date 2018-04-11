@@ -150,6 +150,8 @@ DEFINE(loadLuaCtx)
   std::string file = sys::timeFormat(time(0), LOG("basic.%Y-%m-%d_%H-%M.log"));
   check(access(file.c_str(), F_OK) == 0, "file %s autocreat but %s notfound", PTRS(ctx->file()), PTRS(file));
 
+  check(ctx->getPartitioner() == PARTITIONER_RANDOM, "partitioner %d", ctx->getPartitioner());
+
   ctx = getLuaCtx("filter");
   check(ctx, "%s", "filter not found");
   check(ctx->timeidx() == 4, "%d", ctx->timeidx());

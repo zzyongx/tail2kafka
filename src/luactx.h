@@ -14,6 +14,8 @@
 
 class FileReader;
 
+#define PARTITIONER_RANDOM -100
+
 class LuaCtx {
   template<class T> friend class UNITTEST_HELPER;
 public:
@@ -41,6 +43,11 @@ public:
 #else
     return function_->empty() && cnf_->getPollLimit() && rawcopy_;
 #endif
+  }
+
+  int getPartitioner() const {
+    if (partition_ == PARTITIONER_RANDOM) return partition_;
+    else return -1;
   }
 
   int getPartition(uint32_t pc) const {

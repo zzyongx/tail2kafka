@@ -5,6 +5,7 @@ BINDIR=$(readlink -e $(dirname $BIN))
 
 CFGDIR="$BINDIR/tail2kafka"
 PIDF=/var/run/tail2kafka.pid
+LIBDIR=/var/lib/tail2kafka
 BUILDDIR=$BINDIR/../build
 
 if [ ! -d $CFGDIR ]; then
@@ -64,6 +65,7 @@ if [ ! -f $K2FPID ] || [ ! -d /proc/$(cat $K2FPID) ]; then
   exit 1
 fi
 
+rm -rf $LIBDIR/*.history && rm -rf $LIBDIR/*.current
 cp $CFGDIR/main.lua $CFGDIR/main.lua.backup
 sed -i -E "s|localhost:9092|$KAFKASERVER|g" $CFGDIR/main.lua
 $BUILDDIR/tail2kafka $CFGDIR; sleep 2

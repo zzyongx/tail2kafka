@@ -1,6 +1,6 @@
 Name:      tail2kafka
 Version:   2.0.0
-Release:   15
+Release:   16
 Summary:   stream file data to kafka/stream kafka data to file
 Group:     tail2kafka
 License:   Apache2
@@ -72,6 +72,11 @@ rm -rf $RPM_BUILD_ROOT
 ln -sf ../init.d/tail2kafka /etc/rc.d/rc3.d/S88tail2kafka
 
 %changelog
+* Wed Apr 11 2018 zzyongx <iamzhengzhiyong@gmail.com> -2.0.0-16
+- bugfix: reset cnfctx when respawn
+- bugfix: when rotate, record the file corresponding th fd, so as not to lose data when the process crashs
+- changes: exit when trap in KafkaCtx::produce
+
 * Sun Apr  8 2018 zzyongx <iamzhengzhiyong@gmail.com> -2.0.0-15
 - bugfix: checkRotate should use tail2kafka(NIL)\'s return value
 

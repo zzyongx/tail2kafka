@@ -36,7 +36,7 @@ int main(int argc, char *argv[])
 
   const char *dir = argv[1];
   pid_t pid = -1;
-  char errbuf[MAX_ERR_LEN];
+  char errbuf[MAX_ERR_LEN] = {0};
 
   CnfCtx *cnf = CnfCtx::loadCnf(dir, errbuf);
   if (!cnf) {
@@ -104,9 +104,15 @@ int main(int argc, char *argv[])
     }
 
     if (runStatus->get() == RunStatus::START1 || runStatus->get() == RunStatus::START2) {
+      if (runStatus->get() == RunStatus::START2 && !cnf->reset()) {
+        log_fatal(errno, "cnf reset error %s before spawn", cnf->errbuf());
+        rc = EXIT_FAILURE;
+        break;
+      }
+
       pid = spawn(cnf, 0);
       if (pid == -1) {
-        log_fatal(errno, "spawn failed, exit");
+        log_fatal(errno, "spawn failed %s, exit", cnf->errbuf());
         rc = EXIT_FAILURE;
         break;
       }
@@ -147,8 +153,6 @@ void *routine(void *data)
   RunStatus *runStatus = cnf->getRunStatus();
 
   OneTaskReq req;
-
-  int timeout = 0;
   while (runStatus->get() == RunStatus::WAIT) {
     ssize_t nn = read(cnf->accept, &req, sizeof(OneTaskReq));
     if (nn == -1) {
@@ -161,14 +165,12 @@ void *routine(void *data)
     assert(nn == sizeof(OneTaskReq));
 
     if (!req.records) break;  // terminate task
-    if (kafka->produce(req.ctx, req.records)) {
-      timeout = 0;
-    } else if (timeout < 1600) {
-      timeout = timeout == 0 ? 100 : timeout * 2;
+    if (!kafka->produce(req.ctx, req.records)) {
+      log_fatal(0, "rd_kafka_poll timeout, librdkafka may have bug or kafka servuce is unavailable, exit");
+      runStatus->set(RunStatus::STOP);
     }
-    delete req.records;
 
-    kafka->poll(timeout);
+    delete req.records;
   }
 
   runStatus->set(RunStatus::STOP);
@@ -226,7 +228,8 @@ int runForeGround(CnfCtx *cnf)
   InotifyCtx inotify(cnf);
   if (!inotify.init()) return -1;
 
-  if (!cnf->initFileOff()) return 0;
+  if (!cnf->initFileOff()) return -1;
+  if (!cnf->rectifyHistoryFile()) return -1;
 
   run(&inotify, cnf);
 
@@ -239,7 +242,8 @@ pid_t spawn(CnfCtx *cnf, CnfCtx *ocnf)
   InotifyCtx inotify(cnf);
   if (!inotify.init()) return -1;
 
-  if (!cnf->initFileOff()) return 0;
+  if (!cnf->initFileOff()) return -1;
+  if (!cnf->rectifyHistoryFile()) return -1;
 
   /* unload old cnf before fork */
   if (ocnf) delete ocnf;

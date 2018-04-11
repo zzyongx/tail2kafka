@@ -20,6 +20,10 @@ public:
   static LuaCtx *loadFile(CnfCtx *cnf, const char *file);
   ~LuaCtx();
 
+  bool testFile(const char *luaFile, char *errbuf);
+  bool loadHistoryFile();
+  bool rectifyHistoryFile();
+
   bool initFileReader(char *errbuf);
   FileReader *getFileReader() { return fileReader_; }
 
@@ -87,6 +91,7 @@ public:
 
   bool addHistoryFile(const std::string &historyFile);
   bool removeHistoryFile();
+  bool setCurrentFile(const std::string &file) const;
 
   const std::string &topic() const { return topic_; }
   LuaFunction *function() const { return function_; }
@@ -98,7 +103,6 @@ public:
 
 private:
   LuaCtx();
-  bool testFile(const char *luaFile, char *errbuf);
 
 private:
   /* default set to topic_, it must be unique
@@ -124,6 +128,7 @@ private:
   bool          fileWithTimeFormat_;
   std::string   timeFormatFile_;
   std::deque<std::string> fqueue_;
+  std::string             fcurrent_;
 
   uint32_t      addr_;
   bool          autoparti_;

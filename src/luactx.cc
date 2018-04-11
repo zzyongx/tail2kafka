@@ -18,17 +18,16 @@
 #include "luahelper.h"
 #include "luactx.h"
 
-static bool loadHistoryFile(const std::string &libdir, const std::string &name, std::deque<std::string> *q)
+template <class T>
+bool loadFile(const char *file, T *q)
 {
-  char buffer[2048];
-  snprintf(buffer, 2048, "%s/%s.history", libdir.c_str(), name.c_str());
-
-  FILE *fp = fopen(buffer, "r");
+  FILE *fp = fopen(file, "r");
   if (!fp) {
     if (errno == ENOENT) return true;
     else return false;
   }
 
+  char buffer[2048];
   while (fgets(buffer, 2048, fp)) {
     size_t n = strlen(buffer);
     if (buffer[n-1] != '\n') {
@@ -44,39 +43,49 @@ static bool loadHistoryFile(const std::string &libdir, const std::string &name, 
   return true;
 }
 
-static bool writeHistoryFile(const std::string &libdir, const std::string &name, const std::deque<std::string> &q)
+static bool loadHistoryFile(const std::string &libdir, const std::string &name, std::deque<std::string> *q)
 {
-  char path[2048];
-  snprintf(path, 2048, "%s/%s.history", libdir.c_str(), name.c_str());
+  std::string file = libdir + "/" + name + ".history";
+  return loadFile(file.c_str(), q);
+}
 
+template <class T>
+bool writeFile(const char *tips, const char *file, const T &q)
+{
   if (q.empty()) {
-    if (unlink(path) == -1) {
-      log_fatal(errno, "delete history file %s error", path);
-      return false;
+    bool rc = unlink(file) == 0 || errno == ENOENT;
+    if (rc) {
+      log_info(0, "delete %s file %s", tips, file);
     } else {
-      log_info(0, "delete history file %s", path);
-      return true;
+      log_fatal(errno, "delete %s file %s error", tips, file);
     }
+    return rc;
   }
 
   std::string flist = util::join(q.begin(), q.end(), ',');
-  log_info(0, "write history file %s start %s", path, flist.c_str());
+  log_info(0, "write %s file %s start %s", tips, file, flist.c_str());
 
-  int fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+  int fd = open(file, O_CREAT | O_WRONLY | O_TRUNC, 0644);
   if (fd == -1) {
-    log_fatal(errno, "writeHistoryFile %s error", path);
+    log_fatal(errno, "write %s file %s error", tips, file);
     return false;
   }
-  for (std::deque<std::string>::const_iterator ite = q.begin(); ite != q.end(); ++ite) {
+  for (typename T::const_iterator ite = q.begin(); ite != q.end(); ++ite) {
     struct iovec iovs[2] = {{(void *) ite->c_str(), ite->size()}, {(void *) "\n", 1}};
     if (writev(fd, iovs, 2) == -1) {
-      log_fatal(errno, "writeHistoryFile %s line %s error", path, ite->c_str());
+      log_fatal(errno, "write %s file %s line %s error", tips, file, ite->c_str());
     }
   }
   close(fd);
 
-  log_info(0, "wirte history file %s end %s", path, flist.c_str());
+  log_info(0, "wirte %s file %s end %s", tips, file, flist.c_str());
   return true;
+}
+
+static bool writeHistoryFile(const std::string &libdir, const std::string &name, const std::deque<std::string> &q)
+{
+  std::string file = libdir + "/" + name + ".history";
+  return writeFile("history", file.c_str(), q);
 }
 
 static bool parseUserGroup(const char *username, uid_t *uid, gid_t *gid, char *errbuf)
@@ -145,6 +154,55 @@ bool LuaCtx::testFile(const char *luaFile, char *errbuf)
   return true;
 }
 
+bool LuaCtx::loadHistoryFile()
+{
+  fqueue_.clear();
+  if (!::loadHistoryFile(cnf_->libdir(), fileAlias_, &fqueue_)) {
+    snprintf(cnf_->errbuf(), MAX_ERR_LEN, "load history file %s/%s.history error %d:%s",
+             cnf_->libdir().c_str(), fileAlias_.c_str(), errno, strerror(errno));
+    return false;
+  }
+
+  std::string current = cnf_->libdir() + "/" + fileAlias_ + ".current";
+  std::vector<std::string> files;
+  if (!::loadFile(current.c_str(), &files)) {
+    snprintf(cnf_->errbuf(), MAX_ERR_LEN, "load current file %s error %d:%s",
+             current.c_str(), errno, strerror(errno));
+    return false;
+  }
+
+  if (files.size() == 1 && !files[0].empty()) fcurrent_ = files[0];
+  else fcurrent_.clear();
+
+  return true;
+}
+
+bool LuaCtx::rectifyHistoryFile()
+{
+  struct stat st;
+  if (!fcurrent_.empty()) {
+    bool exitWhenRotate = fqueue_.empty() && stat(fcurrent_.c_str(), &st) == 0 &&
+      cnf_->getFileOff()->getOff(st.st_ino) != (off_t) -1;
+
+    bool exitWhenRotateWithHistory = !fqueue_.empty() && fqueue_.back() != fcurrent_;
+
+    if (exitWhenRotate || exitWhenRotateWithHistory) fqueue_.push_back(fcurrent_);
+  }
+
+  bool rc = true;
+  while (!fqueue_.empty()) {
+    std::string f = fqueue_.front();
+    rc = stat(f.c_str(), &st) == 0;
+    if (!rc && errno == ENOENT) {               // datafile not longer exists
+      fqueue_.pop_front();
+    } else {
+      break;
+    }
+  }
+  if (rc) rc = writeHistoryFile(cnf_->libdir(), fileAlias_, fqueue_);
+  return rc;
+}
+
 LuaCtx *LuaCtx::loadFile(CnfCtx *cnf, const char *file)
 {
   std::auto_ptr<LuaCtx> ctx(new LuaCtx);
@@ -201,12 +259,7 @@ LuaCtx *LuaCtx::loadFile(CnfCtx *cnf, const char *file)
   if (!helper->getString("pkey", &ctx->pkey_, "")) return 0;
 
   if (!(ctx->function_ = LuaFunction::create(ctx.get(), helper.get()))) return 0;
-
-  if (!loadHistoryFile(cnf->libdir(), ctx->fileAlias_, &ctx->fqueue_)) {
-    snprintf(cnf->errbuf(), MAX_ERR_LEN, "load history file %s/%s.history eror %d:%s",
-             cnf->libdir().c_str(), ctx->fileAlias_.c_str(), errno, strerror(errno));
-    return 0;
-  }
+  if (!ctx->loadHistoryFile()) return 0;
 
   ctx->helper_ = helper.release();
   return ctx.release();
@@ -231,6 +284,13 @@ bool LuaCtx::removeHistoryFile()
   }
 
   return fqueue_.empty();
+}
+
+bool LuaCtx::setCurrentFile(const std::string &currentFile) const
+{
+  std::string current = cnf_->libdir() + "/" + fileAlias_ + ".current";
+  std::vector<std::string> files(1, currentFile);
+  return writeFile("current", current.c_str(), files);
 }
 
 bool LuaCtx::initFileReader(char *errbuf)

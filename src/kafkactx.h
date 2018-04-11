@@ -30,7 +30,7 @@ private:
 
   bool initKafka(const char *brokers, const std::map<std::string, std::string> &gcnf, char *errbuf);
   rd_kafka_topic_t *initKafkaTopic(LuaCtx *ctx, const std::map<std::string, std::string> &tcnf, char *errbuf);
-  void produce(LuaCtx *ctx, FileRecord *data);
+  bool produce(LuaCtx *ctx, FileRecord *data);
 };
 
 #endif

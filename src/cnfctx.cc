@@ -26,6 +26,45 @@ CnfCtx *CnfCtx::loadCnf(const char *dir, char *errbuf)
   return cnf;
 }
 
+inline bool initPipe(int *accept, int *server, char *errbuf)
+{
+  if (*accept != -1) close(*accept);
+  if (*server != -1) close(*server);
+
+  *accept = *server = -1;
+
+  int fd[2];
+  if (pipe(fd) == -1) {
+    snprintf(errbuf, MAX_ERR_LEN, "pipe error");
+    return false;
+  }
+
+  *accept = fd[0];
+  *server = fd[1];
+  return true;
+}
+
+bool CnfCtx::reset()
+{
+  for (std::vector<LuaCtx *>::iterator ite = luaCtxs_.begin(); ite != luaCtxs_.end(); ++ite) {
+    LuaCtx *ctx = *ite;
+    if (!ctx->testFile(ctx->file().c_str(), errbuf_)) return false;
+    if (!ctx->loadHistoryFile()) return false;
+  }
+
+  if (!initPipe(&accept, &server, errbuf_)) return false;
+  return true;
+}
+
+bool CnfCtx::rectifyHistoryFile()
+{
+  for (std::vector<LuaCtx *>::iterator ite = luaCtxs_.begin(); ite != luaCtxs_.end(); ++ite) {
+    LuaCtx *ctx = *ite;
+    if (!ctx->rectifyHistoryFile()) return false;
+  }
+  return true;
+}
+
 CnfCtx *CnfCtx::loadFile(const char *file, char *errbuf)
 {
   std::auto_ptr<CnfCtx> cnf(new CnfCtx);
@@ -62,14 +101,7 @@ CnfCtx *CnfCtx::loadFile(const char *file, char *errbuf)
 
   cnf->helper_ = helper.release();
 
-  int fd[2];
-  if (pipe(fd) == -1) {
-    snprintf(errbuf, MAX_ERR_LEN, "pipe error");
-    return 0;
-  }
-
-  cnf->accept = fd[0];
-  cnf->server = fd[1];
+  if (!initPipe(&cnf->accept, &cnf->server, errbuf)) return 0;
 
   cnf->errbuf_ = errbuf;
   return cnf.release();
@@ -100,6 +132,9 @@ bool CnfCtx::initKafka()
 
 bool CnfCtx::initFileOff()
 {
+  if (fileOff_) delete fileOff_;
+  fileOff_ = 0;
+
   std::auto_ptr<FileOff> fileOff(new FileOff);
   if (!fileOff->init(this, errbuf_)) return false;
   fileOff_ = fileOff.release();
@@ -125,8 +160,7 @@ CnfCtx::CnfCtx() {
   kafka_   = 0;
   fileOff_ = 0;
 
-  accept = -1;
-  server = -1;
+  accept = server = -1;
   count_  = 0;
   gettimeofday(&timeval_, 0);
 

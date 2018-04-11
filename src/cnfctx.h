@@ -12,11 +12,9 @@
 #include "kafkactx.h"
 #include "common.h"
 
-class RunStatus;
+#define KAFKA_ERROR_TIMEOUT 60
 
-enum RunError {
-  KAFKA_ERROR = 0x0001,
-};
+class RunStatus;
 
 enum TimeUnit {
   TIMEUNIT_MILLI, TIMEUNIT_SECONDS,
@@ -30,6 +28,8 @@ public:
 
 public:
   static CnfCtx *loadCnf(const char *dir, char *errbuf);
+  bool reset();
+  bool rectifyHistoryFile();
 
   static CnfCtx *loadFile(const char *file, char *errbuf);
   ~CnfCtx();

@@ -16,7 +16,6 @@
 #define NL                  '\n'
 #define MAX_LINE_LEN        2 * 1024 * 1024     // 2M
 #define MAX_TAIL_SIZE       100 * MAX_LINE_LEN  // 200M
-#define KAFKA_ERROR_TIMEOUT 60
 
 FileReader::StartPosition FileReader::stringToStartPosition(const char *s)
 {
@@ -324,6 +323,10 @@ void FileReader::tagRotate(int action, const char *oldFile, const char *newFile)
     util::Metrics::pingback("TAG_ROTATE", "new=%s&old=%s", newFile, oldFile);
   }
 
+  if (oldFile && (bits_test(flags_, FILE_MOVED) || bits_test(flags_, FILE_CREATED))) {
+    ctx_->setCurrentFile(oldFile);
+  }
+
   if (ctx_->cnf()->fasttime() - fileRotateTime_ < KAFKA_ERROR_TIMEOUT ||
       (ctx_->getRotateDelay() > 0 && ctx_->cnf()->fasttime() - fileRotateTime_ < ctx_->getRotateDelay())) {
     log_fatal(0, "%d %s rotate %s too frequent, may lose data", fd_, ctx_->file().c_str(),
@@ -357,8 +360,10 @@ bool FileReader::waitRotate()
 {
   bool rc = false;
   if (bits_test(flags_, FILE_MOVED) || bits_test(flags_, FILE_CREATED)) {
-    if (ctx_->getRotateDelay() > 0 && bits_test(flags_, FILE_LOGGED)) {  // if config rotate delay
-      if (ctx_->cnf()->fasttime() - fileRotateTime_ >= ctx_->getRotateDelay()) rc = true;  // rotate delay timeout
+    if (ctx_->getRotateDelay() > 0) {  // if config rotate delay
+      if (bits_test(flags_, FILE_LOGGED) && ctx_->cnf()->fasttime() - fileRotateTime_ >= ctx_->getRotateDelay()) {
+        rc = true;  // rotate delay timeout
+      }
     } else if (bits_test(flags_, FILE_MOVED) && access(ctx_->file().c_str(), F_OK) == 0) {  // if file reopened
       rc = true;
     }
@@ -616,6 +621,7 @@ std::string *FileReader::buildFileEndRecord(time_t now, off_t size, const char *
 void FileReader::propagateRawData(const std::string *data)
 {
   assert(data != 0);
+  log_info(0, "%d %s META %s", fd_, ctx_->file().c_str(), data->c_str());
 
   LuaCtx *ctx = ctx_;
   while (ctx) {

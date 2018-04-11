@@ -165,28 +165,36 @@ bool KafkaCtx::ping(LuaCtx *ctx)
   */
 }
 
-void KafkaCtx::produce(LuaCtx *ctx, FileRecord *record)
+bool KafkaCtx::produce(LuaCtx *ctx, FileRecord *record)
 {
   rd_kafka_topic_t *rkt = rkts_[ctx->rktId()];
   record->ctx = ctx;
 
   int rc;
-  int i = 0;
+  int i = 1;
+  time_t startTime = ctx->cnf()->fasttime();
   while ((rc = rd_kafka_produce(rkt, RD_KAFKA_PARTITION_UA, 0, (void *) record->data->c_str(),
                                 record->data->size(), 0, 0, record)) != 0) {
-    if (errno == ENOBUFS) {
+    rd_kafka_resp_err_t err = rd_kafka_last_error();
+    if (err == RD_KAFKA_RESP_ERR__QUEUE_FULL) {
+      if (ctx->cnf()->fasttime() - startTime > KAFKA_ERROR_TIMEOUT + 2) {
+        // librdkafka may trap this loop, call exit to restart
+        return false;
+      }
+
       ctx->cnf()->setKafkaBlock(true);
-      const char *err = strerror(errno);
-      int nevent = rd_kafka_poll(rk_, i < 1000 ? 100 * i : 1000);
-      log_error(0, "%s kafka produce error(#%d) %s, poll event %d", rd_kafka_topic_name(rkt), ++i, err, nevent);
+      int nevent = rd_kafka_poll(rk_, 100 * i);
+      log_error(0, "%s kafka produce error(#%d) %s, poll event %d",
+                rd_kafka_topic_name(rkt), i++, rd_kafka_err2str(err), nevent);
     } else {
-      log_fatal(0, "%s kafka produce error %d:%s", rd_kafka_topic_name(rkt), errno, strerror(errno));
+      log_fatal(0, "%s kafka produce error %s", rd_kafka_topic_name(rkt), rd_kafka_err2str(err));
       FileRecord::destroy(record);
       break;
     }
   }
 
   ctx->cnf()->setKafkaBlock(false);
+  return true;
 }
 
 bool KafkaCtx::produce(LuaCtx *ctx, std::vector<FileRecord *> *datas)
@@ -210,20 +218,15 @@ bool KafkaCtx::produce(LuaCtx *ctx, std::vector<FileRecord *> *datas)
     rkmsgs[i]._private = record;
   }
 
-  bool rc = true;
-
   int n = rd_kafka_produce_batch(rkt, RD_KAFKA_PARTITION_UA, 0, &rkmsgs[0], rkmsgs.size());
   if (n != (int) rkmsgs.size()) {
     for (std::vector<rd_kafka_message_t>::iterator ite = rkmsgs.begin(), end = rkmsgs.end();
          ite != end; ++ite) {
       if (ite->err) {
-        log_info(0, "%s kafka produce batch error %s", rd_kafka_topic_name(rkt), rd_kafka_err2str(ite->err));
-        rd_kafka_poll(rk_, 100);
-        produce(ctx, (FileRecord *) ite->_private);
+        if (!produce(ctx, (FileRecord *) ite->_private)) return false;
       }
     }
-    rc = false;
   }
 
-  return rc;
+  return true;
 }

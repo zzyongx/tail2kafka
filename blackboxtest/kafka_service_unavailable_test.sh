@@ -61,7 +61,7 @@ if [ ! -f $K2FPID ] || [ ! -d /proc/$(cat $K2FPID) ]; then
 fi
 
 # prepare history file
-test -f $LIBDIR/basic.history && rm $LIBDIR/basic.history
+rm -rf $LIBDIR/basic.* && test -f $LIBDIR/fileoff && rm $LIBDIR/fileoff
 for suffix in 2 1; do
   for i in `seq 1 10000`; do
     echo "BASIC_HISTORY_${suffix} $i" >> $T2KDIR/basic.log.history.$suffix
@@ -97,19 +97,19 @@ echo "BLOCK_KAFKA $BLOCK_KAFKA"; $BLOCK_KAFKA
 sleep 1
 
 NFILE=5
-NLINE=100000
+NLINE=120000  # must bigger than queue.buffering.max.messages
 LOGFILE=$T2KDIR/basic.log
 for suffix in `seq $NFILE -1 1`; do
   for i in `seq 1 $NLINE`; do
     echo "BASIC_${suffix} $i" >> $LOGFILE
   done
-  mv $LOGFILE $LOGFILE.$suffix
+  mv $LOGFILE $LOGFILE.$suffix &&  touch $LOGFILE
 
   echo "$(date +%H:%M:%S) wait inotify $LOGFILE moved $LOGFILE.$suffix ...";  sleep 90   # rotate interval must > 60
 
-  linenum=$(wc -l $LIBDIR/basic.history | cut -d' ' -f1)
+  linenum=$(wc -l $LIBDIR/basic.history 2>/dev/null | cut -d' ' -f1)
   if [ "$linenum" != $((NFILE+1-suffix)) ]; then
-    echo "$(date +%H:%M:%S) round $suffix expect history file number $filenum != $((NFILE+1-suffix))"
+    echo "$LINENO $(date +%H:%M:%S) round $suffix expect history file number $linenum != $((NFILE+1-suffix))"
     exit 1
   fi
 
@@ -134,10 +134,10 @@ echo "WAIT kafka2file ... "; sleep 60
 
 # WARN basic.log.5 out of order, I haven't found a way to fix it yet
 # but the messages was not lost
-SIZE1=$(stat -c %s $T2KDIR/basic.log.5)
-SIZE2=$(stat -c %s $K2FDIR/basic/${HOST}_basic.log.5)
+SIZE1=$(stat -c %s $T2KDIR/basic.log.$NFILE)
+SIZE2=$(stat -c %s $K2FDIR/basic/${HOST}_basic.log.$NFILE)
 if [ "$SIZE1" != "$SIZE2" ]; then
-  echo "expect $K2FDIR/basic/${HOST}_basic.log.5 size != $T2KDIR/basic.log.5"
+  echo "$LINENO expect $K2FDIR/basic/${HOST}_basic.log.$NFILE size != $T2KDIR/basic.log.$NFILE"
   exit 1
 fi
 

@@ -256,7 +256,7 @@ void FileReader::updateFileOffRecord(const FileRecord *record)
 
     util::atomic_inc(&dline_);
     util::atomic_inc(&dsize_, record->data->size() - ctx_->function()->extraSize());
-  } else {
+  } else if (ctx_->getPartitioner() > PARTITIONER_RANDOM) {
     log_fatal(0, "%d %s off change smaller, from %ld/%ld to %ld/%ld", fd_, ctx_->topic().c_str(),
               (long) fileOffRecord_->inode, (long) fileOffRecord_->off,
               (long) record->inode, (long) record->off);

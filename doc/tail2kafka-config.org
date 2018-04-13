@@ -124,7 +124,7 @@ librdkafka的topic配置
 ** partition
 可选项，int，无默认值
 
-指定kafka的partition，如果没有指定，使用main.lua中的配置。精心指定partition，可以实现均衡，但也很容易出错。
+指定kafka的partition，如果没有指定，使用main.lua中的配置。精心指定partition，可以实现均衡，但也很容易出错。 ~partition=-100~ 是一个特殊配置，把数据在多个分区间随机分布，且只能在每个lua配置中单独指定。
 
 ** autoparti
 可选项，boolean，默认 ~autoparti = false~

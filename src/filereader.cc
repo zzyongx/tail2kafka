@@ -625,11 +625,10 @@ void FileReader::propagateRawData(const std::string *data)
 
   LuaCtx *ctx = ctx_;
   while (ctx) {
-    if (!ctx->withhost()) continue;
-
-    std::vector<FileRecord *> *records = new std::vector<FileRecord *>(1, FileRecord::create(-1, -1, data));
-    ctx->getFileReader()->sendLines(-1, records);
-
+    if (ctx->withhost()) {
+      std::vector<FileRecord *> *records = new std::vector<FileRecord *>(1, FileRecord::create(-1, -1, data));
+      ctx->getFileReader()->sendLines(-1, records);
+    }
     ctx = ctx->next();
   }
 }

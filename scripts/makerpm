@@ -20,6 +20,10 @@ tar czf $RPMNAM-$RPMVER.tar.gz $RPMNAM-$RPMVER
 mv -f $RPMNAM-$RPMVER.tar.gz $RPMROOT/SOURCES/
 cd -
 
+OS=$(uname -r | cut -d'.' -f4)
+ARCH=$(uname -r | cut -d'.' -f5)
+test "$ARCH" != "" || ARCH="x86_64"
+
 rpmbuild -bb $SPECFILE
-mv $RPMROOT/RPMS/x86_64/$RPMNAM-$RPMVER-$RPMREL.x86_64.rpm .
-mv $RPMROOT/RPMS/x86_64/$RPMNAM-debuginfo-$RPMVER-$RPMREL.x86_64.rpm .
+mv $RPMROOT/RPMS/$ARCH/$RPMNAM-$RPMVER-$RPMREL.$ARCH.rpm $RPMNAM-$RPMVER-$RPMREL.$OS.$ARCH.rpm
+mv $RPMROOT/RPMS/$ARCH/$RPMNAM-debuginfo-$RPMVER-$RPMREL.$ARCH.rpm $RPMNAM-debuginfo-$RPMVER-$RPMREL.$OS.$ARCH.rpm

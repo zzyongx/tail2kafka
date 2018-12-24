@@ -32,7 +32,9 @@ bool PingbackTask::doIt()
   curl_easy_reset(curl_);
   curl_easy_setopt(curl_, CURLOPT_URL, url_);
   curl_easy_setopt(curl_, CURLOPT_NOPROGRESS, 1L);
+#ifdef CURLOPT_TCP_KEEPALIVE
   curl_easy_setopt(curl_, CURLOPT_TCP_KEEPALIVE, 1L);
+#endif
   curl_easy_setopt(curl_, CURLOPT_WRITEFUNCTION, curlWriteCallback);
 
   CURLcode rc = curl_easy_perform(curl_);

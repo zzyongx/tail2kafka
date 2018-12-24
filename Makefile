@@ -46,7 +46,6 @@ speedlimit: $(BUILDDIR)/mix/speedlimit.o
 .PHONY: get-deps
 get-deps:
 	@mkdir -p $(DEPSDIR)
-	@yum install cmake -y
 
 	@echo "compile jsoncpp" && \
 	  cd $(DEPSDIR) && \

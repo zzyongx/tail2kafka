@@ -14,7 +14,7 @@
 #include "filereader.h"
 
 #define NL                  '\n'
-#define MAX_LINE_LEN        5 * 1024 * 1024     // 5M
+#define MAX_LINE_LEN        8 * 1024 * 1024     // 8M
 #define MAX_TAIL_SIZE       100 * MAX_LINE_LEN  // 200M
 
 FileReader::StartPosition FileReader::stringToStartPosition(const char *s)

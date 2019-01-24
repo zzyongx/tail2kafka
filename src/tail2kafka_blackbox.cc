@@ -78,11 +78,11 @@ void *basic_routine(void *)
     fprintf(fp, "%s\n", basicPro());
   }
   fflush(fp);
-  sys::nanosleep(100000);
+  sys::millisleep(100000);
 
   for (int i = 0; i < 100; ++i) {
     fprintf(fp, "%s\n", basicPro());
-    sys::nanosleep(1000);
+    sys::millisleep(1000);
   }
   fclose(fp);
 
@@ -132,7 +132,7 @@ void *filter_routine(void *)
   }
 
   fflush(fp);
-  sys::nanosleep(1000);
+  sys::millisleep(1000);
 
   for (int i = 0; i < 100; ++i) {
     fprintf(fp, "%s\n", filterPro());
@@ -184,7 +184,7 @@ void *grep_routine(void *)
   }
 
   fflush(fp);
-  sys::nanosleep(1000);
+  sys::millisleep(1000);
 
   for (int i = 0; i < 100; ++i) {
     fprintf(fp, "%s\n", grepPro());

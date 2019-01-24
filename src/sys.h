@@ -8,7 +8,7 @@
 
 namespace sys {
 
-inline void nanosleep(int ms)
+inline void millisleep(int ms)
 {
   struct timespec spec = {0, ms * 1000 * 1000};
   nanosleep(&spec, 0);

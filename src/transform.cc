@@ -556,10 +556,11 @@ bool LuaTransform::fieldsToJson(
 
 bool LuaTransform::parseFields(const char *ptr, size_t len, std::vector<std::string> *fields, time_t *timestamp)
 {
-  char delimiter = ' ';
-  if (inputFormat_ == TSV) delimiter = '\t';
-
-  split(ptr, len, fields, delimiter);
+  if (inputFormat_ == TSV) {
+    splitn(ptr, len, fields, -1, '\t');
+  } else {
+    split(ptr, len, fields);
+  }
 
   if (fields->size() != fields_.size()) {
     log_error(0, "%s:%d invalid field size %.*s", topic_, partition_, static_cast<int>(len), ptr);

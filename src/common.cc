@@ -52,11 +52,13 @@ bool hostAddr(const std::string &host, uint32_t *addr, char *errbuf)
   return true;
 }
 
-void split(const char *line, size_t nline, std::vector<std::string> *items, char delimiter)
+void split(const char *line, size_t nline, std::vector<std::string> *items)
 {
   bool esc = false;
   char want = '\0';
   size_t pos = 0;
+
+  if (nline == (size_t)-1) nline = strlen(line);
 
   for (size_t i = 0; i < nline; ++i) {
     if (esc) {
@@ -82,13 +84,36 @@ void split(const char *line, size_t nline, std::vector<std::string> *items, char
       } else if (line[i] == '[') {
         want = ']';
         pos++;
-      } else if (line[i] == delimiter) {
+      } else if (line[i] == ' ') {
         if (i != pos) items->push_back(std::string(line + pos, i - pos));
         pos = i+1;
       }
     }
   }
-  if (pos != nline) items->push_back(std::string(line + pos, nline - pos));
+  if (pos < nline) items->push_back(std::string(line + pos, nline - pos));
+}
+
+void splitn(const char *line, size_t nline, std::vector<std::string> *items, int limit, char delimiter)
+{
+  bool esc = false;
+  size_t pos = 0;
+
+  if (nline == (size_t)-1) nline = strlen(line);
+
+  for (size_t i = 0; i < nline; ++i) {
+    if (esc) {
+      esc = false;
+    } else if (line[i] == '\\') {
+      esc = true;
+    } else if (line[i] == delimiter) {
+      if (i != pos) {
+        if (limit > 0 && (size_t) limit == items->size() + 1) i = nline;
+        items->push_back(std::string(line + pos, i - pos));
+      }
+      pos = i+1;
+    }
+  }
+  if (pos < nline) items->push_back(std::string(line + pos, nline - pos));
 }
 
 enum DateTimeStatus { WaitYear, WaitMonth, WaitDay, WaitHour, WaitMin, WaitSec };

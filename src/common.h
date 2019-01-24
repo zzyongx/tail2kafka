@@ -19,7 +19,9 @@ typedef std::vector<LuaCtx *>              LuaCtxPtrList;
 
 bool shell(const char *cmd, std::string *output, char *errbuf);
 bool hostAddr(const std::string &host, uint32_t *addr, char *errbuf);
-void split(const char *line, size_t nline, std::vector<std::string> *items, char delimiter = ' ');
+void split(const char *line, size_t nline, std::vector<std::string> *items);
+void splitn(const char *line, size_t nline, std::vector<std::string> *items,
+            int limit = -1, char delimiter = ' ');
 bool timeLocalToIso8601(const std::string &t, std::string *iso, time_t *timestamp = 0);
 bool parseIso8601(const std::string &t, time_t *timestamp);
 

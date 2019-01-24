@@ -24,7 +24,6 @@ static CnfCtx *cnf = 0;
 
 #define LUACNF_SIZE 6
 #define ETCDIR "blackboxtest/tail2kafka"
-#define LUA(f) "blackboxtest/tailkafka/"f
 #define LOG(f) "logs/"f
 
 DEFINE(split)
@@ -40,6 +39,29 @@ DEFINE(split)
   assert(list[3] == "");
   check(list[4] == "\"\"", "%s", list[4].c_str());
   assert(list[5] == "bj");
+}
+
+DEFINE(split_n)
+{
+  std::vector<std::string> list;
+
+  const char *s1 = "hello [world] !";
+  splitn(s1, -1, &list, 2);
+  check(list.size() == 2, "%d", (int) list.size());
+  check(list[0] == "hello", "%s", list[0].c_str());
+  check(list[1] == "[world] !", "%s", list[1].c_str());
+
+  list.clear();
+  const char *s2 = "hello [world] !";
+  splitn(s2, -1, &list, 1);
+  check(list.size() == 1, "%d", (int) list.size());
+  check(list[0] == "hello [world] !", "%s", list[0].c_str());
+
+  list.clear();
+  const char *s3 = "hello [world] !";
+  splitn(s3, -1, &list, 5);
+  check(list.size() == 3, "%d", (int) list.size());
+  check(list[2] == "!", "%s", list[2].c_str());
 }
 
 DEFINE(iso8601)
@@ -502,6 +524,7 @@ int main()
   DO(prepare);
 
   TEST(split);
+  TEST(split_n);
   TEST(iso8601);
 
   TEST(loadCnf);

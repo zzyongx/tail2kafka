@@ -1,5 +1,6 @@
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <map>
 
@@ -21,7 +22,7 @@ struct UNITTEST_HELPER {
   if ((r)) break;                                                  \
   fprintf(stderr, "%s@%-5d %s -> ["COLOR_RED fmt COLOR_RESET"]\n", \
           name, __LINE__, #r, ##arg);                              \
-  assert((r));                                                    \
+  assert((r));                                                     \
 } while(0)
 
 #define check(r, fmt, arg...)  CHECK_IMPL(r, __FILE__, fmt, ##arg)
@@ -58,3 +59,48 @@ void *env_safe_get(const std::map<std::string, void *> &map,
 #define DO(func)          TEST_IMPL(func, #func, false)
 #define TEST(func)        TEST_IMPL(func, #func, true)
 #define TESTX(func, name) TEST_IMPL(func, name, true)
+
+typedef void (*TEST_RUN_FUNC_PROTO)();
+
+#define TEST_RUN(name) static void TEST_RUN_##name();      \
+  static TEST_RUN_FUNC_PROTO name = TEST_RUN_##name;  \
+  void TEST_RUN_##name()
+
+// #define TEST_RUN(name) static void TEST_RUN_##name()
+
+#define UNITTEST_RUN(...) do {                                \
+  TEST_RUN_FUNC_PROTO funcs[] = { __VA_ARGS__, 0 };           \
+  pid_t pid = fork();                                         \
+  if (pid == 0) {                                             \
+    for (int i = 0; funcs[i]; ++i) funcs[i]();                \
+    exit(0);                                                  \
+  }                                                           \
+  int status;                                                 \
+  wait(&status);                                              \
+  if (WIFSIGNALED(status)) {                                  \
+    char core[32];                                            \
+    snprintf(core, 32, "core.%d", (int) pid);                 \
+    char cmd[256];                                            \
+    snprintf(cmd, 256, "test -f %s && (echo -e 'bt\nquit\n' | gdb $(readlink /proc/%d/exe) -c %s)", \
+             core, (int) getpid(), core);                     \
+    system(cmd);                                              \
+  }                                                           \
+} while(0)
+
+#define BASH(cmd, status) do {                                \
+  pid_t pid = fork();                                         \
+  int fd[2];                                                  \
+  pipe(fd);                                                   \
+  dup2(fd[0], STDIN_FILENO);                                  \
+  if (pid == 0) {                                             \
+    close(fd[1]);                                             \
+    const char *argv[2] = {"/bin/bash", 0};                   \
+    execv(argv[0], (char * const *) argv);                    \
+    exit(127);                                                \
+  }                                                           \
+  close(fd[0]);                                               \
+  write(fd[1], cmd, strlen(cmd));                             \
+  wait(&status);                                              \
+  if (WIFEXITED(status)) status = WEXITSTATUS(status);        \
+  else if (WIFSIGNALED(status)) status = WTERMSIG(status);    \
+} while (0)

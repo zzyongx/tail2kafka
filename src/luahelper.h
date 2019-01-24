@@ -323,11 +323,11 @@ public:
     return true;
   }
 
-  bool call(const char *name, const char *line, size_t nline) {
+  bool call(const char *name, const char *line, size_t nline, int nret = 1) {
     lua_getglobal(L_, name);
     lua_pushlstring(L_, line, nline);
 
-    if (lua_pcall(L_, 1, 1, 0) != 0) {
+    if (lua_pcall(L_, 1, nret, 0) != 0) {
       snprintf(errbuf_, MAX_ERR_LEN, "%s %s error %s", file_.c_str(), name, lua_tostring(L_, -1));
       lua_settop(L_, 0);
       return false;
@@ -343,6 +343,22 @@ public:
     }
 
     result->append(lua_tostring(L_, 1));
+    lua_settop(L_, 0);
+    return true;
+  }
+
+  bool callResultString(const char *name, std::string *r1, std::string *r2) {
+    std::string *r[2] = {r1, r2};
+    for (int i = 0; i < 2; ++i) {
+      if (!lua_isstring(L_, i+1)) {
+        snprintf(errbuf_, MAX_ERR_LEN, "%s %s return #%d must be string(nil)", file_.c_str(), name, i+1);
+        lua_settop(L_, 0);
+        return false;
+      }
+
+      r[i]->assign(lua_tostring(L_, i+1));
+    }
+
     lua_settop(L_, 0);
     return true;
   }

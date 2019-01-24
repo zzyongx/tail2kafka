@@ -13,11 +13,14 @@ const char *LuaFunction::typeToString(Type type)
   case GREP: return "grep";
   case TRANSFORM: return "transform";
   case AGGREGATE: return "aggregate";
+  case INDEXDOC: return "indexdoc";
+  case ESPLAIN: return "esplain";
+  case KAFKAPLAIN: return "kafkaplain";
   default: {assert(0); return "null";}
   }
 }
 
-LuaFunction *LuaFunction::create(LuaCtx *ctx, LuaHelper *helper)
+LuaFunction *LuaFunction::create(LuaCtx *ctx, LuaHelper *helper, Type defType)
 {
   std::auto_ptr<LuaFunction> function(new LuaFunction(ctx));
 
@@ -28,7 +31,7 @@ LuaFunction *LuaFunction::create(LuaCtx *ctx, LuaHelper *helper)
   }
 
   std::string value;
-  Type types[] = {GREP, TRANSFORM, AGGREGATE};
+  Type types[] = {GREP, TRANSFORM, AGGREGATE, INDEXDOC};
 
   for (size_t i = 0; i < sizeof(types)/sizeof(Type); ++i) {
     std::string fun = typeToString(types[i]);
@@ -46,13 +49,21 @@ LuaFunction *LuaFunction::create(LuaCtx *ctx, LuaHelper *helper)
     }
   }
 
+  if (function->type_ == NIL) function->type_ = defType;
+  if (function->type_ == NIL) {
+    snprintf(ctx->cnf()->errbuf(), MAX_ERR_LEN, "%s, topic or es_index,es_doc or indexdoc is required",
+             helper->file());
+    return 0;
+  }
+
   if (function->type_ == AGGREGATE && ctx->timeidx() < 0) {
     snprintf(ctx->cnf()->errbuf(), MAX_ERR_LEN, "%s aggreagte must have timeidx", helper->file());
     return 0;
   }
 
   if (ctx->withhost()) {
-    if (function->type_ == NIL || function->type_ == FILTER || function->type_ == GREP || function->type_ == TRANSFORM) {
+    if (function->type_ == KAFKAPLAIN || function->type_ == FILTER ||
+        function->type_ == GREP || function->type_ == TRANSFORM) {
       function->extraSize_ = 1 + ctx->cnf()->host().size() + 1 + PADDING_LEN + 1;  // *host@off
     } else {
       function->extraSize_ = ctx->cnf()->host().size() + 1; // host
@@ -123,6 +134,75 @@ int LuaFunction::transform(off_t off, const char *line, size_t nline, std::vecto
   }
 }
 
+int LuaFunction::kafkaPlain(off_t off, const char *line, size_t nline, std::vector<FileRecord *> *records)
+{
+  std::string *ptr = new std::string;
+
+  if (ctx_->withhost()) addHost(ptr, ctx_->cnf()->host(), off, true);
+  ptr->append(line, nline);
+  if (ctx_->autonl()) ptr->append(1, '\n');
+
+  records->push_back(FileRecord::create(0, off, ptr));
+  return 1;
+}
+
+int LuaFunction::indexdoc(off_t off, const char *line, size_t nline, std::vector<FileRecord *> *records)
+{
+  if (!helper_->call(funName_.c_str(), line, nline, 2)) return -1;
+  if (helper_->callResultNil()) return 0;
+
+  std::string *index = new std::string;
+  std::string *doc = new std::string;
+
+  if (helper_->callResultString(funName_.c_str(), index, doc)) {
+    records->push_back(FileRecord::create(0, off, index, doc));
+    return 1;
+  } else {
+    delete index;
+    delete doc;
+    return -1;
+  }
+}
+
+int LuaFunction::esPlain(off_t off, const char *line, size_t nline, std::vector<FileRecord *> *records)
+{
+  std::string esIndex;
+  bool esIndexWithTimeFormat;
+  int esIndexPos, esDocPos, esDocDataFormat;
+  ctx_->es(&esIndex, &esIndexWithTimeFormat, &esIndexPos, &esDocPos, &esDocDataFormat);
+
+  if (esIndexWithTimeFormat) {
+    struct tm ltm;
+    time_t now = ctx_->cnf()->fasttime();
+    localtime_r(&now, &ltm);
+    char buf[256];
+    size_t n = strftime(buf, 256, esIndex.c_str(), &ltm);
+    esIndex.assign(buf, n);
+  }
+
+  std::string *doc = 0, *index = 0;
+  if (esDocPos == 1) {
+    index = new std::string(esIndex);
+    doc = new std::string(line, nline);
+  } else {
+    std::vector<std::string> v;
+    splitn(line, nline, &v, esDocPos);
+    if ((int) v.size() != esDocPos) {
+      return -1;
+    }
+
+    if (esIndexPos > 0) {
+      index = new std::string(v[esIndexPos-1] + esIndex);
+    } else {
+      index = new std::string(esIndex);
+    }
+    doc = new std::string(v[esDocPos-1]);
+  }
+
+  records->push_back(FileRecord::create(0, off, index, doc));
+  return 0;
+}
+
 int LuaFunction::serializeCache(std::vector<FileRecord *> *records)
 {
   if (aggregateCache_.empty()) return 0;
@@ -173,6 +253,8 @@ int LuaFunction::process(off_t off, const char *line, size_t nline, std::vector<
 {
   if (type_ == TRANSFORM) {
     return transform(off, line, nline, records);
+  } else if (type_ == INDEXDOC) {
+    return indexdoc(off, line, nline, records);
   } else if (type_ == AGGREGATE || type_ == GREP || type_ == FILTER) {
     std::vector<std::string> fields;
     split(line, nline, &fields);
@@ -192,14 +274,11 @@ int LuaFunction::process(off_t off, const char *line, size_t nline, std::vector<
     } else {
       return 0;
     }
+  } else if (type_ == KAFKAPLAIN) {
+    return kafkaPlain(off, line, nline, records);
+  } else if (type_ == ESPLAIN) {
+    return esPlain(off, line, nline, records);
   } else {
-    std::string *ptr = new std::string;
-
-    if (ctx_->withhost()) addHost(ptr, ctx_->cnf()->host(), off, true);
-    ptr->append(line, nline);
-    if (ctx_->autonl()) ptr->append(1, '\n');
-
-    records->push_back(FileRecord::create(0, off, ptr));
-    return 1;
+    return 0;
   }
 }

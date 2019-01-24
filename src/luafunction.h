@@ -12,13 +12,12 @@
 class LuaFunction {
   template<class T> friend class UNITTEST_HELPER;
 public:
-  enum Type { FILTER, GREP, TRANSFORM, AGGREGATE, NIL };
+  enum Type { FILTER, GREP, TRANSFORM, AGGREGATE, INDEXDOC, KAFKAPLAIN, ESPLAIN, NIL };
 
-  static LuaFunction *create(LuaCtx *ctx, LuaHelper *helper);
+  static LuaFunction *create(LuaCtx *ctx, LuaHelper *helper, Type defType);
   int process(off_t off, const char *line, size_t nline, std::vector<FileRecord *> *records);
   int serializeCache(std::vector<FileRecord *> *records);
 
-  bool empty() const { return type_ == NIL; }
   Type getType() const { return type_; }
   size_t extraSize() const { return extraSize_; }
 
@@ -36,6 +35,10 @@ private:
   int grep(off_t off, const std::vector<std::string> &fields, std::vector<FileRecord *> *records);
   int transform(off_t off, const char *line, size_t nline, std::vector<FileRecord *> *records);
   int aggregate(const std::vector<std::string> &fields, std::vector<FileRecord *> *records);
+  int kafkaPlain(off_t off, const char *line, size_t nline, std::vector<FileRecord *> *records);
+
+  int indexdoc(off_t off, const char *line, size_t nline, std::vector<FileRecord *> *records);
+  int esPlain(off_t off, const char *line, size_t nline, std::vector<FileRecord *> *records);
 
 private:
   LuaCtx      *ctx_;

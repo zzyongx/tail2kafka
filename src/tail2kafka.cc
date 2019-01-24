@@ -97,7 +97,7 @@ int main(int argc, char *argv[])
         } else if (WIFSIGNALED(status)) {
           log_fatal(0, "children %d killed by signal %d", (int) opid, WTERMSIG(status));
         }
-        sys::nanosleep(500);
+        sys::millisleep(500);
       } else {
         runStatus->set(RunStatus::WAIT);
       }
@@ -149,7 +149,10 @@ int main(int argc, char *argv[])
 void *routine(void *data)
 {
   CnfCtx *cnf = (CnfCtx *) data;
+
   KafkaCtx *kafka = cnf->getKafka();
+  EsCtx *es = cnf->getEs();
+
   RunStatus *runStatus = cnf->getRunStatus();
 
   OneTaskReq req;
@@ -165,11 +168,14 @@ void *routine(void *data)
     assert(nn == sizeof(OneTaskReq));
 
     if (!req.records) break;  // terminate task
-    if (!kafka->produce(req.ctx, req.records)) {
-      log_fatal(0, "rd_kafka_poll timeout, librdkafka may have bug or kafka servuce is unavailable, exit");
+    if (kafka && !kafka->produce(req.ctx, req.records)) {
+      log_fatal(0, "rd_kafka_poll timeout, librdkafka may have bug or kafka service is unavailable, exit");
+      runStatus->set(RunStatus::STOP);
+      kafka->poll(10);  // poll kafka
+    } else if (es && !es->produce(req.ctx, req.records)) {
+      log_fatal(0, "es_poll timeout, es service may unavailable, exit");
       runStatus->set(RunStatus::STOP);
     }
-    kafka->poll(10);  // poll kafka
     delete req.records;
   }
 
@@ -209,10 +215,17 @@ void run(InotifyCtx *inotify, CnfCtx *cnf)
     exit(EXIT_FAILURE);
   }
 
-  /* initKafka startup librdkafka thread */
-  if (!cnf->initKafka()) {
-    log_fatal(0, "init kafka error %s", cnf->errbuf());
-    exit(EXIT_FAILURE);
+  if (cnf->enableKafka()) {
+    /* initKafka startup librdkafka thread */
+    if (!cnf->initKafka()) {
+      log_fatal(0, "init kafka error %s", cnf->errbuf());
+      exit(EXIT_FAILURE);
+    }
+  } else if (cnf->enableEs()) {
+    if (!cnf->initEs()) {
+      log_fatal(0, "init es error %s", cnf->errbuf());
+      exit(EXIT_FAILURE);
+    }
   }
 
   pthread_t tid;
@@ -221,7 +234,6 @@ void run(InotifyCtx *inotify, CnfCtx *cnf)
   terminateRoutine(cnf);
   pthread_join(tid, NULL);
 }
-
 
 int runForeGround(CnfCtx *cnf)
 {

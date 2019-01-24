@@ -23,15 +23,18 @@ BUILDDIR = build
 OBJ = $(BUILDDIR)/common.o $(BUILDDIR)/cnfctx.o $(BUILDDIR)/luactx.o $(BUILDDIR)/transform.o \
       $(BUILDDIR)/filereader.o $(BUILDDIR)/inotifyctx.o $(BUILDDIR)/fileoff.o $(BUILDDIR)/cmdnotify.o \
       $(BUILDDIR)/luafunction.o $(BUILDDIR)/kafkactx.o $(BUILDDIR)/sys.o $(BUILDDIR)/util.o \
-      $(BUILDDIR)/metrics.o $(BUILDDIR)/taskqueue.o
+      $(BUILDDIR)/esctx.o $(BUILDDIR)/metrics.o $(BUILDDIR)/taskqueue.o
 
-default: configure tail2kafka kafka2file tail2kafka_unittest kafka2file_unittest
+default: configure tail2kafka kafka2file tail2kafka_unittest tail2es_unittest kafka2file_unittest
 	@echo finished
 
 tail2kafka: $(BUILDDIR)/tail2kafka.o $(OBJ)
 	$(CXX) $(CFLAGS) -o $(BUILDDIR)/$@ $^ $(ARLIBS) $(LDFLAGS)
 
 tail2kafka_unittest: $(BUILDDIR)/tail2kafka_unittest.o $(OBJ)
+	$(CXX) $(CFLAGS) -o $(BUILDDIR)/$@ $^ $(ARLIBS) $(LDFLAGS)
+
+tail2es_unittest: $(BUILDDIR)/tail2es_unittest.o $(OBJ)
 	$(CXX) $(CFLAGS) -o $(BUILDDIR)/$@ $^ $(ARLIBS) $(LDFLAGS)
 
 kafka2file_unittest: $(BUILDDIR)/kafka2file_unittest.o $(OBJ)
@@ -97,6 +100,7 @@ test:
 	find kafka2filedir -type f -delete
 	make clean && make PREDEF="-D_DEBUG_ -DNO_LOGGER" DEBUG=1
 	$(BUILDDIR)/tail2kafka_unittest
+	$(BUILDDIR)/tail2es_unittest
 	$(BUILDDIR)/kafka2file_unittest
 
 	@echo "blackbox test"

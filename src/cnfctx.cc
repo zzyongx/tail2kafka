@@ -82,7 +82,9 @@ CnfCtx *CnfCtx::loadFile(const char *file, char *errbuf)
   }
 
   if (!helper->getString("pidfile", &cnf->pidfile_)) return 0;
-  if (!helper->getString("brokers", &cnf->brokers_)) return 0;
+
+  if (!helper->getString("brokers", &cnf->brokers_, "")) return 0;
+  if (!helper->getString("es_nodes", &cnf->esNodes_, "")) return 0;
 
   if (!helper->getInt("partition", &cnf->partition_, -1)) return 0;
   if (!helper->getInt("polllimit", &cnf->pollLimit_, 100)) return 0;
@@ -90,8 +92,15 @@ CnfCtx *CnfCtx::loadFile(const char *file, char *errbuf)
 
   if (!helper->getString("pingbackurl", &cnf->pingbackUrl_, "")) return 0;
 
-  if (!helper->getTable("kafka_global", &cnf->kafkaGlobal_)) return 0;
-  if (!helper->getTable("kafka_topic", &cnf->kafkaTopic_)) return 0;
+  if (!cnf->brokers_.empty()) {
+    if (!helper->getTable("kafka_global", &cnf->kafkaGlobal_)) return 0;
+    if (!helper->getTable("kafka_topic", &cnf->kafkaTopic_)) return 0;
+  } else if (!cnf->esNodes_.empty()) {
+    if (!helper->getInt("es_max_conns", &cnf->esMaxConns_, 1000)) return 0;
+  } else {
+    snprintf(errbuf, MAX_ERR_LEN, "brokers or esnodes is required");
+    return 0;
+  }
 
   if (!helper->getString("libdir", &cnf->libdir_, "/var/lib/tail2kafka")) return 0;
   if (!sys::isdir(cnf->libdir_.c_str(), errbuf)) return 0;
@@ -124,9 +133,21 @@ void CnfCtx::addLuaCtx(LuaCtx *ctx)
 
 bool CnfCtx::initKafka()
 {
+  assert(!brokers_.empty());
+
   std::auto_ptr<KafkaCtx> kafka(new KafkaCtx());
   if (!kafka->init(this, errbuf_)) return false;
   kafka_ = kafka.release();
+  return true;
+}
+
+bool CnfCtx::initEs()
+{
+  assert(!esNodes_.empty());
+
+  std::auto_ptr<EsCtx> es(new EsCtx());
+  if (!es->init(this, errbuf_)) return false;
+  es_ = es.release();
   return true;
 }
 
@@ -158,6 +179,7 @@ CnfCtx::CnfCtx() {
 
   helper_  = 0;
   kafka_   = 0;
+  es_      = 0;
   fileOff_ = 0;
 
   accept = server = -1;
@@ -181,6 +203,7 @@ CnfCtx::~CnfCtx()
 
   if (helper_)  delete helper_;
   if (kafka_)   delete kafka_;
+  if (es_)      delete es_;
   if (fileOff_) delete fileOff_;
 
   if (accept != -1) close(accept);

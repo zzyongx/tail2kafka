@@ -9,6 +9,7 @@
 #include "gnuatomic.h"
 #include "fileoff.h"
 #include "luahelper.h"
+#include "esctx.h"
 #include "kafkactx.h"
 #include "common.h"
 
@@ -35,8 +36,13 @@ public:
   ~CnfCtx();
   void addLuaCtx(LuaCtx *ctx);
 
+  bool enableKafka() const { return !brokers_.empty(); }
   bool initKafka();
   KafkaCtx *getKafka() { return kafka_; }
+
+  bool enableEs() const { return !esNodes_.empty(); }
+  bool initEs();
+  EsCtx *getEs() { return es_; }
 
   bool initFileOff();
   FileOff *getFileOff() { return fileOff_; }
@@ -49,6 +55,9 @@ public:
   const char *getBrokers() const { return brokers_.c_str(); }
   const std::map<std::string, std::string> &getKafkaGlobalConf() const { return kafkaGlobal_; }
   const std::map<std::string, std::string> &getKafkaTopicConf() const { return kafkaTopic_; }
+
+  const char *getEsNodes() const { return esNodes_.c_str(); }
+  size_t getEsMaxConns() const { return esMaxConns_; }
 
   const char *getPidFile() const {
     return pidfile_.c_str();
@@ -107,6 +116,10 @@ private:
   std::map<std::string, std::string>  kafkaGlobal_;
   std::map<std::string, std::string>  kafkaTopic_;
   KafkaCtx                           *kafka_;
+
+  std::string  esNodes_;
+  int          esMaxConns_;
+  EsCtx       *es_;
 
   struct timeval timeval_;
   char        *errbuf_;

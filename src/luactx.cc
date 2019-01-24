@@ -222,14 +222,29 @@ LuaCtx *LuaCtx::loadFile(CnfCtx *cnf, const char *file)
 
   if (!helper->getBool("fileWithTimeFormat", &ctx->fileWithTimeFormat_, false)) return 0;
 
-  if (!helper->getString("topic", &ctx->topic_)) return 0;
   if (!helper->getString("file", &ctx->file_)) return 0;
   if (!ctx->testFile(file, cnf->errbuf())) return 0;
+
+  std::string esIndex, esDoc;
+
+  if (!helper->getString("topic", &ctx->topic_, "")) return 0;
+  if (!helper->getString("es_index", &esIndex, "")) return 0;
+  if (!helper->getString("es_doc", &esDoc, "")) return 0;
+
+  if (!esIndex.empty() && !esDoc.empty()) {
+    if (!ctx->parseEsIndexDoc(esIndex, esDoc, cnf->errbuf())) return 0;
+  } else if (!esIndex.empty() && esDoc.empty()) {
+    snprintf(cnf->errbuf(), MAX_ERR_LEN, "%s es_index requires es_doc", file);
+    return 0;
+  } else if (!esDoc.empty() && esIndex.empty()) {
+    snprintf(cnf->errbuf(), MAX_ERR_LEN, "%s es_doc requires es_index", file);
+    return 0;
+  }
 
   if (!helper->getString("fileAlias", &ctx->fileAlias_, ctx->topic_)) return 0;
   for (std::vector<LuaCtx *>::iterator ite = cnf->getLuaCtxs().begin(); ite != cnf->getLuaCtxs().end(); ++ite) {
     for (LuaCtx *existCtx = *ite; existCtx; existCtx = existCtx->next_) {
-      if (ctx->fileAlias_ == existCtx->fileAlias_) {
+      if (!ctx->topic_.empty() && ctx->fileAlias_ == existCtx->fileAlias_) {
         snprintf(cnf->errbuf(), MAX_ERR_LEN, "%s and %s has the same fileAlias %s",
                  file, existCtx->helper_->file(), ctx->fileAlias_.c_str());
         return 0;
@@ -258,11 +273,73 @@ LuaCtx *LuaCtx::loadFile(CnfCtx *cnf, const char *file)
   if (!helper->getInt("rotatedelay", &ctx->rotateDelay_, -1)) return 0;
   if (!helper->getString("pkey", &ctx->pkey_, "")) return 0;
 
-  if (!(ctx->function_ = LuaFunction::create(ctx.get(), helper.get()))) return 0;
+  LuaFunction::Type luafType;
+  if (!ctx->topic_.empty()) luafType = LuaFunction::KAFKAPLAIN;
+  else if (!esIndex.empty()) luafType = LuaFunction::ESPLAIN;
+  else luafType = LuaFunction::NIL;
+
+  if (!(ctx->function_ = LuaFunction::create(ctx.get(), helper.get(), luafType))) return 0;
   if (!ctx->loadHistoryFile()) return 0;
 
   ctx->helper_ = helper.release();
   return ctx.release();
+}
+
+bool LuaCtx::parseEsIndexDoc(const std::string &esIndex, const std::string &esDoc, char errbuf[])
+{
+  if (esIndex.size() >= 56) {
+    snprintf(errbuf, MAX_ERR_LEN, "len(%s) must <= 56", esIndex.c_str());
+    return false;
+  }
+
+  size_t pos;
+  esIndex_ = esIndex;
+
+  esIndexPos_ = -1;
+  if (esIndex[0] == '#') {
+    esIndexPos_ = 0;
+    for (pos = 1; pos < esIndex.size(); ++pos) {
+      if (esIndex[pos] >= '0' && esIndex[pos] <= '9') {
+        esIndexPos_ = esIndexPos_ * 10 + esIndex[pos] - '0';
+      } else {
+        break;
+      }
+    }
+    if (pos < esIndex.size()) esIndex_ = esIndex.substr(pos);
+  }
+
+  esIndexWithTimeFormat_ = esIndex_.find('%') != std::string::npos;
+
+  if (esDoc[0] != '#') {
+    snprintf(errbuf, MAX_ERR_LEN, "esDoc requires format ##/NGINX_JSON or ##/NGINX_LOG");
+    return false;
+  }
+
+  esDocPos_ = 0;
+  for (pos = 1; pos < esDoc.size(); ++pos) {
+    if (esDoc[pos] >= '0' && esDoc[pos] <= '9') {
+      esDocPos_ = esDocPos_ * 10 + esDoc[pos] - '0';
+    } else {
+      break;
+    }
+  }
+
+  if (esIndexPos_ < 1 || esDocPos_ <= esIndexPos_) {
+    snprintf(errbuf, MAX_ERR_LEN, "esIndexPos must > 0 and esDocPos must >= esIndexPos");
+    return false;
+  }
+
+  std::string format = esDoc.substr(pos);
+  if (format == "/NGINX_JSON") {
+    esDocDataFormat_ = ESDOC_DATAFORMAT_NGINX_JSON;
+  } else if (format == "/NGINX") {
+    esDocDataFormat_ = ESDOC_DATAFORMAT_NGINX_LOG;
+  } else {
+    snprintf(errbuf, MAX_ERR_LEN, "esDoc requires format ##/NGINX_JSON or ##/NGINX_LOG");
+    return false;
+  }
+
+  return true;
 }
 
 bool LuaCtx::addHistoryFile(const std::string &historyFile)

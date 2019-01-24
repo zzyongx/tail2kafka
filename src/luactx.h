@@ -16,11 +16,24 @@ class FileReader;
 
 #define PARTITIONER_RANDOM -100
 
+#define ESDOC_DATAFORMAT_NGINX_JSON 1
+#define ESDOC_DATAFORMAT_NGINX_LOG  2
+
 class LuaCtx {
   template<class T> friend class UNITTEST_HELPER;
 public:
   static LuaCtx *loadFile(CnfCtx *cnf, const char *file);
   ~LuaCtx();
+
+  bool parseEsIndexDoc(const std::string &esIndex, const std::string &esDoc, char errbuf[]);
+  void es(std::string *esIndex, bool *esIndexWithTimeFormat, int *esIndexPos,
+          int *esDocPos, int *esDocDataFormat) const {
+    *esIndex = esIndex_;
+    *esIndexWithTimeFormat = esIndexWithTimeFormat_;
+    *esIndexPos = esIndexPos_;
+    *esDocPos = esDocPos_;
+    *esDocDataFormat = esDocDataFormat_;
+  }
 
   bool testFile(const char *luaFile, char *errbuf);
   bool loadHistoryFile();
@@ -41,7 +54,7 @@ public:
 #ifdef DISABLE_COPYRAW
     return false;
 #else
-    return function_->empty() && cnf_->getPollLimit() && rawcopy_;
+    return function_->getType() == LuaFunction::KAFKAPLAIN && cnf_->getPollLimit() && rawcopy_;
 #endif
   }
 
@@ -125,6 +138,12 @@ private:
   std::string   file_;
   std::string   topic_;
 
+  std::string   esIndex_;
+  int esIndexWithTimeFormat_;
+  int esIndexPos_;
+  int esDocPos_;
+  int esDocDataFormat_;
+
   bool          withhost_;
   bool          withtime_;
   int           timeidx_;
@@ -151,7 +170,7 @@ private:
   CnfCtx       *cnf_;
   LuaHelper    *helper_;
 
-  size_t        rktId_;
+  size_t rktId_;
 };
 
 #endif

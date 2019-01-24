@@ -162,7 +162,7 @@ void InotifyCtx::loop()
     tryRmWatch();
     tryReWatch();
 
-    if (cnf_->getPollLimit()) sys::nanosleep(cnf_->getPollLimit());
+    if (cnf_->getPollLimit()) sys::millisleep(cnf_->getPollLimit());
   }
 
   runStatus->set(RunStatus::STOP);

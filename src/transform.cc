@@ -264,6 +264,8 @@ LuaTransform::~LuaTransform()
   }
 }
 
+JsonValueTransform::~JsonValueTransform() {}
+
 Json::Value JsonValueTypeTransform::call(const std::string &s) const
 {
   switch(type_) {

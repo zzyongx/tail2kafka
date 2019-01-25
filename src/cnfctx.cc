@@ -144,10 +144,11 @@ bool CnfCtx::initKafka()
 bool CnfCtx::initEs()
 {
   assert(!esNodes_.empty());
-
+#ifdef ENABLE_TAIL2ES
   std::auto_ptr<EsCtx> es(new EsCtx());
   if (!es->init(this, errbuf_)) return false;
   es_ = es.release();
+#endif
   return true;
 }
 
@@ -179,7 +180,9 @@ CnfCtx::CnfCtx() {
 
   helper_  = 0;
   kafka_   = 0;
+#ifdef ENABLE_TAIL2ES
   es_      = 0;
+#endif
   fileOff_ = 0;
 
   accept = server = -1;
@@ -203,7 +206,9 @@ CnfCtx::~CnfCtx()
 
   if (helper_)  delete helper_;
   if (kafka_)   delete kafka_;
+#ifdef ENABLE_TAIL2ES
   if (es_)      delete es_;
+#endif
   if (fileOff_) delete fileOff_;
 
   if (accept != -1) close(accept);

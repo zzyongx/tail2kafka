@@ -1,3 +1,4 @@
+#ifdef ENABLE_TAIL2ES
 #ifndef _ESCTX_H_
 #define _ESCTX_H_
 
@@ -49,4 +50,5 @@ private:
   pthread_t tid_;
 };
 
+#endif
 #endif

@@ -99,6 +99,7 @@ private:
 struct JsonValueTransform {
   virtual const char *name() const { return "undefine"; }
   virtual Json::Value call(const std::string &val) const = 0;
+  virtual ~JsonValueTransform();
 };
 
 class JsonValueTypeTransform : public JsonValueTransform {

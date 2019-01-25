@@ -13,6 +13,11 @@ else
 	CFLAGS += -O2 -g
 endif
 
+ifeq ($(DISABLE_TAIL2ES), 1)
+else
+	PREDEF += -DENABLE_TAIL2ES
+endif
+
 ifndef ($(INSTALLDIR))
 	INSTALLDIR = /usr/local
 endif

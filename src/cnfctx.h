@@ -41,8 +41,11 @@ public:
   KafkaCtx *getKafka() { return kafka_; }
 
   bool enableEs() const { return !esNodes_.empty(); }
+
   bool initEs();
+#ifdef ENABLE_TAIL2ES
   EsCtx *getEs() { return es_; }
+#endif
 
   bool initFileOff();
   FileOff *getFileOff() { return fileOff_; }
@@ -119,7 +122,9 @@ private:
 
   std::string  esNodes_;
   int          esMaxConns_;
+#ifdef ENABLE_TAIL2ES
   EsCtx       *es_;
+#endif
 
   struct timeval timeval_;
   char        *errbuf_;

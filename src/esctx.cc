@@ -1,3 +1,4 @@
+#ifdef ENABLE_TAIL2ES
 #include <cstring>
 #include <errno.h>
 #include <sys/ioctl.h>
@@ -323,3 +324,4 @@ void EsCtx::eventLoop()
     }
   }
 }
+#endif

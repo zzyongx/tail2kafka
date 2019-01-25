@@ -10,17 +10,13 @@
 
 #include "logger.h"
 #include "unittesthelper.h"
-#include "runstatus.h"
 #include "sys.h"
-#include "util.h"
 #include "luactx.h"
 #include "cnfctx.h"
-#include "filereader.h"
-#include "inotifyctx.h"
-
-#define PADDING_LEN 13
 
 LOGGER_INIT();
+
+#ifdef ENABLE_TAIL2ES
 
 static CnfCtx *cnf = 0;
 
@@ -210,3 +206,11 @@ int main() {
   printf("OK\n");
   return 0;
 }
+
+#else
+
+int main() {
+  return 0;
+}
+
+#endif

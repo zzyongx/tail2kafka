@@ -18,6 +18,7 @@ class FileReader;
 
 #define ESDOC_DATAFORMAT_NGINX_JSON 1
 #define ESDOC_DATAFORMAT_NGINX_LOG  2
+#define ESDOC_DATAFORMAT_JSON       3
 
 class LuaCtx {
   template<class T> friend class UNITTEST_HELPER;

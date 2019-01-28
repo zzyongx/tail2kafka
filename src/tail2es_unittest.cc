@@ -36,6 +36,41 @@ static LuaCtx *getLuaCtx(const char *file)
   return 0;
 }
 
+static std::string fileGetContent(const char *file)
+{
+  FILE *fp = fopen(file, "r");
+  check(fp, "read file %s error: %s", file, strerror(errno));
+
+  std::string content;
+  char buf[512];
+  while (fgets(buf, 512, fp)) {
+    content.append(buf);
+  }
+  fclose(fp);
+
+  return content;
+}
+
+DEFINE(transformEsDocNginxLog)
+{
+  std::string log = fileGetContent(ETCDIR"/nginx_log.log");
+  std::string *doc = new std::string;
+  LuaFunction::transformEsDocNginxLog(log, doc);
+  std::string expectDoc = "{\"receiver\":\"bb_up\"}";
+  check(*doc == expectDoc, "got %s, expect %s", PTRS(*doc), PTRS(expectDoc));
+  delete doc;
+}
+
+DEFINE(transformEsDocNginxJson)
+{
+  std::string log = fileGetContent(ETCDIR"/nginx_json.log");
+  std::string *doc = new std::string;
+  LuaFunction::transformEsDocNginxJson(log, doc);
+  std::string expectDoc = "{\"receiver\":\"bb_up\"}";
+  check(*doc == expectDoc, "got %s, expect %s", PTRS(*doc), PTRS(expectDoc));
+  delete doc;
+}
+
 DEFINE(loadCnf)
 {
   static char errbuf[MAX_ERR_LEN];
@@ -43,6 +78,7 @@ DEFINE(loadCnf)
   cnf = CnfCtx::loadCnf(ETCDIR, errbuf);
   check(cnf, "loadCnf %s", errbuf);
 
+  cnf->fasttime(true, TIMEUNIT_MILLI);
   check(cnf->getLuaCtxSize() == LUACNF_SIZE, "%d", (int) cnf->getLuaCtxSize());
 }
 
@@ -188,6 +224,9 @@ DEFINE(clean)
 TEST_RUN(tail2es)
 {
   DO(prepare);
+
+  TEST(transformEsDocNginxLog);
+  TEST(transformEsDocNginxJson);
 
   TEST(loadCnf);
   TEST(loadLuaCtx);

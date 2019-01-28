@@ -4,7 +4,8 @@ INSTALL = install
 LDFLAGS = -lcurl -lrt -ldl -lpthread -lz -lcrypto
 DEPSDIR = ".deps"
 ARLIBS  = $(DEPSDIR)/librdkafka.a $(DEPSDIR)/libluajit-5.1.a $(DEPSDIR)/libjsoncpp.a
-CFLAGS  += -I/usr/local/include/luajit-2.0
+CFLAGS  += -I/usr/local/include/luajit-2.0 $(PARAM_CFLAGS)
+PREDEF  += $(PARAM_PREDEF)
 WARN    = -Werror -Wall -Wshadow -Wextra -Wno-comment
 
 ifeq ($(DEBUG), 1)
@@ -109,7 +110,7 @@ test:
 	$(BUILDDIR)/kafka2file_unittest
 
 	@echo "blackbox test"
-	make clean && make PREDEF="-D_DEBUG_" && make tail2kafka_blackbox
+	make clean && make PARAM_PREDEF="-D_DEBUG_" && make tail2kafka_blackbox
 	./blackboxtest/blackbox_test.sh
 
 .PHONY: install

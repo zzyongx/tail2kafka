@@ -164,6 +164,37 @@ int LuaFunction::indexdoc(off_t off, const char *line, size_t nline, std::vector
   }
 }
 
+// {\x22receiver\x22:\x22bb_up\x22} -> {"receiver":"bb_up"}
+void LuaFunction::transformEsDocNginxLog(const std::string &src, std::string *dst)
+{
+  for (size_t i = 0; i < src.size(); ++i) {
+    if (src[i] == '\\' && i+3 < src.size() && src[i+1] == 'x' && src[i+2] == '2' && src[i+3] == '2') {
+      dst->append(1, '"');
+      i += 3;
+    } else {
+      dst->append(1, src[i]);
+    }
+  }
+}
+
+// "{\"receiver\":\"bb_up\"}\n" -> {"receiver":"bb_up"}
+void LuaFunction::transformEsDocNginxJson(const std::string &src, std::string *dst)
+{
+  size_t slen = 1;
+  if (src.size() > 3 && src[src.size()-3] == '\\' && src[src.size()-2] == 'n') {
+    slen = 3;
+  }
+
+  for (size_t i = 1; i+slen < src.size(); ++i) {
+    if (src[i] == '\\' && i+1 < src.size() && src[i+1] == '"') {
+      dst->append(1, '"');
+      i += 1;
+    } else {
+      dst->append(1, src[i]);
+    }
+  }
+}
+
 int LuaFunction::esPlain(off_t off, const char *line, size_t nline, std::vector<FileRecord *> *records)
 {
   std::string esIndex;
@@ -196,7 +227,15 @@ int LuaFunction::esPlain(off_t off, const char *line, size_t nline, std::vector<
     } else {
       index = new std::string(esIndex);
     }
-    doc = new std::string(v[esDocPos-1]);
+    if (esDocDataFormat == ESDOC_DATAFORMAT_NGINX_LOG) {
+      doc = new std::string;
+      transformEsDocNginxLog(v[esDocPos-1], doc);
+    } else if (esDocDataFormat == ESDOC_DATAFORMAT_NGINX_JSON) {
+      doc = new std::string;
+      transformEsDocNginxJson(v[esDocPos-1], doc);
+    } else {
+      doc = new std::string(v[esDocPos-1]);
+    }
   }
 
   records->push_back(FileRecord::create(0, off, index, doc));

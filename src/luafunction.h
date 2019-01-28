@@ -40,6 +40,9 @@ private:
   int indexdoc(off_t off, const char *line, size_t nline, std::vector<FileRecord *> *records);
   int esPlain(off_t off, const char *line, size_t nline, std::vector<FileRecord *> *records);
 
+  static void transformEsDocNginxLog(const std::string &src, std::string *dst);
+  static void transformEsDocNginxJson(const std::string &src, std::string *dst);
+
 private:
   LuaCtx      *ctx_;
   LuaHelper   *helper_;

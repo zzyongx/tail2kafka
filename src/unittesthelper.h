@@ -70,6 +70,10 @@ typedef void (*TEST_RUN_FUNC_PROTO)();
 
 #define UNITTEST_RUN(...) do {                                \
   TEST_RUN_FUNC_PROTO funcs[] = { __VA_ARGS__, 0 };           \
+  if (strcmp(getenv("GDB_UNITTEST"), "1") == 0) {             \
+    for (int i = 0; funcs[i]; ++i) funcs[i]();                \
+    break;                                                    \
+  }                                                           \
   pid_t pid = fork();                                         \
   if (pid == 0) {                                             \
     for (int i = 0; funcs[i]; ++i) funcs[i]();                \

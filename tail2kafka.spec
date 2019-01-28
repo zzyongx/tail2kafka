@@ -1,10 +1,10 @@
 Name:      tail2kafka
-Version:   2.0.0
-Release:   22
+Version:   2.1.0
+Release:   1
 Summary:   stream file data to kafka/stream kafka data to file
 Group:     tail2kafka
 License:   Apache2
-Source0:   tail2kafka-2.0.0.tar.gz
+Source0:   tail2kafka-2.1.0.tar.gz
 BuildRoot: /var/tmp/tail2kafka
 BuildRequires: libcurl-devel >= 7.19.7
 BuildRequires: openssl-devel >= 1.0.1e-30
@@ -72,6 +72,9 @@ rm -rf $RPM_BUILD_ROOT
 ln -sf ../init.d/tail2kafka /etc/rc.d/rc3.d/S88tail2kafka
 
 %changelog
+* Mon Jan 28 2019 zzyongx <iamzhengzhiyong@gmail.com> -2.1.0-1
+- Feature: add tail2es
+
 * Wed Apr 18 2018 zzyongx <iamzhengzhiyong@gmail.com> -2.0.0-19
 - bugfix: turn off withhost flag leading to a dead cycle
 

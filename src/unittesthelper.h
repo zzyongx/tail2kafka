@@ -62,15 +62,14 @@ void *env_safe_get(const std::map<std::string, void *> &map,
 
 typedef void (*TEST_RUN_FUNC_PROTO)();
 
-#define TEST_RUN(name) static void TEST_RUN_##name();      \
+#define TEST_RUN(name) static void TEST_RUN_##name(); \
   static TEST_RUN_FUNC_PROTO name = TEST_RUN_##name;  \
   void TEST_RUN_##name()
 
-// #define TEST_RUN(name) static void TEST_RUN_##name()
-
 #define UNITTEST_RUN(...) do {                                \
   TEST_RUN_FUNC_PROTO funcs[] = { __VA_ARGS__, 0 };           \
-  if (strcmp(getenv("GDB_UNITTEST"), "1") == 0) {             \
+  const char *gdbUnitTestEnv = getenv("GDB_UNITTEST");        \
+  if (gdbUnitTestEnv && strcmp(gdbUnitTestEnv, "1") == 0) {   \
     for (int i = 0; funcs[i]; ++i) funcs[i]();                \
     break;                                                    \
   }                                                           \

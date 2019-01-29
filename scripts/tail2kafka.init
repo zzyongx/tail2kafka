@@ -15,7 +15,11 @@ proc_exists() {
     PID=$(cat $PIDFILE)
     if [ -d "/proc/$PID" ]; then
       EXE=$(readlink "/proc/$PID/exe" | awk '{print $1}')
-      if [ "$EXE" == "$BIN" ]; then
+      if test -f "$EXE"; then
+        if [ "$EXE" == "$BIN" ]; then
+          return 0
+        fi
+      else
         return 0
       fi
     fi

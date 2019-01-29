@@ -499,8 +499,8 @@ bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::st
 
   bool kafkaBlock = ctx_->cnf()->getKafkaBlock();
   if (ctx_->cnf()->fasttime(TIMEUNIT_MILLI) - lastQueueFullTime_ > 1500) {  // suppress log
-    log_info(0, "%d %s queue size %d, kafka status %s", fd_, ctx_->datafile().c_str(), (int) qsize_,
-             kafkaBlock ? "block" : "ok");
+    log_info(0, "%d %s queue size %d, kafka(es) status %s", fd_, ctx_->datafile().c_str(),
+             (int) qsize_, kafkaBlock ? "block" : "ok");
     lastQueueFullTime_ = ctx_->cnf()->fasttime(TIMEUNIT_MILLI);
   }
   if (kafkaBlock) return false;

@@ -525,8 +525,7 @@ bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::st
     return true;
   }
 
-  if (pos == START) propagateRawData(rawDataPtr.release());
-  else if (size_ == 0) propagateRawData(buildFileStartRecord(time(0)));
+  bool fileStart = (pos == START || size_ == 0);
 
   if (stPtr->st_size - off > MAX_TAIL_SIZE) { // limit tailsize
     log_info(0, "%d %s limit tail, off %ld, size %ld", fd_, ctx_->datafile().c_str(), off, stPtr->st_size);
@@ -534,6 +533,11 @@ bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::st
     ctx_->cnf()->setTailLimit(true);
   } else {
     size_ = stPtr->st_size;
+  }
+
+  if (size_ > 0 && fileStart) {
+    if (pos == START) propagateRawData(rawDataPtr.release());
+    else propagateRawData(buildFileStartRecord(time(0)));
   }
 
   off_t loff = off - npos_;
@@ -556,7 +560,7 @@ bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::st
     propagateProcessLines(inode_, &loff);
   }
 
-  if (pos == END) {
+  if (pos == END && size_ > 0) {  // ignore empty file
     assert(off == stPtr->st_size);
     propagateRawData(rawDataPtr.release());
   }
@@ -715,10 +719,15 @@ bool FileReader::sendLines(ino_t inode, std::vector<FileRecord *> *records)
       (*ite)->inode = inode;
     }
 
-    size_t size = records->size();
-    OneTaskReq req = {ctx_, records};
+    for (std::vector<FileRecord *>::iterator ite = records->begin(); ite != records->end(); ++ite) {
+      (*ite)->ctx = ctx_;
+      log_debug(0, "%.*s", (int) (*ite)->data->size(), (*ite)->data->c_str());
+    }
 
-    ssize_t nn = write(ctx_->cnf()->server, &req, sizeof(OneTaskReq));
+    size_t size = records->size();
+
+    uintptr_t ptr = (uintptr_t) records;
+    ssize_t nn = write(ctx_->cnf()->server, &ptr, sizeof(ptr));
     if (nn == -1) {
       if (errno != EINTR) {
         log_fatal(errno, "write onetaskrequest error");
@@ -727,7 +736,7 @@ bool FileReader::sendLines(ino_t inode, std::vector<FileRecord *> *records)
     }
 
     util::atomic_inc(&qsize_, size);
-    assert(nn != -1 && nn == sizeof(OneTaskReq));
+    assert(nn != -1 && nn == sizeof(uintptr_t));
     return true;
   }
 }

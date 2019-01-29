@@ -428,22 +428,20 @@ DEFINE(watchLoop)
   time_t renameStartTime = cnf->fasttime(true, TIMEUNIT_SECONDS);
   rename(LOG("basic.log"), LOG("basic.log.old"));
 
-  OneTaskReq req;
+  uintptr_t nptr;
+  read(cnf->accept, &nptr, sizeof(nptr));
 
   // ignore memory leak
-  std::vector<FileRecord *> *records;
+  std::vector<FileRecord *> *records = (std::vector<FileRecord*>*) nptr;
   const std::string *ptr;
-
-  read(cnf->accept, &req, sizeof(OneTaskReq));
-  records = req.records;
 
   check(records->size() == 1, "%d", (int) records->size());
 
   ptr = records->at(0)->data;
   check(ptr->find("\"event\":\"START\"") != std::string::npos, "%s", PTRS(*ptr));
 
-  read(cnf->accept, &req, sizeof(OneTaskReq));
-  records = req.records;
+  read(cnf->accept, &nptr, sizeof(nptr));
+  records = (std::vector<FileRecord*>*) nptr;
 
   check(records->size() == 2, "%d", (int) records->size());
 
@@ -452,8 +450,8 @@ DEFINE(watchLoop)
   ptr = records->at(1)->data;
   check(*ptr == "*" + cnf->host() + "@" + util::toStr(sizeof("456\n"), PADDING_LEN) + " 789\n", "%s", PTRS(*ptr));
 
-  read(cnf->accept, &req, sizeof(OneTaskReq));
-  records = req.records;
+  read(cnf->accept, &nptr, sizeof(nptr));
+  records = (std::vector<FileRecord*>*) nptr;
 
   check(records->size() == 1, "%d", (int) records->size());
   ptr = records->at(0)->data;
@@ -471,16 +469,16 @@ DEFINE(watchLoop)
   write(fd, "abcd\nefg\n", sizeof("abcd\nefg\n")-1);
   close(fd);
 
-  read(cnf->accept, &req, sizeof(OneTaskReq));
-  records = req.records;
+  read(cnf->accept, &nptr, sizeof(nptr));
+  records = (std::vector<FileRecord *>*) nptr;
 
   check(records->size() == 1, "%d", (int) records->size());
 
   ptr = records->at(0)->data;
   check(ptr->find("\"event\":\"START\"") != std::string::npos, "%s", PTRS(*ptr));
 
-  read(cnf->accept, &req, sizeof(OneTaskReq));
-  records = req.records;
+  read(cnf->accept, &nptr, sizeof(nptr));
+  records = (std::vector<FileRecord*>*) nptr;
 
   check(records->size() == 1, "%d", (int) records->size());
 

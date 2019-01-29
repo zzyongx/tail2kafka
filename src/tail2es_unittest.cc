@@ -169,10 +169,11 @@ DEFINE(esProduce)
 
     std::string *index = new std::string("indexdoc");
     std::string *data = new std::string(json);
-    FileRecord *record = FileRecord::create(0, 0, index, data);
+    FileRecord *record = FileRecord::create(0, -1, index, data);
+    record->ctx = ctx;
     datas.assign(1, record);
 
-    cnf->getEs()->produce(ctx, &datas);
+    cnf->getEs()->produce(&datas);
     if (cnf->getKafkaBlock()) {
       printf("too much data, sleep 1\n");
       sleep(1);

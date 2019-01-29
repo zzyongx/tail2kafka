@@ -157,9 +157,9 @@ void *routine(void *data)
 
   RunStatus *runStatus = cnf->getRunStatus();
 
-  OneTaskReq req;
+  uintptr_t ptr;
   while (runStatus->get() == RunStatus::WAIT) {
-    ssize_t nn = read(cnf->accept, &req, sizeof(OneTaskReq));
+    ssize_t nn = read(cnf->accept, &ptr, sizeof(ptr));
     if (nn == -1) {
       if (errno != EINTR) break;
       else continue;
@@ -167,20 +167,20 @@ void *routine(void *data)
       break;
     }
 
-    assert(nn == sizeof(OneTaskReq));
+    assert(nn == sizeof(ptr));
 
-    if (!req.records) break;  // terminate task
-    if (kafka && !kafka->produce(req.ctx, req.records)) {
+    if (!ptr) break;  // terminate task
+    if (kafka && !kafka->produce((std::vector<FileRecord*>*) ptr)) {
       log_fatal(0, "rd_kafka_poll timeout, librdkafka may have bug or kafka service is unavailable, exit");
       runStatus->set(RunStatus::STOP);
       kafka->poll(10);  // poll kafka
 #ifdef ENABLE_TAIL2ES
-    } else if (es && !es->produce(req.ctx, req.records)) {
+    } else if (es && !es->produce((std::vector<FileRecord*>*) ptr)) {
       log_fatal(0, "es_poll timeout, es service may unavailable, exit");
       runStatus->set(RunStatus::STOP);
 #endif
     }
-    delete req.records;
+    delete (std::vector<FileRecord*>*)ptr;
   }
 
   runStatus->set(RunStatus::STOP);
@@ -190,8 +190,8 @@ void *routine(void *data)
 
 inline void terminateRoutine(CnfCtx *ctx)
 {
-  OneTaskReq req = {0, 0};
-  write(ctx->server, &req, sizeof(req));
+  uintptr_t ptr = 0;
+  write(ctx->server, &ptr, sizeof(ptr));
 }
 
 void run(InotifyCtx *inotify, CnfCtx *cnf)

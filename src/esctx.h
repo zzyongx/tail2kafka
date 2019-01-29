@@ -19,7 +19,7 @@ public:
 
   ~EsCtx();
   bool init(CnfCtx *cnf, char *errbuf);
-  bool produce(LuaCtx *ctx, std::vector<FileRecord *> *datas);
+  bool produce(std::vector<FileRecord *> *datas);
 
   void eventLoop();
   void socketCallback(CURL *curl, curl_socket_t fd, int what);

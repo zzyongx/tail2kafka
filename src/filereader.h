@@ -11,11 +11,6 @@
 class LuaCtx;
 class FileOffRecord;
 
-struct OneTaskReq {
-  LuaCtx *ctx;
-  std::vector<FileRecord *> *records;
-};
-
 enum FileInotifyStatus {
   FILE_MOVED     = 0x0001,
   FILE_CREATED   = 0x0002,

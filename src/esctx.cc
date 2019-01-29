@@ -7,6 +7,7 @@
 #include "common.h"
 #include "cnfctx.h"
 #include "luactx.h"
+#include "filereader.h"
 #include "esctx.h"
 
 #define MAX_EPOLL_EVENT 1024
@@ -26,10 +27,10 @@ static int curlSocketCallback(CURL *curl, curl_socket_t fd, int what, void *data
 }
 
 struct EventCtx {
-  EventCtx() : input(0), pos(0), inEvent(false) {}
+  EventCtx() : record(0), pos(0), inEvent(false) {}
 
   struct curl_slist *headers;
-  const std::string *input;
+  FileRecord *record;
   size_t pos;
   std::string output;
 
@@ -127,7 +128,7 @@ EsCtx::~EsCtx()
   }
 }
 
-bool EsCtx::produce(LuaCtx *, std::vector<FileRecord *> *records)
+bool EsCtx::produce(std::vector<FileRecord *> *records)
 {
   if (!running_) return false;
 
@@ -196,8 +197,8 @@ void EsCtx::consumeFileRecords()
 static size_t curlPutData(void *ptr, size_t size, size_t nmemb, void *data)
 {
   EventCtx *ctx = (EventCtx *) data;
-  size_t min = std::min(size * nmemb, ctx->input->size() - ctx->pos);
-  memcpy(ptr, ctx->input->c_str() + ctx->pos, min);
+  size_t min = std::min(size * nmemb, ctx->record->data->size() - ctx->pos);
+  memcpy(ptr, ctx->record->data->c_str() + ctx->pos, min);
   ctx->pos += min;
   return min;
 }
@@ -230,7 +231,7 @@ void EsCtx::addToMulti(FileRecord *record)
 
   EventCtx *ctx = new EventCtx;
   ctx->headers = headers;
-  ctx->input = record->data;
+  ctx->record = record;
 
   curl_easy_reset(curl);
   curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
@@ -286,9 +287,14 @@ void EsCtx::eventCallback(CURL *curl, uint32_t event)
       if (code != 201) {
         char *url;
         curl_easy_getinfo(handler, CURLINFO_EFFECTIVE_URL, &url);
-        log_fatal(0, "alive %d POST %s %s ret status %ld body %s", alive, url, ctx->input->c_str(),
-                  code, ctx->output.c_str());
+        log_fatal(0, "alive %d POST %s %s ret status %ld body %s", alive, url,
+                  ctx->record->data->c_str(), code, ctx->output.c_str());
       }
+
+      if (ctx->record->off != (off_t) -1) {
+        ctx->record->ctx->getFileReader()->updateFileOffRecord(ctx->record);
+      }
+      FileRecord::destroy(ctx->record);
 
       curl_multi_remove_handle(multi_, handler);
       curls_.push_back(handler);

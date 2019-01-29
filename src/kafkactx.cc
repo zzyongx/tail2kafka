@@ -169,24 +169,24 @@ bool KafkaCtx::ping(LuaCtx *ctx)
   */
 }
 
-bool KafkaCtx::produce(LuaCtx *ctx, FileRecord *record)
+bool KafkaCtx::produce(FileRecord *record)
 {
-  rd_kafka_topic_t *rkt = rkts_[ctx->rktId()];
-  record->ctx = ctx;
+  CnfCtx *cnf = record->ctx->cnf();
+  rd_kafka_topic_t *rkt = rkts_[record->ctx->rktId()];
 
   int rc;
   int i = 1;
-  time_t startTime = ctx->cnf()->fasttime();
+  time_t startTime = cnf->fasttime();
   while ((rc = rd_kafka_produce(rkt, RD_KAFKA_PARTITION_UA, 0, (void *) record->data->c_str(),
                                 record->data->size(), 0, 0, record)) != 0) {
     rd_kafka_resp_err_t err = rd_kafka_last_error();
     if (err == RD_KAFKA_RESP_ERR__QUEUE_FULL) {
-      if (ctx->cnf()->fasttime() - startTime > KAFKA_ERROR_TIMEOUT + 2) {
+      if (cnf->fasttime() - startTime > KAFKA_ERROR_TIMEOUT + 2) {
         // librdkafka may trap this loop, call exit to restart
         return false;
       }
 
-      ctx->cnf()->setKafkaBlock(true);
+      cnf->setKafkaBlock(true);
       int nevent = rd_kafka_poll(rk_, 100 * i);
       log_error(0, "%s kafka produce error(#%d) %s, poll event %d",
                 rd_kafka_topic_name(rkt), i++, rd_kafka_err2str(err), nevent);
@@ -197,14 +197,14 @@ bool KafkaCtx::produce(LuaCtx *ctx, FileRecord *record)
     }
   }
 
-  ctx->cnf()->setKafkaBlock(false);
+  cnf->setKafkaBlock(false);
   return true;
 }
 
-bool KafkaCtx::produce(LuaCtx *ctx, std::vector<FileRecord *> *datas)
+bool KafkaCtx::produce(std::vector<FileRecord *> *datas)
 {
   assert(!datas->empty());
-  rd_kafka_topic_t *rkt = rkts_[ctx->rktId()];
+  rd_kafka_topic_t *rkt = rkts_[datas->at(0)->ctx->rktId()];
 
   std::vector<rd_kafka_message_t> rkmsgs;
   rkmsgs.resize(datas->size());
@@ -213,7 +213,6 @@ bool KafkaCtx::produce(LuaCtx *ctx, std::vector<FileRecord *> *datas)
   for (std::vector<FileRecord *>::iterator ite = datas->begin(), end = datas->end();
        ite != end; ++ite, ++i) {
     FileRecord *record = (*ite);
-    record->ctx = ctx;
 
     rkmsgs[i].payload  = (void *) record->data->c_str();
     rkmsgs[i].len      = record->data->size();
@@ -227,7 +226,7 @@ bool KafkaCtx::produce(LuaCtx *ctx, std::vector<FileRecord *> *datas)
     for (std::vector<rd_kafka_message_t>::iterator ite = rkmsgs.begin(), end = rkmsgs.end();
          ite != end; ++ite) {
       if (ite->err) {
-        if (!produce(ctx, (FileRecord *) ite->_private)) return false;
+        if (!produce((FileRecord *) ite->_private)) return false;
       }
     }
   }

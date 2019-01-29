@@ -306,6 +306,7 @@ bool LuaCtx::parseEsIndexDoc(const std::string &esIndex, const std::string &esDo
       }
     }
     if (pos < esIndex.size()) esIndex_ = esIndex.substr(pos);
+    else esIndex_.clear();
   }
 
   esIndexWithTimeFormat_ = esIndex_.find('%') != std::string::npos;

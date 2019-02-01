@@ -134,6 +134,10 @@ bool EsCtx::produce(std::vector<FileRecord *> *records)
 
   for (std::vector<FileRecord *>::iterator ite = records->begin(), end = records->end();
        ite != end; ++ite) {
+    if ((*ite)->off == (off_t) -1) {
+      FileRecord::destroy(*ite);
+      continue;
+    }
 
     uintptr_t ptr = (uintptr_t) *ite;
     ssize_t nn = write(pipeWrite_, &ptr, sizeof(FileRecord *));
@@ -291,7 +295,7 @@ void EsCtx::eventCallback(CURL *curl, uint32_t event)
                   ctx->record->data->c_str(), code, ctx->output.c_str());
       }
 
-      if (ctx->record->off != (off_t) -1) {
+      if (ctx->record->off != (off_t) -1 && ctx->record->inode > 0) {
         ctx->record->ctx->getFileReader()->updateFileOffRecord(ctx->record);
       }
       FileRecord::destroy(ctx->record);

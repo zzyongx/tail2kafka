@@ -35,6 +35,7 @@ private:
   CnfCtx *cnf_;
 
   std::vector<std::string> nodes_;
+  std::string userpass_;
   std::vector<CURL *> curls_;
   std::vector<struct curl_slist *> curlHeaders_;
 

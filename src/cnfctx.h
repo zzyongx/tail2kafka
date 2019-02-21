@@ -61,6 +61,7 @@ public:
 
   const char *getEsNodes() const { return esNodes_.c_str(); }
   size_t getEsMaxConns() const { return esMaxConns_; }
+  const std::string getEsUserPass() const { return esUserPass_; }
 
   const char *getPidFile() const {
     return pidfile_.c_str();
@@ -121,6 +122,7 @@ private:
   KafkaCtx                           *kafka_;
 
   std::string  esNodes_;
+  std::string  esUserPass_;
   int          esMaxConns_;
 #ifdef ENABLE_TAIL2ES
   EsCtx       *es_;

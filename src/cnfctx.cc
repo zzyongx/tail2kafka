@@ -97,6 +97,7 @@ CnfCtx *CnfCtx::loadFile(const char *file, char *errbuf)
     if (!helper->getTable("kafka_topic", &cnf->kafkaTopic_)) return 0;
   } else if (!cnf->esNodes_.empty()) {
     if (!helper->getInt("es_max_conns", &cnf->esMaxConns_, 1000)) return 0;
+    if (!helper->getString("es_userpass", &cnf->esUserPass_, "")) return 0;
   } else {
     snprintf(errbuf, MAX_ERR_LEN, "brokers or esnodes is required");
     return 0;

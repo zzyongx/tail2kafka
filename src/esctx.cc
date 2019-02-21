@@ -58,6 +58,7 @@ bool EsCtx::init(CnfCtx *cnf, char *errbuf)
 {
   cnf_ = cnf;
   splitn(cnf->getEsNodes(), -1, &nodes_, -1, ',');
+  userpass_ = cnf->getEsUserPass();
 
   for (size_t i = 0; i < cnf->getEsMaxConns(); ++i) {
     if (!newCurl()) return false;
@@ -239,6 +240,10 @@ void EsCtx::addToMulti(FileRecord *record)
 
   curl_easy_reset(curl);
   curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+  if (!userpass_.empty()) {
+    curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
+    curl_easy_setopt(curl, CURLOPT_USERPWD, userpass_.c_str());
+  }
 #ifdef CURLOPT_TCP_KEEPALIVE
   curl_easy_setopt(curl_, CURLOPT_TCP_KEEPALIVE, 1L);
 #endif

@@ -66,7 +66,7 @@ DEFINE(transformEsDocNginxJson)
   std::string log = fileGetContent(ETCDIR"/nginx_json.log");
   std::string *doc = new std::string;
   LuaFunction::transformEsDocNginxJson(log, doc);
-  std::string expectDoc = "{\"receiver\":\"bb_up\"}";
+  std::string expectDoc = "{\"y\":\"\\ufffd\ufffd\"}";
   check(*doc == expectDoc, "got %s, expect %s", PTRS(*doc), PTRS(expectDoc));
   delete doc;
 }

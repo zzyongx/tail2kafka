@@ -1,10 +1,10 @@
 Name:      tail2kafka
-Version:   2.1.0
+Version:   2.1.1
 Release:   1
 Summary:   stream file data to kafka/stream kafka data to file
 Group:     tail2kafka
 License:   Apache2
-Source0:   tail2kafka-2.1.0.tar.gz
+Source0:   tail2kafka-2.1.1.tar.gz
 BuildRoot: /var/tmp/tail2kafka
 BuildRequires: libcurl-devel >= 7.19.7
 BuildRequires: openssl-devel >= 1.0.1e-30
@@ -72,6 +72,10 @@ rm -rf $RPM_BUILD_ROOT
 ln -sf ../init.d/tail2kafka /etc/rc.d/rc3.d/S88tail2kafka
 
 %changelog
+* Thu Feb 21 2019 zzyongx <iamzhengzhiyong@gmail.com> -2.1.1-1
+- Feature: tail2es add basic auth
+- Bugfix: make cleantransformEsDocNginxLog
+
 * Mon Jan 28 2019 zzyongx <iamzhengzhiyong@gmail.com> -2.1.0-1
 - Feature: add tail2es
 

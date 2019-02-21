@@ -168,8 +168,8 @@ int LuaFunction::indexdoc(off_t off, const char *line, size_t nline, std::vector
 void LuaFunction::transformEsDocNginxLog(const std::string &src, std::string *dst)
 {
   for (size_t i = 0; i < src.size(); ++i) {
-    if (src[i] == '\\' && i+3 < src.size() && src[i+1] == 'x' && src[i+2] == '2' && src[i+3] == '2') {
-      dst->append(1, '"');
+    if (src[i] == '\\' && i+3 < src.size() && src[i+1] == 'x') {
+      dst->append(1, (src[i+2] - '0') * 16 + (src[i+3] - '0'));
       i += 3;
     } else {
       dst->append(1, src[i]);

@@ -164,12 +164,14 @@ int LuaFunction::indexdoc(off_t off, const char *line, size_t nline, std::vector
   }
 }
 
+#define hex2int(hex) ((hex) >= 'A' ? 10 + (hex) - 'A' : (hex) - '0')
+
 // {\x22receiver\x22:\x22bb_up\x22} -> {"receiver":"bb_up"}
 void LuaFunction::transformEsDocNginxLog(const std::string &src, std::string *dst)
 {
   for (size_t i = 0; i < src.size(); ++i) {
     if (src[i] == '\\' && i+3 < src.size() && src[i+1] == 'x') {
-      dst->append(1, (src[i+2] - '0') * 16 + (src[i+3] - '0'));
+      dst->append(1, hex2int(src[i+2]) * 16 + hex2int(src[i+3]));
       i += 3;
     } else {
       dst->append(1, src[i]);

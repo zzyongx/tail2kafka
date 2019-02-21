@@ -104,7 +104,7 @@ test:
 	@echo "unit test"
 	find logs -type f -name "*.log" -delete
 	find kafka2filedir -type f -delete
-	make clean && make PREDEF="-D_DEBUG_ -DNO_LOGGER" DEBUG=1
+	make clean && make PARAM_PREDEF="-D_DEBUG_ -DNO_LOGGER" DEBUG=1
 	$(BUILDDIR)/tail2kafka_unittest
 	$(BUILDDIR)/tail2es_unittest
 	$(BUILDDIR)/kafka2file_unittest

@@ -281,6 +281,9 @@ LuaCtx *LuaCtx::loadFile(CnfCtx *cnf, const char *file)
   if (!(ctx->function_ = LuaFunction::create(ctx.get(), helper.get(), luafType))) return 0;
   if (!ctx->loadHistoryFile()) return 0;
 
+  // es
+  if (ctx->topic_.empty()) ctx->partition_ = PARTITIONER_RANDOM;
+
   ctx->helper_ = helper.release();
   return ctx.release();
 }

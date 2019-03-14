@@ -60,6 +60,7 @@ bool EsCtx::init(CnfCtx *cnf, char *errbuf)
   splitn(cnf->getEsNodes(), -1, &nodes_, -1, ',');
   userpass_ = cnf->getEsUserPass();
 
+  inqueue_ = 0;
   for (size_t i = 0; i < cnf->getEsMaxConns(); ++i) {
     if (!newCurl()) return false;
   }
@@ -127,6 +128,25 @@ EsCtx::~EsCtx()
   for (std::vector<CURL *>::iterator ite = curls_.begin(); ite != curls_.end(); ++ite) {
     curl_easy_cleanup(*ite);
   }
+  for (std::vector<curl_slist *>::iterator ite = curlHeaders_.begin();
+       ite != curlHeaders_.end(); ++ite) {
+    curl_slist_free_all(*ite);
+  }
+}
+
+void EsCtx::flowControl()
+{
+  bool infoed = false;
+  while (util::atomic_get(&inqueue_) > 0) {
+    if (!infoed) {
+      log_info(0, "too much data for es #%d, set block, stop produce",
+               util::atomic_get(&inqueue_));
+      cnf_->setKafkaBlock(true);
+    }
+    infoed = true;
+    sys::millisleep(10);
+  }
+  if (infoed) log_info(0, "es #%d, restart produce", util::atomic_get(&inqueue_));
 }
 
 bool EsCtx::produce(std::vector<FileRecord *> *records)
@@ -139,6 +159,8 @@ bool EsCtx::produce(std::vector<FileRecord *> *records)
       FileRecord::destroy(*ite);
       continue;
     }
+
+    flowControl();
 
     uintptr_t ptr = (uintptr_t) *ite;
     ssize_t nn = write(pipeWrite_, &ptr, sizeof(FileRecord *));
@@ -218,9 +240,8 @@ static size_t curlRetData(void *ptr, size_t size, size_t nmemb, void *data)
 void EsCtx::addToMulti(FileRecord *record)
 {
   if (curls_.empty()) {
+    util::atomic_inc(&inqueue_);
     newCurl();
-    cnf_->setKafkaBlock(true);
-    log_info(0, "too much data for es, set block");
   }
 
   CURL *curl = curls_.back();
@@ -306,9 +327,16 @@ void EsCtx::eventCallback(CURL *curl, uint32_t event)
       FileRecord::destroy(ctx->record);
 
       curl_multi_remove_handle(multi_, handler);
-      curls_.push_back(handler);
-      curlHeaders_.push_back(ctx->headers);
-      cnf_->setKafkaBlock(false);
+      if (curls_.size() < cnf_->getEsMaxConns()) {
+        curls_.push_back(handler);
+        curlHeaders_.push_back(ctx->headers);
+        cnf_->setKafkaBlock(false);
+      } else {
+        util::atomic_dec(&inqueue_);
+        curl_easy_cleanup(handler);
+        curl_slist_free_all(ctx->headers);
+      }
+
       delete ctx;
     }
   }

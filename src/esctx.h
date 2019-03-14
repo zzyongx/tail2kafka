@@ -25,6 +25,7 @@ public:
   void socketCallback(CURL *curl, curl_socket_t fd, int what);
 
 private:
+  void flowControl();
   bool newCurl();
   void eventCallback(CURL *curl, uint32_t event);
 
@@ -36,6 +37,8 @@ private:
 
   std::vector<std::string> nodes_;
   std::string userpass_;
+
+  int inqueue_;
   std::vector<CURL *> curls_;
   std::vector<struct curl_slist *> curlHeaders_;
 

@@ -691,6 +691,7 @@ int FileReader::processLine(off_t off, char *line, size_t nline, std::vector<Fil
   if (line == 0 && nline == (size_t)-1) {
     n = ctx_->function()->serializeCache(records);
   } else {
+    ctx_->cnf()->stats()->logReadInc();
     n = ctx_->function()->process(off, line, nline, records);
   }
   return n;
@@ -735,6 +736,7 @@ bool FileReader::sendLines(ino_t inode, std::vector<FileRecord *> *records)
       }
     }
 
+    ctx_->cnf()->stats()->logWriteInc(size);
     util::atomic_inc(&qsize_, size);
     assert(nn != -1 && nn == sizeof(uintptr_t));
     return true;

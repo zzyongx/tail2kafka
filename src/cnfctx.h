@@ -15,6 +15,48 @@
 
 #define KAFKA_ERROR_TIMEOUT 60
 
+class TailStats {
+public:
+  TailStats() :
+    fileRead_(0), logRead_(0), logWrite_(0),
+    logRecv_(0), logSend_(0), logError_(0) {}
+
+  void fileReadInc(int add = 1) { util::atomic_inc(&fileRead_, add); }
+  void logReadInc(int add = 1) { util::atomic_inc(&logRead_, add); }
+  void logWriteInc(int add = 1) { util::atomic_inc(&logWrite_, add); }
+
+  void logRecvInc(int add = 1) { util::atomic_inc(&logRecv_, add); }
+  void logSendInc(int add = 1) { util::atomic_inc(&logSend_, add); }
+  void logErrorInc(int add = 1) { util::atomic_inc(&logError_, add); }
+
+  int64_t fileRead() const { return fileRead_; }
+  int64_t logRead() const { return logRead_; }
+  int64_t logWrite() const { return logWrite_; }
+
+  int64_t logSend() const { return logSend_; }
+  int64_t logRecv() const { return logRecv_; }
+  int64_t logError() const { return logError_; }
+
+  void get(TailStats *stats) {
+    stats->fileRead_ = util::atomic_get(&fileRead_);
+    stats->logRead_ = util::atomic_get(&logRead_);
+    stats->logWrite_ = util::atomic_get(&logWrite_);
+
+    stats->logRecv_ = util::atomic_get(&logRecv_);
+    stats->logSend_ = util::atomic_get(&logSend_);
+    stats->logError_ = util::atomic_get(&logError_);
+  }
+
+private:
+  int64_t fileRead_;
+  int64_t logRead_;
+  int64_t logWrite_;
+
+  int64_t logRecv_;
+  int64_t logSend_;
+  int64_t logError_;
+};
+
 class RunStatus;
 
 enum TimeUnit {
@@ -54,6 +96,9 @@ public:
 
   void setRunStatus(RunStatus *runStatus) { runStatus_ = runStatus; }
   RunStatus *getRunStatus() { return runStatus_; }
+
+  TailStats *stats() { return &stats_; }
+  void logStats();
 
   const char *getBrokers() const { return brokers_.c_str(); }
   const std::map<std::string, std::string> &getKafkaGlobalConf() const { return kafkaGlobal_; }
@@ -102,6 +147,8 @@ public:
 
 private:
   CnfCtx();
+
+  TailStats stats_;
 
   std::string pidfile_;
   std::string host_;

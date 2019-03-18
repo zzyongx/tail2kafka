@@ -236,6 +236,7 @@ void EsSender::consume()
     log_fatal(errno, "esctx consume error");
     return;
   }
+
   assert(nn == sizeof(FileRecord*));
   addToMulti((FileRecord *)ptr);
 }
@@ -322,6 +323,7 @@ void EsSender::eventCallback(CURL *curl, uint32_t event)
   while ((msg = curl_multi_info_read(multi_, &alive))) {
     if (msg->msg == CURLMSG_DONE) {
       CURL *handler = msg->easy_handle;
+      cnf_->stats()->logSendInc();
 
       EventCtx *ctx;
       curl_easy_getinfo(handler, CURLINFO_PRIVATE, &ctx);
@@ -333,6 +335,7 @@ void EsSender::eventCallback(CURL *curl, uint32_t event)
         curl_easy_getinfo(handler, CURLINFO_EFFECTIVE_URL, &url);
         log_fatal(0, "alive %d POST %s %s ret status %ld body %s", alive, url,
                   ctx->record->data->c_str(), code, ctx->output.c_str());
+        cnf_->stats()->logErrorInc();
       }
 
       if (ctx->record->off != (off_t) -1 && ctx->record->inode > 0) {
@@ -422,6 +425,8 @@ void EsCtx::flowControl()
 bool EsCtx::produce(std::vector<FileRecord *> *records)
 {
   if (!running_) return false;
+
+  cnf_->stats()->logRecvInc(records->size());
 
   for (std::vector<FileRecord *>::iterator ite = records->begin(), end = records->end();
        ite != end; ++ite) {

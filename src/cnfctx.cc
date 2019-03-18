@@ -1,5 +1,6 @@
 #include <memory>
 
+#include "logger.h"
 #include "sys.h"
 #include "luahelper.h"
 #include "luactx.h"
@@ -174,6 +175,15 @@ bool CnfCtx::initFileReader()
     }
   }
   return true;
+}
+
+void CnfCtx::logStats()
+{
+  TailStats s;
+  stats_.get(&s);
+  log_error(0, "TailStatus,fileRead=%ld,logRead=%ld,logWrite=%ld,logSend=%d,logRecv=%d,logError=%d",
+            s.fileRead(), s.logRead(), s.logWrite(),
+            s.logSend(), s.logRecv(), s.logError());
 }
 
 CnfCtx::CnfCtx() {

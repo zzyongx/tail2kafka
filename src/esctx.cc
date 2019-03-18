@@ -11,18 +11,19 @@
 #include "esctx.h"
 
 #define MAX_EPOLL_EVENT 1024
+static pthread_mutex_t CURL_MANAGER_MUTEX = PTHREAD_MUTEX_INITIALIZER;
 
 static void *eventLoopRoutine(void *data)
 {
-  EsCtx *esCtx = (EsCtx *) data;
-  esCtx->eventLoop();
+  EsSender *sender = (EsSender *) data;
+  sender->eventLoop();
   return 0;
 }
 
 static int curlSocketCallback(CURL *curl, curl_socket_t fd, int what, void *data, void *)
 {
-  EsCtx *esCtx = (EsCtx *) data;
-  esCtx->socketCallback(curl, fd, what);
+  EsSender *sender = (EsSender *) data;
+  sender->socketCallback(curl, fd, what);
   return 0;
 }
 
@@ -38,32 +39,89 @@ struct EventCtx {
   int fd;
 };
 
-bool EsCtx::newCurl()
+bool CurlManager::newCurl(CURL **curl, struct curl_slist **list, char *errbuf)
 {
-  CURL *curl = curl_easy_init();
-  if (!curl) {
-    snprintf(cnf_->errbuf(), MAX_ERR_LEN, "curl_easy_init error");
+  *curl = curl_easy_init();
+  if (!*curl) {
+    if (errbuf) snprintf(errbuf, MAX_ERR_LEN, "curl_easy_init error");
     return false;
   }
-  curls_.push_back(curl);
 
-  struct curl_slist *list = 0;
-  list = curl_slist_append(list, "Content-Type: application/json; charset=utf-8");
-  list = curl_slist_append(list, "Expect: ");
-  curlHeaders_.push_back(list);
+  *list = 0;
+  *list = curl_slist_append(*list, "Content-Type: application/json; charset=utf-8");
+  *list = curl_slist_append(*list, "Expect: ");
+
   return true;
 }
 
-bool EsCtx::init(CnfCtx *cnf, char *errbuf)
+bool CurlManager::init(size_t capacity, char errbuf[])
 {
-  cnf_ = cnf;
+  capacity_ = capacity;
+  mutex_ = &CURL_MANAGER_MUTEX;
+
+  for (size_t i = 0; i < capacity_; ++i) {
+    CURL *curl;
+    struct curl_slist *list = 0;
+    if (!newCurl(&curl, &list, errbuf)) return false;
+
+    curls_.push_back(curl);
+    curlHeaders_.push_back(list);
+  }
+  return true;
+}
+
+void CurlManager::get(CURL **curl, struct curl_slist **header)
+{
+  pthread_mutex_lock(mutex_);
+  if (curls_.empty()) {
+    inqueue_++;
+    pthread_mutex_unlock(mutex_);
+
+    newCurl(curl, header);
+  } else {
+    *curl = curls_.back();
+    *header = curlHeaders_.back();
+    curls_.pop_back();
+    curlHeaders_.pop_back();
+
+    pthread_mutex_unlock(mutex_);
+  }
+}
+
+void CurlManager::release(CURL *curl, struct curl_slist *header)
+{
+  pthread_mutex_lock(mutex_);
+  if (curls_.size() < capacity_) {
+    curls_.push_back(curl);
+    curlHeaders_.push_back(header);
+    pthread_mutex_unlock(mutex_);
+  } else {
+    inqueue_--;
+    pthread_mutex_unlock(mutex_);
+
+    curl_easy_cleanup(curl);
+    curl_slist_free_all(header);
+  }
+}
+
+CurlManager::~CurlManager()
+{
+  for (std::vector<CURL *>::iterator ite = curls_.begin(); ite != curls_.end(); ++ite) {
+    curl_easy_cleanup(*ite);
+  }
+  for (std::vector<curl_slist *>::iterator ite = curlHeaders_.begin();
+       ite != curlHeaders_.end(); ++ite) {
+    curl_slist_free_all(*ite);
+  }
+}
+
+bool EsSender::init(CnfCtx *cnf, CurlManager *curlManager, char *errbuf)
+{
   splitn(cnf->getEsNodes(), -1, &nodes_, -1, ',');
   userpass_ = cnf->getEsUserPass();
 
-  inqueue_ = 0;
-  for (size_t i = 0; i < cnf->getEsMaxConns(); ++i) {
-    if (!newCurl()) return false;
-  }
+  cnf_ = cnf;
+  curlManager_ = curlManager;
 
   multi_ = curl_multi_init();
   if (!multi_) {
@@ -99,19 +157,16 @@ bool EsCtx::init(CnfCtx *cnf, char *errbuf)
   }
 
   events_ = new struct epoll_event[1024];
-
   int rc = pthread_create(&tid_, 0, eventLoopRoutine, this);
   if (rc != 0) {
     snprintf(errbuf, MAX_ERR_LEN, "pthread_create error: %d:%s", rc, strerror(rc));
     return false;
   }
-
-  cnf_ = cnf;
   running_ = true;
   return true;
 }
 
-EsCtx::~EsCtx()
+EsSender::~EsSender()
 {
   if (running_) {
     running_ = false;
@@ -124,61 +179,26 @@ EsCtx::~EsCtx()
 
   if (multi_) curl_multi_cleanup(multi_);
   if (events_) delete []events_;
-
-  for (std::vector<CURL *>::iterator ite = curls_.begin(); ite != curls_.end(); ++ite) {
-    curl_easy_cleanup(*ite);
-  }
-  for (std::vector<curl_slist *>::iterator ite = curlHeaders_.begin();
-       ite != curlHeaders_.end(); ++ite) {
-    curl_slist_free_all(*ite);
-  }
 }
 
-void EsCtx::flowControl()
+bool EsSender::produce(FileRecord *record)
 {
-  bool infoed = false;
-  while (util::atomic_get(&inqueue_) > 0) {
-    if (!infoed) {
-      log_info(0, "too much data for es #%d, set block, stop produce",
-               util::atomic_get(&inqueue_));
-      cnf_->setKafkaBlock(true);
-    }
-    infoed = true;
-    sys::millisleep(10);
-  }
-  if (infoed) log_info(0, "es #%d, restart produce", util::atomic_get(&inqueue_));
-}
-
-bool EsCtx::produce(std::vector<FileRecord *> *records)
-{
-  if (!running_) return false;
-
-  for (std::vector<FileRecord *>::iterator ite = records->begin(), end = records->end();
-       ite != end; ++ite) {
-    if ((*ite)->off == (off_t) -1) {
-      FileRecord::destroy(*ite);
-      continue;
-    }
-
-    flowControl();
-
-    uintptr_t ptr = (uintptr_t) *ite;
-    ssize_t nn = write(pipeWrite_, &ptr, sizeof(FileRecord *));
-    if (nn == -1) {
-      if (errno != EINTR) {
-        log_fatal(errno, "esctx produce error");
-        return false;
-      }
+  uintptr_t ptr = (uintptr_t) record;
+  ssize_t nn = write(pipeWrite_, &ptr, sizeof(FileRecord *));
+  if (nn == -1) {
+    if (errno != EINTR) {
+      log_fatal(errno, "esctx produce error");
+      return false;
     }
   }
   return true;
 }
 
-void EsCtx::socketCallback(CURL *curl, curl_socket_t fd, int what)
+void EsSender::socketCallback(CURL *curl, curl_socket_t fd, int what)
 {
   if (what == CURL_POLL_REMOVE) {
     if (epoll_ctl(epfd_, EPOLL_CTL_DEL, fd, 0) != 0) {
-      log_fatal(errno, "epoll_ctl_del error");
+      log_fatal(errno, "epoll_ctl_del %d error", fd);
     }
   } else {
     EventCtx *ctx;
@@ -191,13 +211,13 @@ void EsCtx::socketCallback(CURL *curl, curl_socket_t fd, int what)
     struct epoll_event ev = {event, curl};
     if (ctx->inEvent) {
       if (epoll_ctl(epfd_, EPOLL_CTL_MOD, fd, &ev) != 0) {
-        log_fatal(errno, "epoll_ctl_mod error");
+        log_fatal(errno, "epoll_ctl_mod %d error", fd);
       }
     } else {
       ctx->fd = fd;
       ctx->inEvent = true;
       if (epoll_ctl(epfd_, EPOLL_CTL_ADD, fd, &ev) != 0) {
-        log_fatal(errno, "epoll_ctl_add error");
+        log_fatal(errno, "epoll_ctl_add %d error", fd);
       }
 
       CURLMcode rc = curl_multi_assign(multi_, fd, 0);
@@ -208,7 +228,7 @@ void EsCtx::socketCallback(CURL *curl, curl_socket_t fd, int what)
   }
 }
 
-void EsCtx::consumeFileRecords()
+void EsSender::consume()
 {
   uintptr_t ptr;
   ssize_t nn = read(pipeRead_, &ptr, sizeof(FileRecord *));
@@ -237,18 +257,12 @@ static size_t curlRetData(void *ptr, size_t size, size_t nmemb, void *data)
   return size * nmemb;
 }
 
-void EsCtx::addToMulti(FileRecord *record)
+void EsSender::addToMulti(FileRecord *record)
 {
-  if (curls_.empty()) {
-    util::atomic_inc(&inqueue_);
-    newCurl();
-  }
-
-  CURL *curl = curls_.back();
-  struct curl_slist *headers = curlHeaders_.back();
+  CURL *curl;
+  struct curl_slist *headers;
+  curlManager_->get(&curl, &headers);
   assert(curl);
-  curls_.pop_back();
-  curlHeaders_.pop_back();
 
   std::string node = nodes_[random() % nodes_.size()];
   std::string url = "http://" + node + "/" + *record->esIndex + "/_doc";
@@ -283,7 +297,7 @@ void EsCtx::addToMulti(FileRecord *record)
   }
 }
 
-void EsCtx::eventCallback(CURL *curl, uint32_t event)
+void EsSender::eventCallback(CURL *curl, uint32_t event)
 {
   int what = (event & EPOLLIN ? CURL_POLL_IN : 0) |
     (event & EPOLLOUT ? CURL_POLL_OUT : 0);
@@ -327,29 +341,20 @@ void EsCtx::eventCallback(CURL *curl, uint32_t event)
       FileRecord::destroy(ctx->record);
 
       curl_multi_remove_handle(multi_, handler);
-      if (curls_.size() < cnf_->getEsMaxConns()) {
-        curls_.push_back(handler);
-        curlHeaders_.push_back(ctx->headers);
-        cnf_->setKafkaBlock(false);
-      } else {
-        util::atomic_dec(&inqueue_);
-        curl_easy_cleanup(handler);
-        curl_slist_free_all(ctx->headers);
-      }
-
+      curlManager_->release(handler, ctx->headers);
       delete ctx;
     }
   }
 }
 
-void EsCtx::eventLoop()
+void EsSender::eventLoop()
 {
   while (running_) {
     int nfd = epoll_wait(epfd_, events_, MAX_EPOLL_EVENT, 100);
     if (nfd > 0) {
       for (int i = 0; i < nfd; ++i) {
         if (events_[i].data.ptr == &pipeRead_) {
-          consumeFileRecords();
+          consume();
         } else {
           eventCallback((CURL *) events_[i].data.ptr, events_[i].events);
         }
@@ -367,4 +372,72 @@ void EsCtx::eventLoop()
     }
   }
 }
+
+bool EsCtx::init(CnfCtx *cnf, char *errbuf)
+{
+  cnf_ = cnf;
+  if (!curlManager_.init(cnf->getEsMaxConns(), errbuf)) return false;
+
+  lastSenderIndex_ = 0;
+  for (size_t i = 0; i < cnf->getEsMaxConns() / 300; ++i) {
+    EsSender *sender = new EsSender;
+    if (!sender->init(cnf, &curlManager_, cnf->errbuf())) {
+      delete sender;
+      return false;
+    }
+    esSenders_.push_back(sender);
+  }
+
+  cnf_ = cnf;
+  running_ = true;
+  return true;
+}
+
+EsCtx::~EsCtx()
+{
+  running_ = false;
+  for (std::vector<EsSender *>::iterator ite = esSenders_.begin(); ite != esSenders_.end(); ++ite) {
+    delete *ite;
+  }
+}
+
+void EsCtx::flowControl()
+{
+  int i = 0;
+  int inq;
+  while ((inq = curlManager_.inqueue()) > 0) {
+    if (i % 500 == 0) {
+      log_info(0, "too much data for es #%d, wait %ds, set block, stop produce", inq, i / 100);
+      cnf_->setKafkaBlock(true);
+    }
+    i++;
+    sys::millisleep(10);
+  }
+  if (i > 0) {
+    log_info(0, "es #%d, restart produce", inq);
+    cnf_->setKafkaBlock(false);
+  }
+}
+
+bool EsCtx::produce(std::vector<FileRecord *> *records)
+{
+  if (!running_) return false;
+
+  for (std::vector<FileRecord *>::iterator ite = records->begin(), end = records->end();
+       ite != end; ++ite) {
+    if ((*ite)->off == (off_t) -1) {
+      FileRecord::destroy(*ite);
+      continue;
+    }
+
+    flowControl();
+
+    if (!esSenders_[lastSenderIndex_]->produce(*ite)) {
+      return false;
+    }
+    if (++lastSenderIndex_ >= esSenders_.size()) lastSenderIndex_ = 0;
+  }
+  return true;
+}
+
 #endif

@@ -152,8 +152,11 @@ DEFINE(initEs)
   check(cnf->initEs(), "%s", cnf->errbuf());
 
   EsCtx *es = cnf->getEs();
-  check(es->epfd_ > 0, "init epoll error");
-  check(es->running_, "es is not running");
+  for (std::vector<EsSender *>::iterator ite = es->esSenders_.begin();
+       ite != es->esSenders_.end(); ++ite) {
+    check((*ite)->epfd_ > 0, "init epoll error");
+    check((*ite)->running_, "es is not running");
+  }
 }
 
 DEFINE(esProduce)

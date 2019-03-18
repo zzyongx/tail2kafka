@@ -12,35 +12,58 @@
 class CnfCtx;
 class LuaCtx;
 
-class EsCtx {
-  template<class T> friend class UNITTEST_HELPER;
+class CurlManager {
 public:
-  EsCtx() : epfd_(-1), pipeRead_(-1), pipeWrite_(-1), multi_(0), events_(0), running_(false) {}
+  CurlManager() : inqueue_(0), capacity_(0) {}
+  ~CurlManager();
 
-  ~EsCtx();
-  bool init(CnfCtx *cnf, char *errbuf);
-  bool produce(std::vector<FileRecord *> *datas);
+  bool init(size_t capacity, char errbuf[]);
+  void get(CURL **curl, struct curl_slist **list);
+  void release(CURL *curl, struct curl_slist *list);
 
-  void eventLoop();
-  void socketCallback(CURL *curl, curl_socket_t fd, int what);
+  int inqueue() {
+    int ret;
+    pthread_mutex_lock(mutex_);
+    ret = inqueue_;
+    pthread_mutex_unlock(mutex_);
+    return ret;
+  }
 
 private:
-  void flowControl();
-  bool newCurl();
+  static bool newCurl(CURL **curl, struct curl_slist **list, char *errbuf = 0);
+
+private:
+  pthread_mutex_t *mutex_;
+
+  int inqueue_;
+  size_t capacity_;
+  std::vector<CURL *> curls_;
+  std::vector<struct curl_slist *> curlHeaders_;
+};
+
+class EsSender {
+  template<class T> friend class UNITTEST_HELPER;
+public:
+  EsSender() : epfd_(-1), pipeRead_(-1), pipeWrite_(-1), multi_(0), events_(0), running_(false) {}
+  ~EsSender();
+
+  bool init(CnfCtx *cnf, CurlManager *curlManager, char *errbuf);
+  void eventLoop();
+  void socketCallback(CURL *curl, curl_socket_t fd, int what);
+  bool produce(FileRecord *record);
+
+private:
   void eventCallback(CURL *curl, uint32_t event);
 
-  void consumeFileRecords();
+  void consume();
   void addToMulti(FileRecord *record);
 
 private:
   CnfCtx *cnf_;
+  CurlManager *curlManager_;
 
   std::vector<std::string> nodes_;
   std::string userpass_;
-
-  int inqueue_;
-  std::vector<CURL *> curls_;
-  std::vector<struct curl_slist *> curlHeaders_;
 
   int epfd_;
 
@@ -52,6 +75,27 @@ private:
 
   volatile bool running_;
   pthread_t tid_;
+};
+
+class EsCtx {
+  template<class T> friend class UNITTEST_HELPER;
+public:
+  ~EsCtx();
+  bool init(CnfCtx *cnf, char *errbuf);
+  bool produce(std::vector<FileRecord *> *datas);
+
+private:
+  void flowControl();
+
+private:
+  CnfCtx *cnf_;
+
+  CurlManager curlManager_;
+
+  size_t lastSenderIndex_;
+  std::vector<EsSender *> esSenders_;
+
+  volatile bool running_;
 };
 
 #endif

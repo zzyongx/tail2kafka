@@ -148,6 +148,7 @@ public:
 private:
   CnfCtx();
 
+  long lastLog_;
   TailStats stats_;
 
   std::string pidfile_;

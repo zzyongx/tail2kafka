@@ -179,14 +179,18 @@ bool CnfCtx::initFileReader()
 
 void CnfCtx::logStats()
 {
+  if (fasttime() == lastLog_) return;
+
   TailStats s;
   stats_.get(&s);
   log_error(0, "TailStatus,fileRead=%ld,logRead=%ld,logWrite=%ld,logSend=%d,logRecv=%d,logError=%d",
             s.fileRead(), s.logRead(), s.logWrite(),
             s.logSend(), s.logRecv(), s.logError());
+  lastLog_ = fasttime();
 }
 
 CnfCtx::CnfCtx() {
+  lastLog_ = 0;
   partition_ = -1;
 
   helper_  = 0;

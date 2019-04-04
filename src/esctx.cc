@@ -73,8 +73,8 @@ bool CurlManager::init(size_t capacity, char errbuf[])
 void CurlManager::get(CURL **curl, struct curl_slist **header)
 {
   pthread_mutex_lock(mutex_);
+  ++active_;
   if (curls_.empty()) {
-    inqueue_++;
     pthread_mutex_unlock(mutex_);
 
     newCurl(curl, header);
@@ -91,12 +91,12 @@ void CurlManager::get(CURL **curl, struct curl_slist **header)
 void CurlManager::release(CURL *curl, struct curl_slist *header)
 {
   pthread_mutex_lock(mutex_);
+  --active_;
   if (curls_.size() < capacity_) {
     curls_.push_back(curl);
     curlHeaders_.push_back(header);
     pthread_mutex_unlock(mutex_);
   } else {
-    inqueue_--;
     pthread_mutex_unlock(mutex_);
 
     curl_easy_cleanup(curl);
@@ -130,6 +130,7 @@ bool EsSender::init(CnfCtx *cnf, CurlManager *curlManager, char *errbuf)
   }
 
   curl_multi_setopt(multi_, CURLMOPT_SOCKETFUNCTION, curlSocketCallback);
+
   curl_multi_setopt(multi_, CURLMOPT_SOCKETDATA, this);
 
   epfd_ = epoll_create(1024);
@@ -298,28 +299,11 @@ void EsSender::addToMulti(FileRecord *record)
   }
 }
 
-void EsSender::eventCallback(CURL *curl, uint32_t event)
+void EsSender::checkMultiInfo()
 {
-  int what = (event & EPOLLIN ? CURL_POLL_IN : 0) |
-    (event & EPOLLOUT ? CURL_POLL_OUT : 0);
-
-  CURLMcode rc;
   int alive;
-
-  if (curl) {
-    EventCtx *ctx;
-    curl_easy_getinfo(curl, CURLINFO_PRIVATE, &ctx);
-
-    rc = curl_multi_socket_action(multi_, ctx->fd, what, &alive);
-  } else {
-    rc = curl_multi_socket_action(multi_, CURL_SOCKET_TIMEOUT, 0, &alive);
-  }
-
-  if (rc != CURLM_OK) {
-    log_fatal(0, "curl_multi_socket_action error: %s", curl_multi_strerror(rc));
-  }
-
   CURLMsg *msg;
+
   while ((msg = curl_multi_info_read(multi_, &alive))) {
     if (msg->msg == CURLMSG_DONE) {
       CURL *handler = msg->easy_handle;
@@ -335,7 +319,7 @@ void EsSender::eventCallback(CURL *curl, uint32_t event)
         curl_easy_getinfo(handler, CURLINFO_EFFECTIVE_URL, &url);
         log_fatal(0, "alive %d POST %s %s ret status %ld body %s", alive, url,
                   ctx->record->data->c_str(), code, ctx->output.c_str());
-        if (code != 400) cnf_->stats()->logErrorInc();
+        if (code != 400 && code != 429) cnf_->stats()->logErrorInc();
       }
 
       if (ctx->record->off != (off_t) -1 && ctx->record->inode > 0) {
@@ -348,6 +332,38 @@ void EsSender::eventCallback(CURL *curl, uint32_t event)
       delete ctx;
     }
   }
+}
+
+void EsSender::eventCallback(CURL *curl, uint32_t event)
+{
+  int what = (event & EPOLLIN ? CURL_POLL_IN : 0) |
+    (event & EPOLLOUT ? CURL_POLL_OUT : 0);
+
+  CURLMcode rc;
+  int alive;
+
+  EventCtx *ctx;
+  curl_easy_getinfo(curl, CURLINFO_PRIVATE, &ctx);
+  rc = curl_multi_socket_action(multi_, ctx->fd, what, &alive);
+
+  if (rc != CURLM_OK) {
+    log_fatal(0, "curl_multi_socket_action error: %s", curl_multi_strerror(rc));
+  }
+
+  checkMultiInfo();
+}
+
+void EsSender::timerCallback()
+{
+  CURLMcode rc;
+  int alive;
+
+  rc = curl_multi_socket_action(multi_, CURL_SOCKET_TIMEOUT, 0, &alive);
+  if (rc != CURLM_OK) {
+    log_fatal(0, "curl_multi_socket_action error: %s", curl_multi_strerror(rc));
+  }
+
+  checkMultiInfo();
 }
 
 void EsSender::eventLoop()
@@ -363,7 +379,7 @@ void EsSender::eventLoop()
         }
       }
     } else if (nfd == 0) {
-      eventCallback(0, 0);
+      timerCallback();
     } else {
       if (errno == EINTR) {
         log_fatal(errno, "epoll_wait error");
@@ -407,17 +423,17 @@ EsCtx::~EsCtx()
 void EsCtx::flowControl()
 {
   int i = 0;
-  int inq;
-  while ((inq = curlManager_.inqueue()) > 0) {
+  int overload;
+  while ((overload = curlManager_.overload()) > 10) {
     if (i % 500 == 0) {
-      log_info(0, "too much data for es #%d, wait %ds, set block, stop produce", inq, i / 100);
+      log_info(0, "too much data for es #%d, wait %ds, set block, stop produce", overload, i / 100);
       cnf_->setKafkaBlock(true);
     }
     i++;
     sys::millisleep(10);
   }
   if (i > 0) {
-    log_info(0, "es #%d, restart produce", inq);
+    log_info(0, "es #%d, restart produce", overload);
     cnf_->setKafkaBlock(false);
   }
 }

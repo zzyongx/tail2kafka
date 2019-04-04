@@ -14,17 +14,17 @@ class LuaCtx;
 
 class CurlManager {
 public:
-  CurlManager() : inqueue_(0), capacity_(0) {}
+  CurlManager() : active_(0), capacity_(0) {}
   ~CurlManager();
 
   bool init(size_t capacity, char errbuf[]);
   void get(CURL **curl, struct curl_slist **list);
   void release(CURL *curl, struct curl_slist *list);
 
-  int inqueue() {
+  int overload() {
     int ret;
     pthread_mutex_lock(mutex_);
-    ret = inqueue_;
+    ret = active_ > capacity_ ? active_ - capacity_ : 0 ;
     pthread_mutex_unlock(mutex_);
     return ret;
   }
@@ -35,7 +35,7 @@ private:
 private:
   pthread_mutex_t *mutex_;
 
-  int inqueue_;
+  size_t active_;
   size_t capacity_;
   std::vector<CURL *> curls_;
   std::vector<struct curl_slist *> curlHeaders_;
@@ -49,11 +49,13 @@ public:
 
   bool init(CnfCtx *cnf, CurlManager *curlManager, char *errbuf);
   void eventLoop();
+  void checkMultiInfo();
   void socketCallback(CURL *curl, curl_socket_t fd, int what);
   bool produce(FileRecord *record);
 
 private:
   void eventCallback(CURL *curl, uint32_t event);
+  void timerCallback();
 
   void consume();
   void addToMulti(FileRecord *record);

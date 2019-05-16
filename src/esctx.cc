@@ -198,7 +198,7 @@ bool EsSender::produce(FileRecord *record)
 void EsSender::socketCallback(CURL *curl, curl_socket_t fd, int what)
 {
   if (what == CURL_POLL_REMOVE) {
-    if (epoll_ctl(epfd_, EPOLL_CTL_DEL, fd, 0) != 0) {
+    if (epoll_ctl(epfd_, EPOLL_CTL_DEL, fd, 0) != 0 && errno != EBADF) { // fd may be closed
       log_fatal(errno, "epoll_ctl_del %d error", fd);
     }
   } else {

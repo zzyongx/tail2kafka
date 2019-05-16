@@ -732,6 +732,7 @@ bool FileReader::sendLines(ino_t inode, std::vector<FileRecord *> *records)
     if (nn == -1) {
       if (errno != EINTR) {
         log_fatal(errno, "write onetaskrequest error");
+        delete records;
         return false;
       }
     }

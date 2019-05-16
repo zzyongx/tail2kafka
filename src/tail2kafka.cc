@@ -72,13 +72,14 @@ int main(int argc, char *argv[])
 
   sys::SignalHelper signalHelper(errbuf);
 
-  int signos[] = { SIGTERM, SIGHUP, SIGCHLD };
-  RunStatus::Want wants[] = { RunStatus::STOP, RunStatus::RELOAD, RunStatus::START2 };
-  if (!signalHelper.signal(runStatus, 3, signos, wants)) {
+  int signos[] = { SIGTERM, SIGHUP, SIGCHLD, SIGUSR1, };
+  RunStatus::Want wants[] = { RunStatus::STOP, RunStatus::RELOAD, RunStatus::START2,
+                              RunStatus::REOPEN };
+  if (!signalHelper.signal(runStatus, 4, signos, wants)) {
     log_fatal(errno, "install signal %s", errbuf);
     return EXIT_FAILURE;
   }
-  if (!signalHelper.block(SIGCHLD, SIGTERM, SIGHUP, -1)) {
+  if (!signalHelper.block(SIGCHLD, SIGTERM, SIGHUP, SIGUSR1, -1)) {
     log_fatal(errno, "block signal %s", errbuf);
     return EXIT_FAILURE;
   }
@@ -133,6 +134,8 @@ int main(int argc, char *argv[])
       } else {
         log_fatal(0, "reload cnf error %s", errbuf);
       }
+    } else if (runStatus->get() == RunStatus::REOPEN) {
+      log_error(0, "force reopening of files");
     }
 
     runStatus->set(RunStatus::WAIT);

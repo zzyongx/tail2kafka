@@ -40,6 +40,7 @@ bool PingbackTask::doIt()
   CURLcode rc = curl_easy_perform(curl_);
   if (rc != CURLE_OK) {
     log_error(0, "pingback %s error %s", url_, curl_easy_strerror(rc));
+    delete url_;
     return false;
   }
 

@@ -19,6 +19,8 @@
 #include <sys/time.h>
 #include <pthread.h>
 
+#define N100M 100 * 1024 * 1024
+#define NFILE 3
 #define LOGGER_INIT() Logger *Logger::defLogger = 0;
 
 static const size_t ERR_STR = 4095;
@@ -37,7 +39,7 @@ static const char *FATAL_PTR = "FATAL";
 class Logger {
 public:
   enum Level { DEBUG, INFO, ERROR, FATAL };
-  enum Rotate { DAY, HOUR, NIL };
+  enum Rotate { DAY, HOUR, SIZE, NIL };
 
   static Logger *defLogger;
 
@@ -125,7 +127,7 @@ public:
 
 private:
   Logger(const std::string &file, Rotate rotate, time_t *nowPtr)
-    : rotate_(rotate), reopen_(false), nowPtr_(nowPtr),
+    : limit_(N100M), rotate_(rotate), reopen_(false), nowPtr_(nowPtr),
       bindStdout_(false), bindStderr_(false), handle_(-1), file_(file) {
 #if _DEBUG_
     setLevel(DEBUG);
@@ -141,11 +143,16 @@ private:
 
     // timezone off
     gmtOff_ = ltm.tm_gmtoff;
+    size_ = 0;
     return openFile(now, &ltm);
   }
 
   bool canRotate(time_t now) {
-    if (rotate_ == NIL) return reopen_;
+    if (rotate_ == NIL) {
+      return reopen_;
+    } else if (rotate_ == SIZE) {
+      return size_ >= limit_;
+    }
 
     time_t fileTime = __sync_fetch_and_add(&fileTime_, 0);
     now      += gmtOff_;
@@ -158,13 +165,32 @@ private:
 
   bool openFile(time_t now, struct tm *tm) {
     std::string file(file_);
-    if (rotate_ != NIL) {
+    if (rotate_ == DAY || rotate_ == HOUR) {
       char buffer[32];
       size_t n = 0;
       if (rotate_ == DAY) n = strftime(buffer, 32, "_%Y-%m-%d", tm);
-      else if (rotate_ == HOUR) n = strftime(buffer, 32, "_%Y-%m-%d_%H", tm);
-      else assert(0);
+      else n = strftime(buffer, 32, "_%Y-%m-%d_%H", tm);
       file.append(buffer, n);
+    } else if (rotate_ == SIZE) {
+      if (size_ == 0) {
+        struct stat st;
+        if (stat(file.c_str(), &st) == 0) size_ = st.st_size;
+      }
+
+      if (size_ >= limit_) {
+        char buffer[32];
+        sprintf(buffer, ".%d", NFILE);
+        std::string nfile = file + buffer;
+
+        for (int i = NFILE-1; i > 0; --i) {
+          sprintf(buffer, ".%d", i);
+          std::string rfile = file + buffer;
+
+          if (access(rfile.c_str(), F_OK) == 0) rename(rfile.c_str(), nfile.c_str());
+          nfile = rfile;
+        }
+        rename(file.c_str(), nfile.c_str());
+      }
     }
 
     int fd = open(file.c_str(), O_WRONLY | O_APPEND | O_CREAT,
@@ -175,6 +201,10 @@ private:
       close(tmp);
       if (bindStdout_) dup2(handle_, STDOUT_FILENO);
       if (bindStderr_) dup2(handle_, STDERR_FILENO);
+
+      struct stat st;
+      fstat(fd, &st);
+      size_ = st.st_size;
 
       fileTime_ = now;
       reopen_ = false;
@@ -219,10 +249,14 @@ private:
     if (n >= ERR_STR) n = ERR_STR;
     errstr[n++] = '\n';
 
+    size_ += n;
     return (write(handle_, errstr, n) != -1);
   }
 
 private:
+  size_t size_;
+  size_t limit_;
+
   uint8_t level_;
   Rotate  rotate_;
   bool    reopen_;

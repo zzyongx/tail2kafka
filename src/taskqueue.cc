@@ -28,7 +28,10 @@ void TaskQueue::run()
 {
   while (true) {
     pthread_mutex_lock(&mutex_);
-    if (!quit_ && tasks_.empty()) pthread_cond_wait(&cond_, &mutex_);
+    if (tasks_.empty()) {
+      if (!quit_) pthread_cond_wait(&cond_, &mutex_);
+      else break;
+    }
 
     Task *task = tasks_.front();
     tasks_.pop();
@@ -37,7 +40,7 @@ void TaskQueue::run()
     if (task == (Task *) 0) {
       quit_ = true;
       break;
-    } else if (task == (Task *) -1) {
+    } else if (task == (Task *) 0x01) {
       quit_ = true;
       continue;
     }
@@ -47,7 +50,10 @@ void TaskQueue::run()
     } else {
       if (task->canRetry()) {
         task->incRetry();
-        submit(task);
+
+        pthread_mutex_lock(&mutex_);
+        tasks_.push(task);
+        pthread_mutex_unlock(&mutex_);
       } else {
         delete task;
       }

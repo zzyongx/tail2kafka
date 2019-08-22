@@ -71,7 +71,6 @@ public:
     }
 
     if (!ret) stop(true);
-    else quit_ = false;
     return ret;
   }
 

@@ -13,6 +13,8 @@ TaskQueue::TaskQueue(const std::string &name)
 
 TaskQueue::~TaskQueue()
 {
+  if (!tids_.empty()) stop();
+
   pthread_mutex_destroy(&mutex_);
   pthread_cond_destroy(&cond_);
 }
@@ -26,11 +28,17 @@ void *TaskQueue::run(void *ctx)
 
 void TaskQueue::run()
 {
+  quit_ = false;
+
   while (true) {
     pthread_mutex_lock(&mutex_);
     if (tasks_.empty()) {
-      if (!quit_) pthread_cond_wait(&cond_, &mutex_);
-      else break;
+      if (!quit_) {
+        pthread_cond_wait(&cond_, &mutex_);
+      } else {
+        pthread_mutex_unlock(&mutex_);
+        break;
+      }
     }
 
     Task *task = tasks_.front();

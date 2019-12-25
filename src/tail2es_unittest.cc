@@ -110,7 +110,7 @@ DEFINE(loadLuaCtx)
 }
 
 #define CONTENT_LENGTH_HEADER                         \
-	"HTTP/1.1 400 Bad Request\r\n"                      \
+  "HTTP/1.1 400 Bad Request\r\n"                      \
   "content-type: application/json; charset=UTF-8\r\n" \
   "content-length: 175\r\n"
 
@@ -121,32 +121,32 @@ DEFINE(loadLuaCtx)
 
 DEFINE(httpProtocol_1)
 {
-	std::vector<std::string> v;
-	v.push_back("127.0.0.1:9200");
-	EsUrl url(v, 0);
-	url.respWant_ = STATUS_LINE;
-	url.resp_ = url.header_;
+  std::vector<std::string> v;
+  v.push_back("127.0.0.1:9200");
+  EsUrl url(v, 0);
+  url.respWant_ = STATUS_LINE;
+  url.resp_ = url.header_;
 
-	strcpy(url.header_, CONTENT_LENGTH_HEADER);
-	url.offset_ = sizeof(CONTENT_LENGTH_HEADER)-1;
+  strcpy(url.header_, CONTENT_LENGTH_HEADER);
+  url.offset_ = sizeof(CONTENT_LENGTH_HEADER)-1;
 
-	url.initHttpResponse(url.header_ + url.offset_);
-	check(url.respWant_ == HEADER, "parse part header error");
-	check(url.respCode_ == 400, "http status error %d", url.respCode_);
+  url.initHttpResponse(url.header_ + url.offset_);
+  check(url.respWant_ == HEADER, "parse part header error");
+  check(url.respCode_ == 400, "http status error %d", url.respCode_);
 
-	strcpy(url.header_, CONTENT_LENGTH_HEADER "\r\n");
-	url.offset_ = sizeof(CONTENT_LENGTH_HEADER)-1 + 2;
+  strcpy(url.header_, CONTENT_LENGTH_HEADER "\r\n");
+  url.offset_ = sizeof(CONTENT_LENGTH_HEADER)-1 + 2;
 
-	url.initHttpResponse(url.header_ + url.offset_);
-	check(url.respWant_ == BODY, "parse want %d", url.respWant_);
-	check(url.wantLen_ == 175, "content length error %d", int(url.wantLen_));
+  url.initHttpResponse(url.header_ + url.offset_);
+  check(url.respWant_ == BODY, "parse want %d", url.respWant_);
+  check(url.wantLen_ == 175, "content length error %d", int(url.wantLen_));
 
-	strcpy(url.header_, CONTENT_BODY_PART1 CONTENT_BODY_PART2);
-	url.offset_ = strlen(url.header_);
+  strcpy(url.header_, CONTENT_BODY_PART1 CONTENT_BODY_PART2);
+  url.offset_ = strlen(url.header_);
 
-	url.initHttpResponse(url.header_ + url.offset_);
-	check(url.respWant_ == RESP_EOF, "parse want %d", url.respWant_);
-	check(url.respBody_ == CONTENT_BODY_PART1 CONTENT_BODY_PART2, "content error");
+  url.initHttpResponse(url.header_ + url.offset_);
+  check(url.respWant_ == RESP_EOF, "parse want %d", url.respWant_);
+  check(url.respBody_ == CONTENT_BODY_PART1 CONTENT_BODY_PART2, "content error");
 }
 
 DEFINE(basic)
@@ -275,7 +275,7 @@ TEST_RUN(tail2es)
   TEST(basic);
   TEST(indexdoc);
 
-	TEST(httpProtocol_1);
+  TEST(httpProtocol_1);
 
   TEST(initEs);
   TEST(esProduce);

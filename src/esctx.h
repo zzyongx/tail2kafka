@@ -28,8 +28,8 @@ class EsUrl {
 public:
   EsUrl(const std::vector<std::string> &nodes, int idx)
     : status_(UNINIT), fd_(-1), idx_(idx), nodes_(nodes), record_(0) {
-		node_ = nodes_[idx_];
-	}
+    node_ = nodes_[idx_];
+  }
 
   ~EsUrl() {
     if (fd_ > 0) close(fd_);
@@ -40,13 +40,13 @@ public:
   void onTimeout(int pfd, time_t now);
   void onError(const char *error);
 
-	bool idle() const {
-		return status_ == UNINIT || status_ == IDLE;
-	}
+  bool idle() const {
+    return status_ == UNINIT || status_ == IDLE;
+  }
 
-	bool keepalive() const {
-		return status_ != UNINIT;
-	}
+  bool keepalive() const {
+    return status_ != UNINIT;
+  }
 
 private:
   void initHttpResponseStatusLine(const char *eof);
@@ -70,7 +70,7 @@ private:
   EventStatus status_;
   int fd_;
   time_t activeTime_;
-	size_t timeoutRetry_;
+  size_t timeoutRetry_;
 
   int idx_;
   std::vector<std::string> nodes_;

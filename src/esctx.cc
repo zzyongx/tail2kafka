@@ -39,19 +39,19 @@ public:
   EsUrl *get();
 
   bool release(EsUrl *url) {
-		bool rc;
+    bool rc;
     pthread_mutex_lock(&mutex_);
     --active_;
     if (true || urls_.size() < capacity_) {
       urls_.push_back(url);
-			rc = false;
+      rc = false;
     } else {
       holder_.remove(url);
       delete url;
-			rc = true;
+      rc = true;
     }
     pthread_mutex_unlock(&mutex_);
-		return rc;
+    return rc;
   }
 
   int overload() {
@@ -103,16 +103,16 @@ EsUrl *EsUrlManager::get()
 void EsUrl::reinit(FileRecord *record, int move)
 {
   if (move) {
-		int next = (idx_ + move) % nodes_.size();
-		log_error(0, "switch es node from %s to %s",
-							nodes_[idx_].c_str(), nodes_[next].c_str());
-		idx_ = next;
-		node_ = nodes_[idx_];
+    int next = (idx_ + move) % nodes_.size();
+    log_error(0, "switch es node from %s to %s",
+              nodes_[idx_].c_str(), nodes_[next].c_str());
+    idx_ = next;
+    node_ = nodes_[idx_];
 
-		++timeoutRetry_;
-	} else {
-		timeoutRetry_ = 0;
-	}
+    ++timeoutRetry_;
+  } else {
+    timeoutRetry_ = 0;
+  }
 
   body_ = record->data->c_str();
   nbody_ = record->data->size();
@@ -168,7 +168,7 @@ bool EsUrl::doConnect(int pfd, char *errbuf)
 
   if (setsockopt(fd_, SOL_SOCKET, SO_KEEPALIVE, &val, sizeof(val)) == -1) {
     snprintf(errbuf, 1024, "setsockopt(SOL_SOCKET, SO_KEEPALIVE) error: %s",
-						 strerror(errno));
+             strerror(errno));
     return false;
   }
 
@@ -220,11 +220,11 @@ bool EsUrl::doConnect(int pfd, char *errbuf)
     struct epoll_event event = {EPOLLIN | EPOLLOUT, this};
     if (epoll_ctl(pfd, EPOLL_CTL_ADD, fd_, &event) != 0) {
       snprintf(errbuf, 1024, "epoll_ctl_add(%d, EPOLLIN|EPOLLOUT) error: %s",
-							 fd_, strerror(errno));
-			status_ = UNINIT;
+               fd_, strerror(errno));
+      status_ = UNINIT;
     }
   } else {
-		snprintf(errbuf, 1024, "connect %s error: %s", node_.c_str(), strerror(errno));
+    snprintf(errbuf, 1024, "connect %s error: %s", node_.c_str(), strerror(errno));
   }
 
   freeaddrinfo(infos);
@@ -239,7 +239,7 @@ bool EsUrl::doRequest(int pfd, char *errbuf)
     if (niov == 0) {
       offset_ = 0;
       status_ = READING;
-			break;
+      break;
     }
 
     ssize_t nn = writev(fd_, iov, niov);
@@ -247,7 +247,7 @@ bool EsUrl::doRequest(int pfd, char *errbuf)
       if (errno == EAGAIN) {
         status_ = WRITING;
       } else {
-				snprintf(errbuf, 1024, "writev error: %s", strerror(errno));
+        snprintf(errbuf, 1024, "writev error: %s", strerror(errno));
         return false;
       }
     } else {
@@ -275,9 +275,9 @@ bool EsUrl::doResponse(int /*pfd*/, char *errbuf)
         if (initHttpResponse(header_ + offset_)) {
           status_ = IDLE;
         }
-				break;
+        break;
       } else {
-				snprintf(errbuf, 1024, "recv error: %s", strerror(errno));
+        snprintf(errbuf, 1024, "recv error: %s", strerror(errno));
         return false;
       }
     } else {
@@ -286,7 +286,7 @@ bool EsUrl::doResponse(int /*pfd*/, char *errbuf)
   }
 
   if (status_ == IDLE) {
-		record_->ctx->cnf()->stats()->logSendInc();
+    record_->ctx->cnf()->stats()->logSendInc();
 
     if (respCode_ != 201) {
       log_fatal(0, "POST %s %s ret status %d body %s",
@@ -303,7 +303,7 @@ bool EsUrl::doResponse(int /*pfd*/, char *errbuf)
     FileRecord::destroy(record_);
   }
 
-	return status_ == IDLE;
+  return status_ == IDLE;
 }
 
 void EsUrl::initHttpResponseStatusLine(const char *eof)
@@ -315,17 +315,17 @@ void EsUrl::initHttpResponseStatusLine(const char *eof)
     if (*p == ' ') {
       ++field;
 
-			if (field == 1) {
-				start = p + 1;
-			} else if (field == 2) {
-				*p = '\0';
-				respCode_ = util::toInt(start);
-			}
-		} else if (*p == '\r' && *(p+1) == '\n') {
-			respWant_ = HEADER;
-			resp_ = p + 2;
-		}
-	}
+      if (field == 1) {
+        start = p + 1;
+      } else if (field == 2) {
+        *p = '\0';
+        respCode_ = util::toInt(start);
+      }
+    } else if (*p == '\r' && *(p+1) == '\n') {
+      respWant_ = HEADER;
+      resp_ = p + 2;
+    }
+  }
 }
 
 void EsUrl::initHttpResponseHeader(const char *eof)
@@ -338,7 +338,7 @@ void EsUrl::initHttpResponseHeader(const char *eof)
       if (*p == ':') {
         *p = '\0';
         want = HEADER_VALUE;
-				value = p + 1;
+        value = p + 1;
       } else if (*p == '\r' && *(p+1) == '\n') {
         if (wantLen_ > 0) {
           respWant_ = BODY;
@@ -412,7 +412,7 @@ bool EsUrl::initHttpResponse(const char *eof)
     if (eof - resp_ > 0) respBody_.append(resp_, eof - resp_);
     resp_ = header_;
     offset_ = 0;
-		if (respBody_.size() == wantLen_) respWant_ = RESP_EOF;
+    if (respBody_.size() == wantLen_) respWant_ = RESP_EOF;
   } else if (respWant_ == BODY_CHUNK_LEN || respWant_ == BODY_CHUNK_CONTENT) {
     initHttpResponseBody(eof);
   }
@@ -423,7 +423,7 @@ bool EsUrl::initHttpResponse(const char *eof)
 void EsUrl::onError(const char *error)
 {
   if (record_) {
-		log_fatal(0, "POST %s %s INTERNAL ERROR: %s", url_.c_str(), body_, error);
+    log_fatal(0, "POST %s %s INTERNAL ERROR: %s", url_.c_str(), body_, error);
 
     record_->ctx->cnf()->stats()->logErrorInc();
     FileRecord::destroy(record_);
@@ -437,12 +437,12 @@ void EsUrl::onTimeout(int pfd, time_t now)
     log_fatal(0, "POST %s %s timeout", url_.c_str(), body_);
     destroy();
 
-		if (timeoutRetry_ == nodes_.size()) {
-			onError("exceed maximum timeout retries");
-		} else {
-			reinit(record_, 1);
-			onEvent(pfd);
-		}
+    if (timeoutRetry_ == nodes_.size()) {
+      onError("exceed maximum timeout retries");
+    } else {
+      reinit(record_, 1);
+      onEvent(pfd);
+    }
   }
 }
 
@@ -453,7 +453,7 @@ void EsUrl::onEvent(int pfd)
     return;
   }
 
-	char errbuf[1024];
+  char errbuf[1024];
 
   bool rc = true;
   if (status_ == WRITING) {
@@ -562,7 +562,7 @@ void EsSender::consume(int pfd)
   assert(nn == sizeof(FileRecord*));
 
   EsUrl *url = urlManager_->get();
-	if (!url->keepalive()) urls_.push_back(url);
+  if (!url->keepalive()) urls_.push_back(url);
 
   url->reinit((FileRecord *)ptr);
   url->onEvent(pfd);
@@ -581,21 +581,21 @@ void EsSender::eventLoop()
           EsUrl *url = (EsUrl *) events_[i].data.ptr;
           url->onEvent(epfd_);
 
-					if (url->idle() && (urlManager_->release(url) || !url->keepalive())) {
-						urls_.remove(url);
-					}
+          if (url->idle() && (urlManager_->release(url) || !url->keepalive())) {
+            urls_.remove(url);
+          }
         }
       }
     } else if (nfd == 0) {
       for (std::list<EsUrl*>::iterator ite = urls_.begin(); ite != urls_.end();) {
-				EsUrl *url = *ite;
+        EsUrl *url = *ite;
         url->onTimeout(epfd_, now);
 
-				if (url->idle() && (urlManager_->release(url) || !url->keepalive())) {
-					urls_.erase(ite++);
-				} else {
-					++ite;
-				}
+        if (url->idle() && (urlManager_->release(url) || !url->keepalive())) {
+          urls_.erase(ite++);
+        } else {
+          ++ite;
+        }
       }
     } else {
       if (errno == EINTR) {
@@ -614,8 +614,8 @@ bool EsCtx::init(CnfCtx *cnf)
   cnf_ = cnf;
   urlManager_ = new EsUrlManager(cnf->getEsNodes(), cnf->getEsMaxConns());
 
-	size_t nthread = cnf->getEsMaxConns() / 500;
-	if (nthread == 0) nthread = 1;
+  size_t nthread = cnf->getEsMaxConns() / 500;
+  if (nthread == 0) nthread = 1;
 
   lastSenderIndex_ = 0;
   for (size_t i = 0; i < nthread; ++i) {

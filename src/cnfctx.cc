@@ -85,7 +85,7 @@ CnfCtx *CnfCtx::loadFile(const char *file, char *errbuf)
   if (!helper->getString("pidfile", &cnf->pidfile_)) return 0;
 
   if (!helper->getString("brokers", &cnf->brokers_, "")) return 0;
-  if (!helper->getString("es_nodes", &cnf->esNodes_, "")) return 0;
+  if (!helper->getArray("es_nodes", &cnf->esNodes_, false)) return 0;
 
   if (!helper->getInt("partition", &cnf->partition_, -1)) return 0;
   if (!helper->getInt("polllimit", &cnf->pollLimit_, 100)) return 0;
@@ -122,7 +122,8 @@ void CnfCtx::addLuaCtx(LuaCtx *ctx)
 {
   count_++;
   bool find = false;
-  for (std::vector<LuaCtx *>::iterator ite = luaCtxs_.begin(); ite != luaCtxs_.end(); ++ite) {
+  for (std::vector<LuaCtx *>::iterator ite = luaCtxs_.begin();
+       ite != luaCtxs_.end(); ++ite) {
     if ((*ite)->file() == ctx->file()) {
       ctx->setNext(*ite);
       *ite = ctx;
@@ -146,11 +147,9 @@ bool CnfCtx::initKafka()
 bool CnfCtx::initEs()
 {
   assert(!esNodes_.empty());
-#ifdef ENABLE_TAIL2ES
   std::auto_ptr<EsCtx> es(new EsCtx());
-  if (!es->init(this, errbuf_)) return false;
+  if (!es->init(this)) return false;
   es_ = es.release();
-#endif
   return true;
 }
 
@@ -183,7 +182,7 @@ void CnfCtx::logStats()
 
   TailStats s;
   stats_.get(&s);
-  log_error(0, "TailStatus,fileRead=%ld,logRead=%ld,logWrite=%ld,logSend=%d,logRecv=%d,logError=%d",
+  log_error(0, "TailStatus,fileRead=%ld,logRead=%ld,logWrite=%ld,logSend=%ld,logRecv=%ld,logError=%ld",
             s.fileRead(), s.logRead(), s.logWrite(),
             s.logSend(), s.logRecv(), s.logError());
   lastLog_ = fasttime();
@@ -195,9 +194,7 @@ CnfCtx::CnfCtx() {
 
   helper_  = 0;
   kafka_   = 0;
-#ifdef ENABLE_TAIL2ES
   es_      = 0;
-#endif
   fileOff_ = 0;
 
   accept = server = -1;
@@ -221,9 +218,7 @@ CnfCtx::~CnfCtx()
 
   if (helper_)  delete helper_;
   if (kafka_)   delete kafka_;
-#ifdef ENABLE_TAIL2ES
   if (es_)      delete es_;
-#endif
   if (fileOff_) delete fileOff_;
 
   if (accept != -1) close(accept);

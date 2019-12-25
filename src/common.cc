@@ -242,7 +242,7 @@ bool parseQuery(const char *r, size_t len, std::string *path, std::map<std::stri
         key.append(1, *ptr);
       } else {
         if (*ptr == '%' && (i+2 < len && *(ptr+2))) {
-          int val;
+          size_t val;
           if (util::hexToInt(ptr+1, &val)) {
             value.append(1, val);
             i   += 2;

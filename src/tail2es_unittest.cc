@@ -16,8 +16,6 @@
 
 LOGGER_INIT();
 
-#ifdef ENABLE_TAIL2ES
-
 static CnfCtx *cnf = 0;
 
 #define LUACNF_SIZE 2
@@ -109,6 +107,46 @@ DEFINE(loadLuaCtx)
 
   function = ctx->function();
   check(function->type_ == LuaFunction::INDEXDOC, "function type %s, expect indexdoc", LuaFunction::typeToString(function->type_));
+}
+
+#define CONTENT_LENGTH_HEADER                         \
+	"HTTP/1.1 400 Bad Request\r\n"                      \
+  "content-type: application/json; charset=UTF-8\r\n" \
+  "content-length: 175\r\n"
+
+#define CONTENT_BODY_PART1 \
+"{\"_index\":\"indexdoc\",\"_type\":\"_doc\",\"_id\":\"lmBMN28B-3LtigQc8FLf\",\"_version\":1,\"result\":\"created\",\"_shards\":{\"total\":2,\"successful\":1,\"failed\":0}"
+
+#define CONTENT_BODY_PART2 ",\"_seq_no\":0,\"_primary_term\":1}"
+
+DEFINE(httpProtocol_1)
+{
+	std::vector<std::string> v;
+	v.push_back("127.0.0.1:9200");
+	EsUrl url(v, 0);
+	url.respWant_ = STATUS_LINE;
+	url.resp_ = url.header_;
+
+	strcpy(url.header_, CONTENT_LENGTH_HEADER);
+	url.offset_ = sizeof(CONTENT_LENGTH_HEADER)-1;
+
+	url.initHttpResponse(url.header_ + url.offset_);
+	check(url.respWant_ == HEADER, "parse part header error");
+	check(url.respCode_ == 400, "http status error %d", url.respCode_);
+
+	strcpy(url.header_, CONTENT_LENGTH_HEADER "\r\n");
+	url.offset_ = sizeof(CONTENT_LENGTH_HEADER)-1 + 2;
+
+	url.initHttpResponse(url.header_ + url.offset_);
+	check(url.respWant_ == BODY, "parse want %d", url.respWant_);
+	check(url.wantLen_ == 175, "content length error %d", int(url.wantLen_));
+
+	strcpy(url.header_, CONTENT_BODY_PART1 CONTENT_BODY_PART2);
+	url.offset_ = strlen(url.header_);
+
+	url.initHttpResponse(url.header_ + url.offset_);
+	check(url.respWant_ == RESP_EOF, "parse want %d", url.respWant_);
+	check(url.respBody_ == CONTENT_BODY_PART1 CONTENT_BODY_PART2, "content error");
 }
 
 DEFINE(basic)
@@ -237,6 +275,8 @@ TEST_RUN(tail2es)
   TEST(basic);
   TEST(indexdoc);
 
+	TEST(httpProtocol_1);
+
   TEST(initEs);
   TEST(esProduce);
 
@@ -249,11 +289,3 @@ int main() {
   printf("OK\n");
   return 0;
 }
-
-#else
-
-int main() {
-  return 0;
-}
-
-#endif

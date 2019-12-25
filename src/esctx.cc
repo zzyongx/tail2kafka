@@ -1,17 +1,479 @@
-#ifdef ENABLE_TAIL2ES
 #include <cstring>
 #include <errno.h>
 #include <sys/ioctl.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/tcp.h>
+#include <netdb.h>
 
 #include "logger.h"
+#include "util.h"
 #include "common.h"
 #include "cnfctx.h"
 #include "luactx.h"
 #include "filereader.h"
 #include "esctx.h"
 
+class EsUrlManager {
+public:
+  EsUrlManager(const std::vector<std::string> &nodes, int capacity)
+    : active_(0), capacity_(capacity), nodes_(nodes) {
+    pthread_mutex_init(&mutex_, 0);
+
+    for (size_t i = 0; i < capacity_; ++i) {
+      EsUrl *url = new EsUrl(nodes, i % nodes.size());
+      urls_.push_back(url);
+      holder_.push_back(url);
+    }
+    nodes_ = nodes;
+  }
+
+  ~EsUrlManager() {
+    for (std::list<EsUrl *>::iterator ite = holder_.begin();
+         ite != holder_.end(); ++ite) {
+      delete *ite;
+    }
+    pthread_mutex_destroy(&mutex_);
+  }
+
+  EsUrl *get();
+
+  bool release(EsUrl *url) {
+		bool rc;
+    pthread_mutex_lock(&mutex_);
+    --active_;
+    if (true || urls_.size() < capacity_) {
+      urls_.push_back(url);
+			rc = false;
+    } else {
+      holder_.remove(url);
+      delete url;
+			rc = true;
+    }
+    pthread_mutex_unlock(&mutex_);
+		return rc;
+  }
+
+  int overload() {
+    int ret;
+    pthread_mutex_lock(&mutex_);
+    ret = active_ > capacity_ ? active_ - capacity_ : 0 ;
+    pthread_mutex_unlock(&mutex_);
+    return ret;
+  }
+
+private:
+  pthread_mutex_t mutex_;
+
+  size_t active_;
+  size_t capacity_;
+  std::vector<std::string> nodes_;
+
+  std::vector<EsUrl *> urls_;
+  std::list<EsUrl *> holder_;
+};
+
+EsUrl *EsUrlManager::get()
+{
+  EsUrl *url;
+  pthread_mutex_lock(&mutex_);
+  ++active_;
+
+  if (urls_.empty()) {
+    url = new EsUrl(nodes_, random() % nodes_.size());
+    holder_.push_back(url);
+  } else {
+    url = urls_.back();
+    urls_.pop_back();
+  }
+
+  pthread_mutex_unlock(&mutex_);
+
+  return url;
+}
+
+#define ES_CREATE_INDEX_HEADER_TPL                    \
+  "POST /%s/_doc HTTP/1.1\r\n"                        \
+  "Host: %s\r\n"                                      \
+  "Accept: */*\r\n"                                   \
+  "Content-Type: application/json; charset=utf-8\r\n" \
+  "Content-Length: %d\r\n"                            \
+  "\r\n"
+
+void EsUrl::reinit(FileRecord *record, int move)
+{
+  if (move) {
+		int next = (idx_ + move) % nodes_.size();
+		log_error(0, "switch es node from %s to %s",
+							nodes_[idx_].c_str(), nodes_[next].c_str());
+		idx_ = next;
+		node_ = nodes_[idx_];
+
+		++timeoutRetry_;
+	} else {
+		timeoutRetry_ = 0;
+	}
+
+  body_ = record->data->c_str();
+  nbody_ = record->data->size();
+
+  nheader_ = snprintf(header_, MAX_HTTP_HEADER_LEN, ES_CREATE_INDEX_HEADER_TPL,
+                      record->esIndex->c_str(), node_.c_str(), nbody_);
+
+  url_ = "http://" + node_ + "/" + *(record->esIndex) + "/_doc";
+
+  log_debug(0, "POST %s DATA %s", url_.c_str(), body_);
+
+  offset_ = 0;
+
+  respWant_ = STATUS_LINE;
+  resp_ = header_;
+
+  wantLen_ = 0;
+  chunkLen_ = 0;
+
+  respCode_ = 0;
+  respBody_.clear();
+
+  record_ = record;
+}
+
+int EsUrl::initIOV(struct iovec *iov)
+{
+  if (offset_ < nheader_) {
+    iov[0].iov_base = header_ + offset_;
+    iov[0].iov_len = nheader_ - offset_;
+    iov[1].iov_base = (void *) body_;
+    iov[1].iov_len = nbody_;
+    return 2;
+  } else if (offset_ < nheader_ + nbody_) {
+    iov[0].iov_len = nheader_ + nbody_ - offset_;
+    iov[0].iov_base = (void *) (body_ + offset_ - nheader_);
+    return 1;
+  } else {
+    return 0;
+  }
+}
+
+bool EsUrl::doConnect(int pfd, char *errbuf)
+{
+  fd_ = socket(AF_INET, SOCK_STREAM, 0);
+  if (fd_ == -1) {
+    snprintf(errbuf, 1024, "socket() error: %s", strerror(errno));
+    return false;
+  }
+
+  int val = 1;
+  ioctl(fd_, FIONBIO, &val);
+
+  if (setsockopt(fd_, SOL_SOCKET, SO_KEEPALIVE, &val, sizeof(val)) == -1) {
+    snprintf(errbuf, 1024, "setsockopt(SOL_SOCKET, SO_KEEPALIVE) error: %s",
+						 strerror(errno));
+    return false;
+  }
+
+  if (setsockopt(fd_, IPPROTO_TCP, TCP_KEEPIDLE, &val, sizeof(val)) < 0) {
+    log_error(errno, "setsockopt(IPPROTO_TCP, TCP_KEEPIDLE) error");
+  }
+
+  if (setsockopt(fd_, IPPROTO_TCP, TCP_KEEPINTVL, &val, sizeof(val)) < 0) {
+    log_error(errno, "setsockopt(IPPROTO_TCP, TCP_KEEPINTVL) error");
+  }
+
+  val = 3;
+  if (setsockopt(fd_, IPPROTO_TCP, TCP_KEEPCNT, &val, sizeof(val)) < 0) {
+    log_error(errno, "setsockopt(IPPROTO_TCP, TCP_KEEPCNT) error");
+  }
+
+  struct addrinfo hints, *infos;
+
+  memset(&hints, 0, sizeof(hints));
+  hints.ai_family = AF_INET;
+  hints.ai_socktype = SOCK_STREAM;
+
+  std::string node, service;
+  size_t pos = node_.find(":");
+  if (pos != std::string::npos) {
+    node = node_.substr(0, pos);
+    service = node_.substr(pos+1);
+  } else {
+    node = node_;
+    service = "9200";
+  }
+
+  int rc = getaddrinfo(node.c_str(), service.c_str(), &hints, &infos);
+  if (rc != 0) {
+    snprintf(errbuf, 1024, "getaddrinfo %s error: %s", node_.c_str(), gai_strerror(rc));
+    return false;
+  }
+
+  for (struct addrinfo *p = infos; p != NULL; p = p->ai_next) {
+    if (connect(fd_, p->ai_addr, p->ai_addrlen) == -1) {
+      if (errno == EINPROGRESS) {
+        status_ = ESTABLISHING;
+        break;
+      }
+    }
+  }
+
+  if (status_ == ESTABLISHING) {
+    struct epoll_event event = {EPOLLIN | EPOLLOUT, this};
+    if (epoll_ctl(pfd, EPOLL_CTL_ADD, fd_, &event) != 0) {
+      snprintf(errbuf, 1024, "epoll_ctl_add(%d, EPOLLIN|EPOLLOUT) error: %s",
+							 fd_, strerror(errno));
+			status_ = UNINIT;
+    }
+  } else {
+		snprintf(errbuf, 1024, "connect %s error: %s", node_.c_str(), strerror(errno));
+  }
+
+  freeaddrinfo(infos);
+  return status_ == ESTABLISHING;
+}
+
+bool EsUrl::doRequest(int pfd, char *errbuf)
+{
+  struct iovec iov[2];
+  while (true) {
+    size_t niov = initIOV(iov);
+    if (niov == 0) {
+      offset_ = 0;
+      status_ = READING;
+			break;
+    }
+
+    ssize_t nn = writev(fd_, iov, niov);
+    if (nn == -1) {
+      if (errno == EAGAIN) {
+        status_ = WRITING;
+      } else {
+				snprintf(errbuf, 1024, "writev error: %s", strerror(errno));
+        return false;
+      }
+    } else {
+      offset_ += nn;
+    }
+  }
+
+  if (status_ == READING) {
+    struct epoll_event event = {EPOLLIN, this};
+    if (epoll_ctl(pfd, EPOLL_CTL_MOD, fd_, &event) != 0) {
+      snprintf(errbuf, 1024, "epoll_ctl_mod(%d, EPOLLIN) error: %s", fd_, strerror(errno));
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool EsUrl::doResponse(int /*pfd*/, char *errbuf)
+{
+  while (true) {
+    ssize_t nn = recv(fd_, header_ + offset_, MAX_HTTP_HEADER_LEN - offset_, 0);
+    if (nn == -1) {
+      if (errno == EAGAIN) {
+        if (initHttpResponse(header_ + offset_)) {
+          status_ = IDLE;
+        }
+				break;
+      } else {
+				snprintf(errbuf, 1024, "recv error: %s", strerror(errno));
+        return false;
+      }
+    } else {
+      offset_ += nn;
+    }
+  }
+
+  if (status_ == IDLE) {
+		record_->ctx->cnf()->stats()->logSendInc();
+
+    if (respCode_ != 201) {
+      log_fatal(0, "POST %s %s ret status %d body %s",
+                url_.c_str(), body_, respCode_, respBody_.c_str());
+      if (respCode_ != 400 && respCode_ != 429) {
+        record_->ctx->cnf()->stats()->logErrorInc();
+      }
+    }
+
+    if (record_->off != (off_t) -1 && record_->inode > 0) {
+      record_->ctx->getFileReader()->updateFileOffRecord(record_);
+    }
+
+    FileRecord::destroy(record_);
+  }
+
+	return status_ == IDLE;
+}
+
+void EsUrl::initHttpResponseStatusLine(const char *eof)
+{
+  int field = 0;
+  const char *start = resp_;
+
+  for (char *p = resp_; p+1 != eof && respWant_ == STATUS_LINE; ++p) {
+    if (*p == ' ') {
+      ++field;
+
+			if (field == 1) {
+				start = p + 1;
+			} else if (field == 2) {
+				*p = '\0';
+				respCode_ = util::toInt(start);
+			}
+		} else if (*p == '\r' && *(p+1) == '\n') {
+			respWant_ = HEADER;
+			resp_ = p + 2;
+		}
+	}
+}
+
+void EsUrl::initHttpResponseHeader(const char *eof)
+{
+  HttpRespWant want = HEADER_NAME;
+  const char *key = resp_, *value = 0;
+
+  for (char *p = resp_; p+1 != eof; ++p) {
+    if (want == HEADER_NAME) {
+      if (*p == ':') {
+        *p = '\0';
+        want = HEADER_VALUE;
+				value = p + 1;
+      } else if (*p == '\r' && *(p+1) == '\n') {
+        if (wantLen_ > 0) {
+          respWant_ = BODY;
+        } else {
+          respWant_ = BODY_CHUNK_LEN;
+        }
+        resp_ = p + 2;
+        break;
+      }
+    } else if (want == HEADER_VALUE) {
+      if (*p == '\r' && *(p+1) == '\n') {
+        if (strcasecmp(key, "content-length") == 0) {
+          *p = '\0';
+          wantLen_ = util::toInt(util::trim(value).c_str());
+        }
+        want = HEADER_NAME;
+        key = p+2;
+      }
+    }
+  }
+}
+
+void EsUrl::initHttpResponseBody(const char *eof)
+{
+  while (respWant_ != RESP_EOF) {
+    if (respWant_ == BODY_CHUNK_LEN) {
+      for (char *p = resp_; p+1 != eof; ++p) {
+        if (*p == '\r' && *(p+1) == '\n') {
+          *p = '\0';
+          util::hexToInt(resp_, &chunkLen_);
+          wantLen_ += chunkLen_;
+          resp_ = p + 2;
+          respWant_ = BODY_CHUNK_CONTENT;
+          break;
+        }
+      }
+    }
+
+    if (respWant_ == BODY_CHUNK_CONTENT) {
+      const char *p = resp_;
+      int left = wantLen_ - respBody_.size();
+      int min = eof - p >= left ? left : eof - p;
+      if (min) {
+        respBody_.append(p, min);
+        p += min;
+      }
+
+      if (p + 1 < eof && *p == '\r' && *(p + 1) == '\n') {
+        if (chunkLen_ == 0) {
+          respWant_ = RESP_EOF;
+        } else {
+          respWant_ = BODY_CHUNK_LEN;
+        }
+      } else {
+        resp_ = header_;
+        offset_ = eof - p;
+        memmove(resp_, p, offset_);
+      }
+    }
+  }
+}
+
+bool EsUrl::initHttpResponse(const char *eof)
+{
+  if (respWant_ == RESP_EOF) return true;
+
+  if (respWant_ == STATUS_LINE) initHttpResponseStatusLine(eof);
+  if (respWant_ == HEADER) initHttpResponseHeader(eof);
+
+  if (respWant_ == BODY) {
+    if (eof - resp_ > 0) respBody_.append(resp_, eof - resp_);
+    resp_ = header_;
+    offset_ = 0;
+		if (respBody_.size() == wantLen_) respWant_ = RESP_EOF;
+  } else if (respWant_ == BODY_CHUNK_LEN || respWant_ == BODY_CHUNK_CONTENT) {
+    initHttpResponseBody(eof);
+  }
+
+  return respWant_ == RESP_EOF;
+}
+
+void EsUrl::onError(const char *error)
+{
+  if (record_) {
+		log_fatal(0, "POST %s %s INTERNAL ERROR: %s", url_.c_str(), body_, error);
+
+    record_->ctx->cnf()->stats()->logErrorInc();
+    FileRecord::destroy(record_);
+  }
+  destroy();
+}
+
+void EsUrl::onTimeout(int pfd, time_t now)
+{
+  if (now - activeTime_ > 30) {
+    log_fatal(0, "POST %s %s timeout", url_.c_str(), body_);
+    destroy();
+
+		if (timeoutRetry_ == nodes_.size()) {
+			onError("exceed maximum timeout retries");
+		} else {
+			reinit(record_, 1);
+			onEvent(pfd);
+		}
+  }
+}
+
+void EsUrl::onEvent(int pfd)
+{
+  if (status_ == IDLE) {
+    destroy();
+    return;
+  }
+
+	char errbuf[1024];
+
+  bool rc = true;
+  if (status_ == WRITING) {
+    rc = doRequest(pfd, errbuf);
+  } else if (status_ == READING) {
+    rc = doResponse(pfd, errbuf);
+  } else if (status_ == UNINIT) {
+    rc = doConnect(pfd, errbuf);
+  } else if (status_ == ESTABLISHING) {
+    status_ = WRITING;
+    onEvent(pfd);
+  }
+
+  activeTime_ = time(0);
+  if (!rc) {
+    onError(errbuf);
+  }
+}
+
 #define MAX_EPOLL_EVENT 1024
-static pthread_mutex_t CURL_MANAGER_MUTEX = PTHREAD_MUTEX_INITIALIZER;
 
 static void *eventLoopRoutine(void *data)
 {
@@ -20,120 +482,14 @@ static void *eventLoopRoutine(void *data)
   return 0;
 }
 
-static int curlSocketCallback(CURL *curl, curl_socket_t fd, int what, void *data, void *)
+bool EsSender::init(CnfCtx *cnf, EsUrlManager *urlManager, char *errbuf)
 {
-  EsSender *sender = (EsSender *) data;
-  sender->socketCallback(curl, fd, what);
-  return 0;
-}
-
-struct EventCtx {
-  EventCtx() : record(0), pos(0), inEvent(false) {}
-
-  struct curl_slist *headers;
-  FileRecord *record;
-  size_t pos;
-  std::string output;
-
-  bool inEvent;
-  int fd;
-};
-
-bool CurlManager::newCurl(CURL **curl, struct curl_slist **list, char *errbuf)
-{
-  *curl = curl_easy_init();
-  if (!*curl) {
-    if (errbuf) snprintf(errbuf, MAX_ERR_LEN, "curl_easy_init error");
-    return false;
-  }
-
-  *list = 0;
-  *list = curl_slist_append(*list, "Content-Type: application/json; charset=utf-8");
-  *list = curl_slist_append(*list, "Expect: ");
-
-  return true;
-}
-
-bool CurlManager::init(size_t capacity, char errbuf[])
-{
-  capacity_ = capacity;
-  mutex_ = &CURL_MANAGER_MUTEX;
-
-  for (size_t i = 0; i < capacity_; ++i) {
-    CURL *curl;
-    struct curl_slist *list = 0;
-    if (!newCurl(&curl, &list, errbuf)) return false;
-
-    curls_.push_back(curl);
-    curlHeaders_.push_back(list);
-  }
-  return true;
-}
-
-void CurlManager::get(CURL **curl, struct curl_slist **header)
-{
-  pthread_mutex_lock(mutex_);
-  ++active_;
-  if (curls_.empty()) {
-    pthread_mutex_unlock(mutex_);
-
-    newCurl(curl, header);
-  } else {
-    *curl = curls_.back();
-    *header = curlHeaders_.back();
-    curls_.pop_back();
-    curlHeaders_.pop_back();
-
-    pthread_mutex_unlock(mutex_);
-  }
-}
-
-void CurlManager::release(CURL *curl, struct curl_slist *header)
-{
-  pthread_mutex_lock(mutex_);
-  --active_;
-  if (curls_.size() < capacity_) {
-    curls_.push_back(curl);
-    curlHeaders_.push_back(header);
-    pthread_mutex_unlock(mutex_);
-  } else {
-    pthread_mutex_unlock(mutex_);
-
-    curl_easy_cleanup(curl);
-    curl_slist_free_all(header);
-  }
-}
-
-CurlManager::~CurlManager()
-{
-  for (std::vector<CURL *>::iterator ite = curls_.begin(); ite != curls_.end(); ++ite) {
-    curl_easy_cleanup(*ite);
-  }
-  for (std::vector<curl_slist *>::iterator ite = curlHeaders_.begin();
-       ite != curlHeaders_.end(); ++ite) {
-    curl_slist_free_all(*ite);
-  }
-}
-
-bool EsSender::init(CnfCtx *cnf, CurlManager *curlManager, char *errbuf)
-{
-  splitn(cnf->getEsNodes(), -1, &nodes_, -1, ',');
   userpass_ = cnf->getEsUserPass();
 
   cnf_ = cnf;
-  curlManager_ = curlManager;
+  urlManager_ = urlManager;
 
-  multi_ = curl_multi_init();
-  if (!multi_) {
-    snprintf(errbuf, MAX_ERR_LEN, "curl_multi_init error");
-    return false;
-  }
-
-  curl_multi_setopt(multi_, CURLMOPT_SOCKETFUNCTION, curlSocketCallback);
-
-  curl_multi_setopt(multi_, CURLMOPT_SOCKETDATA, this);
-
-  epfd_ = epoll_create(1024);
+  epfd_ = epoll_create(MAX_EPOLL_EVENT);
   if (epfd_ == -1) {
     snprintf(errbuf, MAX_ERR_LEN, "epoll_create error: %d:%s", errno, strerror(errno));
     return false;
@@ -178,7 +534,6 @@ EsSender::~EsSender()
   if (pipeRead_ >= 0) close(pipeRead_);
   if (pipeWrite_ >= 0) close(pipeWrite_);
 
-  if (multi_) curl_multi_cleanup(multi_);
   if (events_) delete []events_;
 }
 
@@ -195,41 +550,7 @@ bool EsSender::produce(FileRecord *record)
   return true;
 }
 
-void EsSender::socketCallback(CURL *curl, curl_socket_t fd, int what)
-{
-  if (what == CURL_POLL_REMOVE) {
-    if (epoll_ctl(epfd_, EPOLL_CTL_DEL, fd, 0) != 0 && errno != EBADF) { // fd may be closed
-      log_fatal(errno, "epoll_ctl_del %d error", fd);
-    }
-  } else {
-    EventCtx *ctx;
-    curl_easy_getinfo(curl, CURLINFO_PRIVATE, &ctx);
-
-    uint32_t event = 0;
-    if (what & CURL_POLL_IN) event |= EPOLLIN;
-    if (what & CURL_POLL_OUT) event |= EPOLLOUT;
-
-    struct epoll_event ev = {event, curl};
-    if (ctx->inEvent) {
-      if (epoll_ctl(epfd_, EPOLL_CTL_MOD, fd, &ev) != 0) {
-        log_fatal(errno, "epoll_ctl_mod %d error", fd);
-      }
-    } else {
-      ctx->fd = fd;
-      ctx->inEvent = true;
-      if (epoll_ctl(epfd_, EPOLL_CTL_ADD, fd, &ev) != 0) {
-        log_fatal(errno, "epoll_ctl_add %d error", fd);
-      }
-
-      CURLMcode rc = curl_multi_assign(multi_, fd, 0);
-      if (rc != CURLM_OK) {
-        log_fatal(0, "epoll_multi_assign error: %s", curl_multi_strerror(rc));
-      }
-    }
-  }
-}
-
-void EsSender::consume()
+void EsSender::consume(int pfd)
 {
   uintptr_t ptr;
   ssize_t nn = read(pipeRead_, &ptr, sizeof(FileRecord *));
@@ -239,147 +560,43 @@ void EsSender::consume()
   }
 
   assert(nn == sizeof(FileRecord*));
-  addToMulti((FileRecord *)ptr);
-}
 
+  EsUrl *url = urlManager_->get();
+	if (!url->keepalive()) urls_.push_back(url);
 
-static size_t curlPutData(void *ptr, size_t size, size_t nmemb, void *data)
-{
-  EventCtx *ctx = (EventCtx *) data;
-  size_t min = std::min(size * nmemb, ctx->record->data->size() - ctx->pos);
-  memcpy(ptr, ctx->record->data->c_str() + ctx->pos, min);
-  ctx->pos += min;
-  return min;
-}
-
-static size_t curlRetData(void *ptr, size_t size, size_t nmemb, void *data)
-{
-  EventCtx *ctx = (EventCtx *) data;
-  ctx->output.append((char *) ptr, size * nmemb);
-  return size * nmemb;
-}
-
-void EsSender::addToMulti(FileRecord *record)
-{
-  CURL *curl;
-  struct curl_slist *headers;
-  curlManager_->get(&curl, &headers);
-  assert(curl);
-
-  std::string node = nodes_[random() % nodes_.size()];
-  std::string url = "http://" + node + "/" + *record->esIndex + "/_doc";
-
-  log_debug(0, "POST %s DATA %s", url.c_str(), record->data->c_str());
-
-  EventCtx *ctx = new EventCtx;
-  ctx->headers = headers;
-  ctx->record = record;
-
-  curl_easy_reset(curl);
-  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-  if (!userpass_.empty()) {
-    curl_easy_setopt(curl, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
-    curl_easy_setopt(curl, CURLOPT_USERPWD, userpass_.c_str());
-  }
-#ifdef CURLOPT_TCP_KEEPALIVE
-  curl_easy_setopt(curl_, CURLOPT_TCP_KEEPALIVE, 1L);
-#endif
-  curl_easy_setopt(curl, CURLOPT_POST, 1L);
-  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-  curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (curl_off_t) record->data->size());
-  curl_easy_setopt(curl, CURLOPT_READFUNCTION, curlPutData);
-  curl_easy_setopt(curl, CURLOPT_READDATA, ctx);
-  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlRetData);
-  curl_easy_setopt(curl, CURLOPT_WRITEDATA, ctx);
-  curl_easy_setopt(curl, CURLOPT_PRIVATE, ctx);
-
-  CURLMcode rc = curl_multi_add_handle(multi_, curl);
-  if (rc != CURLM_OK) {
-    log_fatal(0, "curl_multi_add_handle error: %s", curl_multi_strerror(rc));
-  }
-}
-
-void EsSender::checkMultiInfo()
-{
-  int alive;
-  CURLMsg *msg;
-
-  while ((msg = curl_multi_info_read(multi_, &alive))) {
-    if (msg->msg == CURLMSG_DONE) {
-      CURL *handler = msg->easy_handle;
-      cnf_->stats()->logSendInc();
-
-      EventCtx *ctx;
-      curl_easy_getinfo(handler, CURLINFO_PRIVATE, &ctx);
-
-      long code = -1;
-      curl_easy_getinfo(handler, CURLINFO_RESPONSE_CODE, &code);
-      if (code != 201) {
-        char *url;
-        curl_easy_getinfo(handler, CURLINFO_EFFECTIVE_URL, &url);
-        log_fatal(0, "alive %d POST %s %s ret status %ld body %s", alive, url,
-                  ctx->record->data->c_str(), code, ctx->output.c_str());
-        if (code != 400 && code != 429) cnf_->stats()->logErrorInc();
-      }
-
-      if (ctx->record->off != (off_t) -1 && ctx->record->inode > 0) {
-        ctx->record->ctx->getFileReader()->updateFileOffRecord(ctx->record);
-      }
-      FileRecord::destroy(ctx->record);
-
-      curl_multi_remove_handle(multi_, handler);
-      curlManager_->release(handler, ctx->headers);
-      delete ctx;
-    }
-  }
-}
-
-void EsSender::eventCallback(CURL *curl, uint32_t event)
-{
-  int what = (event & EPOLLIN ? CURL_POLL_IN : 0) |
-    (event & EPOLLOUT ? CURL_POLL_OUT : 0);
-
-  CURLMcode rc;
-  int alive;
-
-  EventCtx *ctx;
-  curl_easy_getinfo(curl, CURLINFO_PRIVATE, &ctx);
-  rc = curl_multi_socket_action(multi_, ctx->fd, what, &alive);
-
-  if (rc != CURLM_OK) {
-    log_fatal(0, "curl_multi_socket_action error: %s", curl_multi_strerror(rc));
-  }
-
-  checkMultiInfo();
-}
-
-void EsSender::timerCallback()
-{
-  CURLMcode rc;
-  int alive;
-
-  rc = curl_multi_socket_action(multi_, CURL_SOCKET_TIMEOUT, 0, &alive);
-  if (rc != CURLM_OK) {
-    log_fatal(0, "curl_multi_socket_action error: %s", curl_multi_strerror(rc));
-  }
-
-  checkMultiInfo();
+  url->reinit((FileRecord *)ptr);
+  url->onEvent(pfd);
 }
 
 void EsSender::eventLoop()
 {
   while (running_) {
-    int nfd = epoll_wait(epfd_, events_, MAX_EPOLL_EVENT, 100);
+    time_t now = time(0);
+    int nfd = epoll_wait(epfd_, events_, MAX_EPOLL_EVENT, 1000);
     if (nfd > 0) {
       for (int i = 0; i < nfd; ++i) {
         if (events_[i].data.ptr == &pipeRead_) {
-          consume();
+          consume(epfd_);
         } else {
-          eventCallback((CURL *) events_[i].data.ptr, events_[i].events);
+          EsUrl *url = (EsUrl *) events_[i].data.ptr;
+          url->onEvent(epfd_);
+
+					if (url->idle() && (urlManager_->release(url) || !url->keepalive())) {
+						urls_.remove(url);
+					}
         }
       }
     } else if (nfd == 0) {
-      timerCallback();
+      for (std::list<EsUrl*>::iterator ite = urls_.begin(); ite != urls_.end();) {
+				EsUrl *url = *ite;
+        url->onTimeout(epfd_, now);
+
+				if (url->idle() && (urlManager_->release(url) || !url->keepalive())) {
+					urls_.erase(ite++);
+				} else {
+					++ite;
+				}
+      }
     } else {
       if (errno == EINTR) {
         log_fatal(errno, "epoll_wait error");
@@ -392,22 +609,24 @@ void EsSender::eventLoop()
   }
 }
 
-bool EsCtx::init(CnfCtx *cnf, char *errbuf)
+bool EsCtx::init(CnfCtx *cnf)
 {
   cnf_ = cnf;
-  if (!curlManager_.init(cnf->getEsMaxConns(), errbuf)) return false;
+  urlManager_ = new EsUrlManager(cnf->getEsNodes(), cnf->getEsMaxConns());
+
+	size_t nthread = cnf->getEsMaxConns() / 500;
+	if (nthread == 0) nthread = 1;
 
   lastSenderIndex_ = 0;
-  for (size_t i = 0; i < cnf->getEsMaxConns() / 300; ++i) {
+  for (size_t i = 0; i < nthread; ++i) {
     EsSender *sender = new EsSender;
-    if (!sender->init(cnf, &curlManager_, cnf->errbuf())) {
+    if (!sender->init(cnf, urlManager_, cnf->errbuf())) {
       delete sender;
       return false;
     }
     esSenders_.push_back(sender);
   }
 
-  cnf_ = cnf;
   running_ = true;
   return true;
 }
@@ -415,16 +634,18 @@ bool EsCtx::init(CnfCtx *cnf, char *errbuf)
 EsCtx::~EsCtx()
 {
   running_ = false;
-  for (std::vector<EsSender *>::iterator ite = esSenders_.begin(); ite != esSenders_.end(); ++ite) {
+  for (std::vector<EsSender *>::iterator ite = esSenders_.begin();
+       ite != esSenders_.end(); ++ite) {
     delete *ite;
   }
+  delete urlManager_;
 }
 
 void EsCtx::flowControl()
 {
   int i = 0;
   int overload;
-  while ((overload = curlManager_.overload()) > 10) {
+  while ((overload = urlManager_->overload()) > 10) {
     if (i % 500 == 0) {
       log_info(0, "too much data for es #%d, wait %ds, set block, stop produce", overload, i / 100);
       cnf_->setKafkaBlock(true);
@@ -460,5 +681,3 @@ bool EsCtx::produce(std::vector<FileRecord *> *records)
   }
   return true;
 }
-
-#endif

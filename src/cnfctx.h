@@ -85,9 +85,7 @@ public:
   bool enableEs() const { return !esNodes_.empty(); }
 
   bool initEs();
-#ifdef ENABLE_TAIL2ES
   EsCtx *getEs() { return es_; }
-#endif
 
   bool initFileOff();
   FileOff *getFileOff() { return fileOff_; }
@@ -104,7 +102,7 @@ public:
   const std::map<std::string, std::string> &getKafkaGlobalConf() const { return kafkaGlobal_; }
   const std::map<std::string, std::string> &getKafkaTopicConf() const { return kafkaTopic_; }
 
-  const char *getEsNodes() const { return esNodes_.c_str(); }
+  std::vector<std::string> getEsNodes() const { return esNodes_; }
   size_t getEsMaxConns() const { return esMaxConns_; }
   const std::string getEsUserPass() const { return esUserPass_; }
 
@@ -169,12 +167,10 @@ private:
   std::map<std::string, std::string>  kafkaTopic_;
   KafkaCtx                           *kafka_;
 
-  std::string  esNodes_;
+  std::vector<std::string> esNodes_;
   std::string  esUserPass_;
   int          esMaxConns_;
-#ifdef ENABLE_TAIL2ES
   EsCtx       *es_;
-#endif
 
   struct timeval timeval_;
   char        *errbuf_;

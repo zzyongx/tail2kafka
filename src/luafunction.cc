@@ -232,15 +232,21 @@ int LuaFunction::esPlain(off_t off, const char *line, size_t nline, std::vector<
     if (esDocDataFormat == ESDOC_DATAFORMAT_NGINX_LOG) {
       doc = new std::string;
       transformEsDocNginxLog(v[esDocPos-1], doc);
+			if (doc->compare("-") == 0) doc->clear();
     } else if (esDocDataFormat == ESDOC_DATAFORMAT_NGINX_JSON) {
       doc = new std::string;
       transformEsDocNginxJson(v[esDocPos-1], doc);
+			if (doc->compare("-") == 0) doc->clear();
     } else {
       doc = new std::string(v[esDocPos-1]);
     }
   }
 
-  records->push_back(FileRecord::create(0, off, index, doc));
+	if (doc->empty()) {
+		delete doc;
+	} else {
+		records->push_back(FileRecord::create(0, off, index, doc));
+	}
   return 0;
 }
 

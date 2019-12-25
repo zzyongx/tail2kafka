@@ -1,10 +1,10 @@
 Name:      tail2kafka
-Version:   2.1.2
+Version:   2.2.0
 Release:   1
 Summary:   stream file data to kafka/stream kafka data to file
 Group:     tail2kafka
 License:   Apache2
-Source0:   tail2kafka-2.1.2.tar.gz
+Source0:   tail2kafka-2.2.0.tar.gz
 BuildRoot: /var/tmp/tail2kafka
 BuildRequires: libcurl-devel >= 7.19.7
 BuildRequires: openssl-devel >= 1.0.1e-30

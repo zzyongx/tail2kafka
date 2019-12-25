@@ -23,7 +23,7 @@ std::string join(Iterator begin, Iterator end, char sp)
   return s;
 }
 
-inline bool hexToInt(const char *ptr, int *val)
+inline bool hexToInt(const char *ptr, size_t *val)
 {
   *val = 0;
   for (int i = 0; i < 2; ++i) {

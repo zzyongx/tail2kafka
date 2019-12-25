@@ -4,8 +4,8 @@ using namespace util;
 
 TaskQueue::Task::~Task() {}
 
-TaskQueue::TaskQueue(const std::string &name)
-  : name_(name), quit_(true)
+TaskQueue::TaskQueue(const std::string &nam)
+  : name_(nam), quit_(true)
 {
   pthread_mutex_init(&mutex_, 0);
   pthread_cond_init(&cond_, 0);

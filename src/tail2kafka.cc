@@ -154,9 +154,7 @@ void *routine(void *data)
   CnfCtx *cnf = (CnfCtx *) data;
 
   KafkaCtx *kafka = cnf->getKafka();
-#ifdef ENABLE_TAIL2ES
   EsCtx *es = cnf->getEs();
-#endif
 
   RunStatus *runStatus = cnf->getRunStatus();
 
@@ -177,11 +175,9 @@ void *routine(void *data)
       log_fatal(0, "rd_kafka_poll timeout, librdkafka may have bug or kafka service is unavailable, exit");
       runStatus->set(RunStatus::STOP);
       kafka->poll(10);  // poll kafka
-#ifdef ENABLE_TAIL2ES
     } else if (es && !es->produce((std::vector<FileRecord*>*) ptr)) {
       log_fatal(0, "es_poll timeout, es service may unavailable, exit");
       runStatus->set(RunStatus::STOP);
-#endif
     }
     delete (std::vector<FileRecord*>*)ptr;
   }

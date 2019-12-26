@@ -20,8 +20,6 @@ enum HttpRespWant {
   BODY, BODY_CHUNK_LEN, BODY_CHUNK_CONTENT, RESP_EOF,
 };
 
-class EsUrlManager;
-
 class EsUrl {
   template<class T> friend class UNITTEST_HELPER;
 public:
@@ -89,22 +87,87 @@ private:
   std::string respBody_;
 };
 
+class EsUrlManager {
+public:
+  EsUrlManager(const std::vector<std::string> &nodes, int capacity)
+    : active_(0), capacity_(capacity), nodes_(nodes) {
+
+    for (size_t i = 0; i < capacity_; ++i) {
+      EsUrl *url = new EsUrl(nodes, i % nodes.size());
+      urls_.push_back(url);
+      holder_.push_back(url);
+    }
+    nodes_ = nodes;
+  }
+
+  ~EsUrlManager() {
+    for (std::list<EsUrl *>::iterator ite = holder_.begin();
+         ite != holder_.end(); ++ite) {
+      delete *ite;
+    }
+  }
+
+  EsUrl *get() {
+    ++active_;
+
+    EsUrl *url;
+    if (urls_.empty()) {
+      url = new EsUrl(nodes_, random() % nodes_.size());
+      holder_.push_back(url);
+    } else {
+      url = urls_.back();
+      urls_.pop_back();
+    }
+    return url;
+  }
+
+  bool release(EsUrl *url) {
+    --active_;
+    if (true || urls_.size() < capacity_) {
+      urls_.push_back(url);
+      return true;
+    } else {
+      holder_.remove(url);
+      delete url;
+      return false;
+    }
+  }
+
+  int load() const {
+    return active_;
+  }
+
+private:
+  size_t active_;
+  size_t capacity_;
+  std::vector<std::string> nodes_;
+
+  std::vector<EsUrl *> urls_;
+  std::list<EsUrl *> holder_;
+};
+
 class EsSender {
   template<class T> friend class UNITTEST_HELPER;
 public:
-  EsSender() : epfd_(-1), pipeRead_(-1), pipeWrite_(-1), events_(0), running_(false) {}
+  EsSender()
+    : epfd_(-1), pipeRead_(-1), pipeWrite_(-1), events_(0),
+      urlManager_(0), running_(false) {}
+
   ~EsSender();
 
-  bool init(CnfCtx *cnf, EsUrlManager *urlManager, char *errbuf);
+  bool init(CnfCtx *cnf, size_t capacity);
   void eventLoop();
   bool produce(FileRecord *record);
+
+  bool load() const {
+    return urlManager_->load();
+  }
 
 private:
   void consume(int pfd);
 
 private:
   CnfCtx *cnf_;
-  EsUrlManager *urlManager_;
 
   std::vector<std::string> nodes_;
   std::string userpass_;
@@ -117,6 +180,8 @@ private:
   struct epoll_event *events_;
   std::list<EsUrl*> urls_;
 
+  EsUrlManager *urlManager_;
+
   volatile bool running_;
   pthread_t tid_;
 };
@@ -124,8 +189,6 @@ private:
 class EsCtx {
   template<class T> friend class UNITTEST_HELPER;
 public:
-  EsCtx() : urlManager_(0) {}
-
   ~EsCtx();
   bool init(CnfCtx *cnf);
   bool produce(std::vector<FileRecord *> *datas);
@@ -135,7 +198,6 @@ private:
 
 private:
   CnfCtx *cnf_;
-  EsUrlManager *urlManager_;
 
   size_t lastSenderIndex_;
   std::vector<EsSender *> esSenders_;

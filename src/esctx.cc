@@ -15,84 +15,6 @@
 #include "filereader.h"
 #include "esctx.h"
 
-class EsUrlManager {
-public:
-  EsUrlManager(const std::vector<std::string> &nodes, int capacity)
-    : active_(0), capacity_(capacity), nodes_(nodes) {
-    pthread_mutex_init(&mutex_, 0);
-
-    for (size_t i = 0; i < capacity_; ++i) {
-      EsUrl *url = new EsUrl(nodes, i % nodes.size());
-      urls_.push_back(url);
-      holder_.push_back(url);
-    }
-    nodes_ = nodes;
-  }
-
-  ~EsUrlManager() {
-    for (std::list<EsUrl *>::iterator ite = holder_.begin();
-         ite != holder_.end(); ++ite) {
-      delete *ite;
-    }
-    pthread_mutex_destroy(&mutex_);
-  }
-
-  EsUrl *get();
-
-  bool release(EsUrl *url) {
-    bool rc;
-    pthread_mutex_lock(&mutex_);
-    --active_;
-    if (true || urls_.size() < capacity_) {
-      urls_.push_back(url);
-      rc = false;
-    } else {
-      holder_.remove(url);
-      delete url;
-      rc = true;
-    }
-    pthread_mutex_unlock(&mutex_);
-    return rc;
-  }
-
-  int overload() {
-    int ret;
-    pthread_mutex_lock(&mutex_);
-    ret = active_ > capacity_ ? active_ - capacity_ : 0 ;
-    pthread_mutex_unlock(&mutex_);
-    return ret;
-  }
-
-private:
-  pthread_mutex_t mutex_;
-
-  size_t active_;
-  size_t capacity_;
-  std::vector<std::string> nodes_;
-
-  std::vector<EsUrl *> urls_;
-  std::list<EsUrl *> holder_;
-};
-
-EsUrl *EsUrlManager::get()
-{
-  EsUrl *url;
-  pthread_mutex_lock(&mutex_);
-  ++active_;
-
-  if (urls_.empty()) {
-    url = new EsUrl(nodes_, random() % nodes_.size());
-    holder_.push_back(url);
-  } else {
-    url = urls_.back();
-    urls_.pop_back();
-  }
-
-  pthread_mutex_unlock(&mutex_);
-
-  return url;
-}
-
 #define ES_CREATE_INDEX_HEADER_TPL                    \
   "POST /%s/_doc HTTP/1.1\r\n"                        \
   "Host: %s\r\n"                                      \
@@ -303,7 +225,7 @@ bool EsUrl::doRequest(int pfd, char *errbuf)
   }
 
   if (status_ == READING) {
-    log_debug(0, "%p epoll_ctl_mod(#%d, EPOLLIN)", this, fd_);
+    log_debug(0, "wait response %p epoll_ctl_mod(#%d, EPOLLIN)", this, fd_);
 
     struct epoll_event event = {EPOLLIN, this};
     if (epoll_ctl(pfd, EPOLL_CTL_MOD, fd_, &event) != 0) {
@@ -507,6 +429,7 @@ void EsUrl::onEvent(int pfd)
     return;
   }
 
+  assert(record_);
   char errbuf[1024] = "OK";
 
   bool rc = true;
@@ -540,22 +463,23 @@ static void *eventLoopRoutine(void *data)
   return 0;
 }
 
-bool EsSender::init(CnfCtx *cnf, EsUrlManager *urlManager, char *errbuf)
+bool EsSender::init(CnfCtx *cnf, size_t capacity)
 {
-  userpass_ = cnf->getEsUserPass();
-
   cnf_ = cnf;
-  urlManager_ = urlManager;
+
+  userpass_ = cnf->getEsUserPass();
+  urlManager_ = new EsUrlManager(cnf->getEsNodes(), capacity);
 
   epfd_ = epoll_create(MAX_EPOLL_EVENT);
   if (epfd_ == -1) {
-    snprintf(errbuf, MAX_ERR_LEN, "epoll_create error: %d:%s", errno, strerror(errno));
+    snprintf(cnf->errbuf(), MAX_ERR_LEN, "epoll_create error: %d:%s",
+             errno, strerror(errno));
     return false;
   }
 
   int pipeFd[2];
   if (pipe(pipeFd) == -1) {
-    snprintf(errbuf, MAX_ERR_LEN, "pipe error: %d:%s", errno, strerror(errno));
+    snprintf(cnf->errbuf(), MAX_ERR_LEN, "pipe error: %d:%s", errno, strerror(errno));
     return false;
   }
 
@@ -567,7 +491,7 @@ bool EsSender::init(CnfCtx *cnf, EsUrlManager *urlManager, char *errbuf)
 
   struct epoll_event ev = {EPOLLIN, &pipeRead_};
   if (epoll_ctl(epfd_, EPOLL_CTL_ADD, pipeRead_, &ev) == -1) {
-    snprintf(errbuf, MAX_ERR_LEN, "epoll_ctl pipe read error: %d:%s",
+    snprintf(cnf->errbuf(), MAX_ERR_LEN, "epoll_ctl pipe read error: %d:%s",
              errno, strerror(errno));
     return false;
   }
@@ -575,7 +499,8 @@ bool EsSender::init(CnfCtx *cnf, EsUrlManager *urlManager, char *errbuf)
   events_ = new struct epoll_event[1024];
   int rc = pthread_create(&tid_, 0, eventLoopRoutine, this);
   if (rc != 0) {
-    snprintf(errbuf, MAX_ERR_LEN, "pthread_create error: %d:%s", rc, strerror(rc));
+    snprintf(cnf->errbuf(), MAX_ERR_LEN, "pthread_create error: %d:%s",
+             rc, strerror(rc));
     return false;
   }
   running_ = true;
@@ -592,6 +517,7 @@ EsSender::~EsSender()
   if (epfd_ >= 0) close(epfd_);
   if (pipeRead_ >= 0) close(pipeRead_);
   if (pipeWrite_ >= 0) close(pipeWrite_);
+  if (urlManager_) delete urlManager_;
 
   if (events_) delete []events_;
 }
@@ -675,15 +601,16 @@ void EsSender::eventLoop()
 bool EsCtx::init(CnfCtx *cnf)
 {
   cnf_ = cnf;
-  urlManager_ = new EsUrlManager(cnf->getEsNodes(), cnf->getEsMaxConns());
 
-  size_t nthread = cnf->getEsMaxConns() / 500;
+  size_t maxc = cnf->getEsMaxConns();
+
+  size_t nthread = (maxc % 500 == 0) ? maxc / 500 : maxc / 500 + 1;
   if (nthread == 0) nthread = 1;
 
   lastSenderIndex_ = 0;
   for (size_t i = 0; i < nthread; ++i) {
     EsSender *sender = new EsSender;
-    if (!sender->init(cnf, urlManager_, cnf->errbuf())) {
+    if (!sender->init(cnf, maxc/nthread)) {
       delete sender;
       return false;
     }
@@ -701,21 +628,34 @@ EsCtx::~EsCtx()
        ite != esSenders_.end(); ++ite) {
     delete *ite;
   }
-  delete urlManager_;
 }
 
 void EsCtx::flowControl()
 {
   int i = 0;
-  int overload;
-  while ((overload = urlManager_->overload()) > 10) {
-    if (i % 500 == 0) {
-      log_info(0, "too much data for es #%d, wait %ds, set block, stop produce", overload, i / 100);
-      cnf_->setKafkaBlock(true);
+  int overload = 0;
+  while (true) {
+    int load = 0;
+    for (std::vector<EsSender *>::iterator ite = esSenders_.begin();
+       ite != esSenders_.end(); ++ite) {
+      load += (*ite)->load();
     }
+
+    overload = load - cnf_->getEsMaxConns();
+    if (overload > 10) {
+      if (i % 500 == 0) {
+        log_info(0, "too much data for es #%d, wait %ds, set block, stop produce",
+                 overload, i / 100);
+        cnf_->setKafkaBlock(true);
+      }
+    } else {
+      break;
+    }
+
     i++;
     sys::millisleep(10);
   }
+
   if (i > 0) {
     log_info(0, "es #%d, restart produce", overload);
     cnf_->setKafkaBlock(false);

@@ -97,6 +97,7 @@ EsUrl *EsUrlManager::get()
   "POST /%s/_doc HTTP/1.1\r\n"                        \
   "Host: %s\r\n"                                      \
   "Accept: */*\r\n"                                   \
+  "Connection: keep-alive\r\n"                        \
   "Content-Type: application/json; charset=utf-8\r\n" \
   "Content-Length: %d\r\n"                            \
   "\r\n"
@@ -139,6 +140,11 @@ void EsUrl::reinit(FileRecord *record, int move)
   respBody_.clear();
 
   record_ = record;
+
+  if (status_ == IDLE) {
+    log_debug(0, "%p reuse connect %s #%d", this, node_.c_str(), fd_);
+    status_ = WRITING;
+  }
 }
 
 void EsUrl::destroy(int pfd)
@@ -334,8 +340,8 @@ bool EsUrl::doResponse(int /*pfd*/, char *errbuf)
     record_->ctx->cnf()->stats()->logSendInc();
 
     if (respCode_ != 201) {
-      log_fatal(0, "POST %s %s ret status %d body %s",
-                url_.c_str(), body_, respCode_, respBody_.c_str());
+      log_fatal(0, "INDEX ret status %d body %s, POST %s %s ",
+                respCode_, respBody_.c_str(), url_.c_str(), body_);
       if (respCode_ != 400 && respCode_ != 429) {
         record_->ctx->cnf()->stats()->logErrorInc();
       }

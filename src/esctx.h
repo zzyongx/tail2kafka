@@ -5,7 +5,6 @@
 #include <vector>
 #include <list>
 #include <pthread.h>
-#include <sys/epoll.h>
 
 #include "filerecord.h"
 class CnfCtx;
@@ -38,7 +37,7 @@ public:
   void reinit(FileRecord *record, int move = 0);
   void onEvent(int pfd);
   void onTimeout(int pfd, time_t now);
-  void onError(const char *error);
+  void onError(int pfd, const char *error);
 
   bool idle() const {
     return status_ == UNINIT || status_ == IDLE;
@@ -57,14 +56,11 @@ private:
   int initIOV(struct iovec *iov);
 
   bool doConnect(int pfd, char *errbuf);
+  bool doConnectFinish(int pfd, char *errbuf);
   bool doRequest(int pfd, char *errbuf);
   bool doResponse(int pfd, char *errbuf);
 
-  void destroy() {
-    close(fd_);
-    fd_ = 1;
-    status_ = UNINIT;
-  }
+  void destroy(int pfd);
 
 private:
   EventStatus status_;

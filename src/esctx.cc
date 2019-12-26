@@ -1,5 +1,6 @@
 #include <cstring>
 #include <errno.h>
+#include <sys/epoll.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -102,6 +103,8 @@ EsUrl *EsUrlManager::get()
 
 void EsUrl::reinit(FileRecord *record, int move)
 {
+  assert(record);
+
   if (move) {
     int next = (idx_ + move) % nodes_.size();
     log_error(0, "switch es node from %s to %s",
@@ -136,6 +139,16 @@ void EsUrl::reinit(FileRecord *record, int move)
   respBody_.clear();
 
   record_ = record;
+}
+
+void EsUrl::destroy(int pfd)
+{
+  log_debug(0, "%p disconnect %s #%d", this, node_.c_str(), fd_);
+  epoll_ctl(pfd, EPOLL_CTL_DEL, fd_, 0);
+
+  close(fd_);
+  fd_ = -1;
+  status_ = UNINIT;
 }
 
 int EsUrl::initIOV(struct iovec *iov)
@@ -208,19 +221,35 @@ bool EsUrl::doConnect(int pfd, char *errbuf)
   }
 
   for (struct addrinfo *p = infos; p != NULL; p = p->ai_next) {
-    if (connect(fd_, p->ai_addr, p->ai_addrlen) == -1) {
+    rc = connect(fd_, p->ai_addr, p->ai_addrlen);
+    if (rc == -1) {
       if (errno == EINPROGRESS) {
         status_ = ESTABLISHING;
         break;
       }
+    } else if (rc == 0) {
+      status_ = READING;
+      break;
     }
   }
 
-  if (status_ == ESTABLISHING) {
-    struct epoll_event event = {EPOLLIN | EPOLLOUT, this};
+  if (status_ == ESTABLISHING || status_ == READING) {
+    log_debug(0, "%p connect %s #%d", this, node_.c_str(), fd_);
+
+    uint32_t e;
+    const char *estr;
+    if (status_ == READING) {
+      e = EPOLLOUT;
+      estr = "EPOLLOUT";
+    } else {
+      e = EPOLLIN | EPOLLOUT;
+      estr = "EPOLLIN|EPOLLOUT";
+    }
+
+    struct epoll_event event = {e, this};
     if (epoll_ctl(pfd, EPOLL_CTL_ADD, fd_, &event) != 0) {
-      snprintf(errbuf, 1024, "epoll_ctl_add(%d, EPOLLIN|EPOLLOUT) error: %s",
-               fd_, strerror(errno));
+      snprintf(errbuf, 1024, "epoll_ctl_add(%d, %s) error: %s",
+               fd_, estr, strerror(errno));
       status_ = UNINIT;
     }
   } else {
@@ -228,7 +257,19 @@ bool EsUrl::doConnect(int pfd, char *errbuf)
   }
 
   freeaddrinfo(infos);
-  return status_ == ESTABLISHING;
+  return status_ == ESTABLISHING || status_ == READING;
+}
+
+bool EsUrl::doConnectFinish(int /*pfd*/, char *errbuf)
+{
+  int err = 0;
+  socklen_t errlen = sizeof(err);
+  if (getsockopt(fd_, SOL_SOCKET, SO_ERROR, &err, &errlen) != 0) {
+    err = errno;
+  }
+
+  if (err) snprintf(errbuf, 1024, "connect %s error: %s", node_.c_str(), strerror(err));
+  return !err;
 }
 
 bool EsUrl::doRequest(int pfd, char *errbuf)
@@ -256,9 +297,12 @@ bool EsUrl::doRequest(int pfd, char *errbuf)
   }
 
   if (status_ == READING) {
+    log_debug(0, "%p epoll_ctl_mod(#%d, EPOLLIN)", this, fd_);
+
     struct epoll_event event = {EPOLLIN, this};
     if (epoll_ctl(pfd, EPOLL_CTL_MOD, fd_, &event) != 0) {
-      snprintf(errbuf, 1024, "epoll_ctl_mod(%d, EPOLLIN) error: %s", fd_, strerror(errno));
+      snprintf(errbuf, 1024, "epoll_ctl_mod(#%d, EPOLLIN) error: %s",
+               fd_, strerror(errno));
       return false;
     }
   }
@@ -286,6 +330,7 @@ bool EsUrl::doResponse(int /*pfd*/, char *errbuf)
   }
 
   if (status_ == IDLE) {
+    assert(record_);
     record_->ctx->cnf()->stats()->logSendInc();
 
     if (respCode_ != 201) {
@@ -301,9 +346,10 @@ bool EsUrl::doResponse(int /*pfd*/, char *errbuf)
     }
 
     FileRecord::destroy(record_);
+    record_ = 0;
   }
 
-  return status_ == IDLE;
+  return true;
 }
 
 void EsUrl::initHttpResponseStatusLine(const char *eof)
@@ -420,25 +466,27 @@ bool EsUrl::initHttpResponse(const char *eof)
   return respWant_ == RESP_EOF;
 }
 
-void EsUrl::onError(const char *error)
+void EsUrl::onError(int pfd, const char *error)
 {
   if (record_) {
-    log_fatal(0, "POST %s %s INTERNAL ERROR: %s", url_.c_str(), body_, error);
+    log_fatal(0, "%p #%d POST %s %s INTERNAL ERROR: %s",
+              this, fd_, url_.c_str(), body_, error);
 
     record_->ctx->cnf()->stats()->logErrorInc();
     FileRecord::destroy(record_);
+    record_ = 0;
   }
-  destroy();
+  destroy(pfd);
 }
 
 void EsUrl::onTimeout(int pfd, time_t now)
 {
   if (now - activeTime_ > 30) {
-    log_fatal(0, "POST %s %s timeout", url_.c_str(), body_);
-    destroy();
+    log_fatal(0, "%p #%d POST %s %s timeout", this, fd_, url_.c_str(), body_);
+    destroy(pfd);
 
     if (timeoutRetry_ == nodes_.size()) {
-      onError("exceed maximum timeout retries");
+      onError(pfd, "exceed maximum timeout retries");
     } else {
       reinit(record_, 1);
       onEvent(pfd);
@@ -449,11 +497,11 @@ void EsUrl::onTimeout(int pfd, time_t now)
 void EsUrl::onEvent(int pfd)
 {
   if (status_ == IDLE) {
-    destroy();
+    destroy(pfd);
     return;
   }
 
-  char errbuf[1024];
+  char errbuf[1024] = "OK";
 
   bool rc = true;
   if (status_ == WRITING) {
@@ -462,14 +510,18 @@ void EsUrl::onEvent(int pfd)
     rc = doResponse(pfd, errbuf);
   } else if (status_ == UNINIT) {
     rc = doConnect(pfd, errbuf);
+    if (rc && status_ == READING) onEvent(pfd);
   } else if (status_ == ESTABLISHING) {
-    status_ = WRITING;
-    onEvent(pfd);
+    rc = doConnectFinish(pfd, errbuf);
+    if (rc) {
+      status_ = WRITING;
+      onEvent(pfd);
+    }
   }
 
   activeTime_ = time(0);
   if (!rc) {
-    onError(errbuf);
+    onError(pfd, errbuf);
   }
 }
 
@@ -509,7 +561,8 @@ bool EsSender::init(CnfCtx *cnf, EsUrlManager *urlManager, char *errbuf)
 
   struct epoll_event ev = {EPOLLIN, &pipeRead_};
   if (epoll_ctl(epfd_, EPOLL_CTL_ADD, pipeRead_, &ev) == -1) {
-    snprintf(errbuf, MAX_ERR_LEN, "epoll_ctl pipe read error: %d:%s", errno, strerror(errno));
+    snprintf(errbuf, MAX_ERR_LEN, "epoll_ctl pipe read error: %d:%s",
+             errno, strerror(errno));
     return false;
   }
 
@@ -566,6 +619,10 @@ void EsSender::consume(int pfd)
 
   url->reinit((FileRecord *)ptr);
   url->onEvent(pfd);
+
+  if (url->idle() && (urlManager_->release(url) || !url->keepalive())) {
+    urls_.remove(url);
+  }
 }
 
 void EsSender::eventLoop()

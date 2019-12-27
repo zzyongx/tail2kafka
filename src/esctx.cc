@@ -252,6 +252,14 @@ bool EsUrl::doResponse(int /*pfd*/, char *errbuf)
         snprintf(errbuf, 1024, "recv error: %s", strerror(errno));
         return false;
       }
+    } else if (nn == 0) {
+      if (initHttpResponse(header_ + offset_)) {
+        status_ = IDLE;
+        break;
+      } else {
+        snprintf(errbuf, 1024, "recv error: connection reset");
+        return false;
+      }
     } else {
       offset_ += nn;
     }
@@ -409,6 +417,9 @@ void EsUrl::onError(int pfd, const char *error)
 
 void EsUrl::onTimeout(int pfd, time_t now)
 {
+  if (status_ == IDLE) return;
+  assert(status_ != UNINIT && record_);
+
   if (now - activeTime_ > 30) {
     log_fatal(0, "%p #%d POST %s %s timeout", this, fd_, url_.c_str(), body_);
     destroy(pfd);
@@ -451,6 +462,41 @@ void EsUrl::onEvent(int pfd)
   activeTime_ = time(0);
   if (!rc) {
     onError(pfd, errbuf);
+  }
+}
+
+EsUrl *EsUrlManager::get() {
+  util::atomic_inc(&active_);
+
+  EsUrl *url;
+  if (urls_.empty()) {
+    url = new EsUrl(nodes_, random() % nodes_.size());
+    holder_.push_back(url);
+
+    log_debug(0, "new get url %p, load %ld", url, active_);
+  } else {
+    url = urls_.back();
+    urls_.pop_back();
+
+    log_debug(0, "pool get url %p, load %ld", url, active_);
+  }
+  return url;
+}
+
+bool EsUrlManager::release(EsUrl *url) {
+  util::atomic_dec(&active_);
+
+  if (true || urls_.size() < capacity_ * 2) {
+    log_debug(0, "pool release url %p, load %ld", url, active_);
+
+    urls_.push_back(url);
+    return false;
+  } else {
+    log_debug(0, "destroy release url %p, load %ld", url, active_);
+
+    holder_.remove(url);
+    delete url;
+    return true;
   }
 }
 
@@ -638,8 +684,11 @@ void EsCtx::flowControl()
     int load = 0;
     for (std::vector<EsSender *>::iterator ite = esSenders_.begin();
        ite != esSenders_.end(); ++ite) {
+      log_debug(0, "XXX %ld", (*ite)->load());
       load += (*ite)->load();
     }
+
+    log_debug(0, "XXX %ld %ld", load, cnf_->getEsMaxConns());
 
     overload = load - cnf_->getEsMaxConns();
     if (overload > 10) {

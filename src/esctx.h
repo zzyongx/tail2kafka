@@ -6,6 +6,7 @@
 #include <list>
 #include <pthread.h>
 
+#include "gnuatomic.h"
 #include "filerecord.h"
 class CnfCtx;
 
@@ -107,34 +108,12 @@ public:
     }
   }
 
-  EsUrl *get() {
-    ++active_;
+  EsUrl *get();
+  bool release(EsUrl *url);
 
-    EsUrl *url;
-    if (urls_.empty()) {
-      url = new EsUrl(nodes_, random() % nodes_.size());
-      holder_.push_back(url);
-    } else {
-      url = urls_.back();
-      urls_.pop_back();
-    }
-    return url;
-  }
-
-  bool release(EsUrl *url) {
-    --active_;
-    if (true || urls_.size() < capacity_) {
-      urls_.push_back(url);
-      return true;
-    } else {
-      holder_.remove(url);
-      delete url;
-      return false;
-    }
-  }
-
-  int load() const {
-    return active_;
+  size_t load() const {
+    size_t *ptr = const_cast<size_t*>(&active_);
+    return util::atomic_get(ptr);
   }
 
 private:
@@ -159,7 +138,7 @@ public:
   void eventLoop();
   bool produce(FileRecord *record);
 
-  bool load() const {
+  size_t load() const {
     return urlManager_->load();
   }
 

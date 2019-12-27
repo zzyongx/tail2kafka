@@ -37,9 +37,6 @@ FileReader::FileReader(LuaCtx *ctx)
   size_ = dsize_ = 0;
   line_ = dline_ = 0;
 
-  qsize_ = 0;
-  lastQueueFullTime_ = ctx_->cnf()->fasttime(TIMEUNIT_MILLI);
-
   fileRotateTime_ = ctx->cnf()->fasttime();
   holdFd_ = -1;
 }
@@ -238,7 +235,7 @@ void FileReader::initFileOffRecord(FileOffRecord * fileOffRecord)
 // FileOffRecord should be called in only one thread, but it must not call thread unsafe function
 void FileReader::updateFileOffRecord(const FileRecord *record)
 {
-  util::atomic_dec(&qsize_);
+  ctx_->cnf()->stats()->queueSizeDec();
 
   if (record->inode != fileOffRecord_->inode) {
     // rename file does not change inode
@@ -340,14 +337,15 @@ void FileReader::checkHistoryRotate(const struct stat *stPtr)
     std::string oldFile = ctx_->datafile();
 
     if (tail2kafka(END, stPtr, buildFileEndRecord(time(0), size_, oldFile.c_str()))) {
-      log_info(0, "%d %s size=%lu sendsize=%lu lines=%lu sendlines=%lu md5=%s historyrotate %s", fd_, oldFile.c_str(),
-               size_, dsize_, line_, dline_, md5_.c_str(), oldFile.c_str());
+      log_info(0, "%d %s size=%lu sendsize=%lu lines=%lu sendlines=%lu md5=%s historyrotate %s",
+               fd_, oldFile.c_str(), size_, dsize_, line_, dline_, md5_.c_str(), oldFile.c_str());
       util::Metrics::pingback("ROTATE", "file=%s&size=%lu&md5=%s", oldFile.c_str(), size_, md5_.c_str());
 
       bits_set(flags_, FILE_OPENONLY);
       if (ctx_->removeHistoryFile()) bits_clear(flags_, FILE_HISTORY);
 
-      log_info(0, "history file %s finished, close fd %d try next %s", oldFile.c_str(), fd_, ctx_->datafile().c_str());
+      log_info(0, "history file %s finished, close fd %d try next %s",
+               oldFile.c_str(), fd_, ctx_->datafile().c_str());
       close(fd_);
       fd_ = -1;
     }
@@ -410,8 +408,8 @@ bool FileReader::checkRotate(const struct stat *stPtr, std::string *rotateFileNa
         rc = true;
       }
     } else {
-      log_info(0, "%d %s treat tail2kafka fail as success when file status is %s", fd_, ctx_->file().c_str(),
-               flagsToString(flags_).c_str());
+      log_info(0, "%d %s treat tail2kafka fail as success when file status is %s",
+               fd_, ctx_->file().c_str(), flagsToString(flags_).c_str());
       rc = true;
     }
   }
@@ -496,14 +494,7 @@ bool FileReader::setStartPositionEnd(off_t fileSize, char *errbuf)
 bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::string *rawData)
 {
   std::auto_ptr<std::string> rawDataPtr(rawData);
-
-  bool kafkaBlock = ctx_->cnf()->getKafkaBlock();
-  if (ctx_->cnf()->fasttime(TIMEUNIT_MILLI) - lastQueueFullTime_ > 1500) {  // suppress log
-    log_info(0, "%d %s queue size %d, kafka(es) status %s", fd_, ctx_->datafile().c_str(),
-             (int) qsize_, kafkaBlock ? "block" : "ok");
-    lastQueueFullTime_ = ctx_->cnf()->fasttime(TIMEUNIT_MILLI);
-  }
-  if (kafkaBlock) return false;
+  if (ctx_->cnf()->getKafkaBlock()) return false;
 
   struct stat stat;
   if (stPtr == 0) {
@@ -528,7 +519,9 @@ bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::st
   bool fileStart = (pos == START || size_ == 0);
 
   if (stPtr->st_size - off > MAX_TAIL_SIZE) { // limit tailsize
-    log_info(0, "%d %s limit tail, off %ld, size %ld", fd_, ctx_->datafile().c_str(), off, stPtr->st_size);
+    log_info(0, "%d %s limit tail, off %ld, size %ld",
+             fd_, ctx_->datafile().c_str(), off, stPtr->st_size);
+
     size_ = off + MAX_TAIL_SIZE;
     ctx_->cnf()->setTailLimit(true);
   } else {
@@ -738,7 +731,8 @@ bool FileReader::sendLines(ino_t inode, std::vector<FileRecord *> *records)
     }
 
     ctx_->cnf()->stats()->logWriteInc(size);
-    util::atomic_inc(&qsize_, size);
+    ctx_->cnf()->stats()->queueSizeInc(size);
+
     assert(nn != -1 && nn == sizeof(uintptr_t));
     return true;
   }

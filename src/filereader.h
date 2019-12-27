@@ -83,9 +83,6 @@ private:
   MD5_CTX md5Ctx_;
   std::string md5_;
 
-  size_t   qsize_;  // send queue size
-  int64_t  lastQueueFullTime_;
-
   char         *buffer_;
   size_t        npos_;
   LuaCtx       *ctx_;

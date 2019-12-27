@@ -2,6 +2,7 @@
 #define _INOTIFY_CTX_H_
 
 #include <map>
+#include "runstatus.h"
 
 class LuaCtx;
 class CnfCtx;
@@ -14,15 +15,19 @@ public:
 
   bool init();
   void loop();
+
+private:
+  LuaCtx *getLuaCtx(int wd) {
+    std::map<int, LuaCtx *>::iterator pos = fdToCtx_.find(wd);
+    return pos != fdToCtx_.end() ? pos->second : 0;
+  }
+
   bool tryReWatch();
   void tryRmWatch(LuaCtx *ctx, int wd);
   void tryRmWatch();
   void globalCheck();
 
-  LuaCtx *getLuaCtx(int wd) {
-    std::map<int, LuaCtx *>::iterator pos = fdToCtx_.find(wd);
-    return pos != fdToCtx_.end() ? pos->second : 0;
-  }
+  void flowControl(RunStatus *runStatus);
 
 private:
   CnfCtx *cnf_;

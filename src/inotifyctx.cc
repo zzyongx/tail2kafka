@@ -12,7 +12,6 @@
 
 #include "logger.h"
 #include "sys.h"
-#include "runstatus.h"
 #include "cnfctx.h"
 #include "luactx.h"
 #include "filereader.h"
@@ -50,7 +49,8 @@ bool InotifyCtx::init()
 
     int wd = inotify_add_watch(wfd_, file.c_str(), WATCH_EVENT);
     if (wd == -1) {
-      snprintf(cnf_->errbuf(), MAX_ERR_LEN, "%s add watch error %d:%s", file.c_str(), errno, strerror(errno));
+      snprintf(cnf_->errbuf(), MAX_ERR_LEN, "%s add watch error %d:%s",
+               file.c_str(), errno, strerror(errno));
       return false;
     }
     fdToCtx_.insert(std::make_pair(wd, ctx));
@@ -59,9 +59,36 @@ bool InotifyCtx::init()
   return true;
 }
 
+void InotifyCtx::flowControl(RunStatus *runStatus)
+{
+  int i = 0;
+  while (runStatus->get() == RunStatus::WAIT) {
+    bool kafkaBlock = cnf_->getKafkaBlock();
+    size_t qsize = cnf_->stats()->queueSize();
+
+    if (qsize > 1000) {
+      kafkaBlock = true;
+      cnf_->setKafkaBlock(true);
+    }
+
+    if (kafkaBlock || i == 0) {
+      if (i % 500 == 0) {
+        log_info(0, "queue size %ld, kafka(es) status %s",
+                 qsize, kafkaBlock ? "block" : "ok");
+      }
+    } else {
+      break;
+    }
+
+    ++i;
+    sys::millisleep(10);
+  }
+}
+
 bool InotifyCtx::tryReWatch()
 {
-  for (std::vector<LuaCtx *>::iterator ite = cnf_->getLuaCtxs().begin(); ite != cnf_->getLuaCtxs().end(); ++ite) {
+  for (std::vector<LuaCtx *>::iterator ite = cnf_->getLuaCtxs().begin();
+       ite != cnf_->getLuaCtxs().end(); ++ite) {
     LuaCtx *ctx = *ite;
 
     if (ctx->getFileReader()->reinit()) {
@@ -164,6 +191,8 @@ void InotifyCtx::loop()
 
     cnf_->logStats();
     if (cnf_->getPollLimit()) sys::millisleep(cnf_->getPollLimit());
+
+    flowControl(runStatus);
   }
 
   runStatus->set(RunStatus::STOP);

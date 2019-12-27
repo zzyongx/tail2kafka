@@ -19,7 +19,8 @@ class TailStats {
 public:
   TailStats() :
     fileRead_(0), logRead_(0), logWrite_(0),
-    logRecv_(0), logSend_(0), logError_(0) {}
+    logRecv_(0), logSend_(0), logError_(0),
+    queueSize_(0) {}
 
   void fileReadInc(int add = 1) { util::atomic_inc(&fileRead_, add); }
   void logReadInc(int add = 1) { util::atomic_inc(&logRead_, add); }
@@ -29,6 +30,9 @@ public:
   void logSendInc(int add = 1) { util::atomic_inc(&logSend_, add); }
   void logErrorInc(int add = 1) { util::atomic_inc(&logError_, add); }
 
+  void queueSizeInc(int add = 1) { util::atomic_inc(&queueSize_, add); }
+  void queueSizeDec(int add = 1) { util::atomic_dec(&queueSize_, add); }
+
   int64_t fileRead() const { return fileRead_; }
   int64_t logRead() const { return logRead_; }
   int64_t logWrite() const { return logWrite_; }
@@ -36,6 +40,8 @@ public:
   int64_t logSend() const { return logSend_; }
   int64_t logRecv() const { return logRecv_; }
   int64_t logError() const { return logError_; }
+
+  int64_t queueSize() { return util::atomic_get(&queueSize_); }
 
   void get(TailStats *stats) {
     stats->fileRead_ = util::atomic_get(&fileRead_);
@@ -45,6 +51,8 @@ public:
     stats->logRecv_ = util::atomic_get(&logRecv_);
     stats->logSend_ = util::atomic_get(&logSend_);
     stats->logError_ = util::atomic_get(&logError_);
+
+    stats->queueSize_ = util::atomic_get(&queueSize_);
   }
 
 private:
@@ -55,6 +63,8 @@ private:
   int64_t logRecv_;
   int64_t logSend_;
   int64_t logError_;
+
+  int64_t queueSize_;
 };
 
 class RunStatus;

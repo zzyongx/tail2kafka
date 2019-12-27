@@ -680,15 +680,12 @@ void EsCtx::flowControl()
 {
   int i = 0;
   int overload = 0;
-  while (true) {
+  while (running_) {
     int load = 0;
     for (std::vector<EsSender *>::iterator ite = esSenders_.begin();
        ite != esSenders_.end(); ++ite) {
-      log_debug(0, "XXX %ld", (*ite)->load());
       load += (*ite)->load();
     }
-
-    log_debug(0, "XXX %ld %ld", load, cnf_->getEsMaxConns());
 
     overload = load - cnf_->getEsMaxConns();
     if (overload > 10) {

@@ -73,6 +73,7 @@ void InotifyCtx::flowControl(RunStatus *runStatus)
 
     if (kafkaBlock || i == 0) {
       if (i % 500 == 0) {
+        cnf_->logStats();
         log_info(0, "queue size %ld, kafka(es) status %s",
                  qsize, kafkaBlock ? "block" : "ok");
       }
@@ -82,6 +83,7 @@ void InotifyCtx::flowControl(RunStatus *runStatus)
 
     ++i;
     sys::millisleep(10);
+    cnf_->fasttime(true, TIMEUNIT_SECONDS);
   }
 }
 
@@ -189,9 +191,7 @@ void InotifyCtx::loop()
     tryRmWatch();
     tryReWatch();
 
-    cnf_->logStats();
     if (cnf_->getPollLimit()) sys::millisleep(cnf_->getPollLimit());
-
     flowControl(runStatus);
   }
 

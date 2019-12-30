@@ -9,6 +9,7 @@
 
 #include "logger.h"
 #include "util.h"
+#include "sys.h"
 #include "common.h"
 #include "cnfctx.h"
 #include "luactx.h"
@@ -404,15 +405,17 @@ bool EsUrl::initHttpResponse(const char *eof)
 
 void EsUrl::onError(int pfd, const char *error)
 {
-  if (record_) {
-    log_fatal(0, "%p #%d POST %s %s INTERNAL ERROR: %s",
-              this, fd_, url_.c_str(), body_, error);
+  log_fatal(0, "%p #%d POST %s %s INTERNAL ERROR @%d: %s",
+            this, fd_, url_.c_str(), body_, timeoutRetry_, error);
+  record_->ctx->cnf()->stats()->logErrorInc();
 
-    record_->ctx->cnf()->stats()->logErrorInc();
-    FileRecord::destroy(record_);
-    record_ = 0;
+  if (timeoutRetry_ % nodes_.size() == 0 && timeoutRetry_ != 0) {
+    sys::millisleep(500);
   }
+
   destroy(pfd);
+  reinit(record_, 1);
+  onEvent(pfd);
 }
 
 void EsUrl::onTimeout(int pfd, time_t now)
@@ -420,17 +423,7 @@ void EsUrl::onTimeout(int pfd, time_t now)
   if (status_ == IDLE) return;
   assert(status_ != UNINIT && record_);
 
-  if (now - activeTime_ > 30) {
-    log_fatal(0, "%p #%d POST %s %s timeout", this, fd_, url_.c_str(), body_);
-    destroy(pfd);
-
-    if (timeoutRetry_ == nodes_.size()) {
-      onError(pfd, "exceed maximum timeout retries");
-    } else {
-      reinit(record_, 1);
-      onEvent(pfd);
-    }
-  }
+  if (now - activeTime_ > 30) onError(pfd, "timeout");
 }
 
 void EsUrl::onEvent(int pfd)

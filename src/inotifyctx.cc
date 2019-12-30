@@ -71,15 +71,8 @@ void InotifyCtx::flowControl(RunStatus *runStatus)
       cnf_->setKafkaBlock(true);
     }
 
-    if (kafkaBlock || i == 0) {
-      if (i % 500 == 0) {
-        cnf_->logStats();
-        log_info(0, "queue size %ld, kafka(es) status %s",
-                 qsize, kafkaBlock ? "block" : "ok");
-      }
-    } else {
-      break;
-    }
+    cnf_->logStats();
+    if (!kafkaBlock) break;
 
     ++i;
     sys::millisleep(10);

@@ -178,13 +178,15 @@ bool CnfCtx::initFileReader()
 
 void CnfCtx::logStats()
 {
-  if (fasttime() == lastLog_) return;
+  if (fasttime() <= lastLog_ + 5) return;
+
+  bool kafkaBlock = getKafkaBlock();
 
   TailStats s;
   stats_.get(&s);
-  log_error(0, "TailStatus,fileRead=%ld,logRead=%ld,logWrite=%ld,logSend=%ld,logRecv=%ld,logError=%ld",
-            s.fileRead(), s.logRead(), s.logWrite(),
-            s.logSend(), s.logRecv(), s.logError());
+  log_error(0, "kafka/es status %s, TailStatus,fileRead=%ld,logRead=%ld,logWrite=%ld,logSend=%ld,logRecv=%ld,logError=%ld,queueSize=%ld",
+            kafkaBlock ? "block" : "ok", s.fileRead(), s.logRead(), s.logWrite(),
+            s.logSend(), s.logRecv(), s.logError(), s.queueSize());
   lastLog_ = fasttime();
 }
 

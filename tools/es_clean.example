@@ -1,0 +1,28 @@
+#!/bin/bash
+
+ES="http://127.0.0.1:9200"
+
+TMPF=$(mktemp /tmp/es_clean.XXXXXX)
+curl -Ss -f "$ES/_cat/indices?local=true" > $TMPF
+
+NOW=$(date +%s)
+
+IFS=''
+while read line; do
+  INDICE=$(echo $line | awk -e '{print $3}')
+
+  PARTS=()
+  IFS='_' read -ra PARTS <<< "$INDICE"
+  SUFFIX=${PARTS[-1]}
+
+  EXPIRE=0
+  TS=$(date --date $SUFFIX +%s)
+  (test $? != 0 || test $(($TS + 86400 * 30)) -le $NOW) && EXPIRE=1
+
+  test $EXPIRE == 1 && {
+    echo "DELETE $ES/$INDICE"
+    curl -Ss -f -X DELETE "$ES/$INDICE"
+  }
+done < $TMPF
+
+rm -f /tmp/es_clean.*

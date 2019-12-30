@@ -22,6 +22,7 @@
 #define N100M 100 * 1024 * 1024
 #define NFILE 3
 #define LOGGER_INIT() Logger *Logger::defLogger = 0;
+#define LOGGER_ONCE(once) Logger::defLogger->setOnce((once));
 
 static const size_t ERR_STR = 4095;
 static pthread_mutex_t LOGGER_MUTEX = PTHREAD_MUTEX_INITIALIZER;
@@ -62,6 +63,17 @@ public:
     else if (level == ERROR) level_ = ERROR_INT;
     else if (level == FATAL) level_ = FATAL_INT;
     else assert(0);
+  }
+
+  bool setOnce(bool once) {
+    once_ = once;
+    if (once_ && handle_ > 0) {
+      close(handle_);
+      handle_ = -1;
+    } else if (!once && handle_ < 0) {
+      return init();
+    }
+    return true;
   }
 
   void reOpen(bool reopen) { reopen_ = reopen; }
@@ -127,7 +139,7 @@ public:
 
 private:
   Logger(const std::string &file, Rotate rotate, time_t *nowPtr)
-    : limit_(N100M), rotate_(rotate), reopen_(false), nowPtr_(nowPtr),
+    : limit_(N100M), once_(false), rotate_(rotate), reopen_(false), nowPtr_(nowPtr),
       bindStdout_(false), bindStderr_(false), handle_(-1), file_(file) {
 #if _DEBUG_
     setLevel(DEBUG);
@@ -152,6 +164,8 @@ private:
       return reopen_;
     } else if (rotate_ == SIZE) {
       return size_ >= limit_;
+    } else if (once_) {
+      return true;
     }
 
     time_t fileTime = __sync_fetch_and_add(&fileTime_, 0);
@@ -196,11 +210,13 @@ private:
     int fd = open(file.c_str(), O_WRONLY | O_APPEND | O_CREAT,
                   S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
     if (fd != -1) {
-      int tmp = handle_;
+      if (handle_ > 0) {
+        close(handle_);
+        if (bindStdout_) dup2(handle_, STDOUT_FILENO);
+        if (bindStderr_) dup2(handle_, STDERR_FILENO);
+      }
+
       handle_ = fd;
-      close(tmp);
-      if (bindStdout_) dup2(handle_, STDOUT_FILENO);
-      if (bindStderr_) dup2(handle_, STDERR_FILENO);
 
       struct stat st;
       fstat(fd, &st);
@@ -250,12 +266,19 @@ private:
     errstr[n++] = '\n';
 
     size_ += n;
-    return (write(handle_, errstr, n) != -1);
+    bool rc = write(handle_, errstr, n) != -1;
+
+    if (once_) {
+      close(handle_);
+      handle_ = -1;
+    }
+    return rc;
   }
 
 private:
   size_t size_;
   size_t limit_;
+  bool once_;
 
   uint8_t level_;
   Rotate  rotate_;

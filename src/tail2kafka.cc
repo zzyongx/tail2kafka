@@ -138,8 +138,12 @@ int main(int argc, char *argv[])
       log_error(0, "force reopening of files");
     }
 
+    LOGGER_ONCE(true); // solve parent process log rotate problem
+
     runStatus->set(RunStatus::WAIT);
     signalHelper.suspend(-1);
+
+    LOGGER_ONCE(false);
   }
 
   if (pid != -1) kill(pid, SIGTERM);

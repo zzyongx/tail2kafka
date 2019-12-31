@@ -39,6 +39,7 @@ FileReader::FileReader(LuaCtx *ctx)
 
   fileRotateTime_ = ctx->cnf()->fasttime();
   holdFd_ = -1;
+  eof_ = false;
 }
 
 FileReader::~FileReader()
@@ -536,6 +537,8 @@ bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::st
   off_t loff = off - npos_;
   assert(loff >= 0);
 
+  eof_ = true;
+
   while (off < size_) {
     size_t min = std::min(size_ - off, (off_t) (MAX_LINE_LEN - npos_));
     assert(min > 0);
@@ -551,6 +554,12 @@ bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::st
 
     propagateTailContent(nn);
     propagateProcessLines(inode_, &loff);
+
+    if (ctx_->cnf()->flowControlOn()) {
+      size_ = off;
+      eof_ = false;
+      break;
+    }
   }
 
   if (pos == END && size_ > 0) {  // ignore empty file
@@ -558,7 +567,7 @@ bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::st
     propagateRawData(rawDataPtr.release());
   }
 
-  return true;
+  return eof_;
 }
 
 void FileReader::propagateTailContent(size_t size)

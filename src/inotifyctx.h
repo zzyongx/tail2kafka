@@ -26,6 +26,7 @@ private:
   void tryRmWatch(LuaCtx *ctx, int wd);
   void tryRmWatch();
   void globalCheck();
+  void unEofCheck();
 
   void flowControl(RunStatus *runStatus);
 

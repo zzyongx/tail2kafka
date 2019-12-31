@@ -36,6 +36,8 @@ public:
   bool init(char *errbuf);
   bool reinit();
 
+  bool eof() const { return eof_; }
+
   void tagRotate(int action, const char *oldFile = 0, const char *newFile = 0);
   bool remove();
 
@@ -70,6 +72,7 @@ private:
   off_t    size_;
   ino_t    inode_;
   uint32_t flags_;
+  bool eof_;
 
   time_t   fileRotateTime_;
   int      holdFd_;    // trace moved file when datafile != file

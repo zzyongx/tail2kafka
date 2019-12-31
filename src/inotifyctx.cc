@@ -168,6 +168,8 @@ void InotifyCtx::loop()
         }
         p += sizeof(struct inotify_event) + event->len;
       }
+
+      unEofCheck();
     }
 
     if (cnf_->fasttime() != savedTime) {
@@ -187,11 +189,22 @@ void InotifyCtx::loop()
 
 void InotifyCtx::globalCheck()
 {
-  for (std::vector<LuaCtx *>::iterator ite = cnf_->getLuaCtxs().begin(); ite != cnf_->getLuaCtxs().end(); ++ite) {
+  for (std::vector<LuaCtx *>::iterator ite = cnf_->getLuaCtxs().begin();
+       ite != cnf_->getLuaCtxs().end(); ++ite) {
     LuaCtx *ctx = *ite;
     while (ctx) {
       ctx->getFileReader()->checkCache();
       ctx = ctx->next();
     }
+  }
+  unEofCheck();
+}
+
+void InotifyCtx::unEofCheck()
+{
+  for (std::vector<LuaCtx *>::iterator ite = cnf_->getLuaCtxs().begin();
+       ite != cnf_->getLuaCtxs().end(); ++ite) {
+    LuaCtx *ctx = *ite;
+    if (!ctx->getFileReader()->eof()) ctx->getFileReader()->tail2kafka();
   }
 }

@@ -180,12 +180,12 @@ void CnfCtx::logStats()
 {
   if (fasttime() <= lastLog_ + 5) return;
 
-  bool kafkaBlock = getKafkaBlock();
+  bool block = flowControlOn();
 
   TailStats s;
   stats_.get(&s);
   log_error(0, "kafka/es status %s, TailStatus,fileRead=%ld,logRead=%ld,logWrite=%ld,logSend=%ld,logRecv=%ld,logError=%ld,queueSize=%ld",
-            kafkaBlock ? "block" : "ok", s.fileRead(), s.logRead(), s.logWrite(),
+            block ? "block" : "ok", s.fileRead(), s.logRead(), s.logWrite(),
             s.logSend(), s.logRecv(), s.logError(), s.queueSize());
   lastLog_ = fasttime();
 }
@@ -204,7 +204,7 @@ CnfCtx::CnfCtx() {
   gettimeofday(&timeval_, 0);
 
   tailLimit_ = false;
-  kafkaBlock_ = 0;
+  flowControl_ = 0;
 }
 
 CnfCtx::~CnfCtx()

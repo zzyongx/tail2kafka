@@ -43,7 +43,8 @@ bool InotifyCtx::init()
   int nb = 1;
   ioctl(wfd_, FIONBIO, &nb);
 
-  for (std::vector<LuaCtx *>::iterator ite = cnf_->getLuaCtxs().begin(); ite != cnf_->getLuaCtxs().end(); ++ite) {
+  for (std::vector<LuaCtx *>::iterator ite = cnf_->getLuaCtxs().begin();
+       ite != cnf_->getLuaCtxs().end(); ++ite) {
     LuaCtx *ctx = *ite;
     const std::string &file = ctx->file();
 
@@ -61,20 +62,13 @@ bool InotifyCtx::init()
 
 void InotifyCtx::flowControl(RunStatus *runStatus)
 {
-  int i = 0;
   while (runStatus->get() == RunStatus::WAIT) {
-    bool kafkaBlock = cnf_->getKafkaBlock();
-    size_t qsize = cnf_->stats()->queueSize();
-
-    if (qsize > 1000) {
-      kafkaBlock = true;
-      cnf_->setKafkaBlock(true);
-    }
+    bool block = cnf_->stats()->queueSize() > MAX_FILE_QUEUE_SIZE;
+    cnf_->flowControl(block);
 
     cnf_->logStats();
-    if (!kafkaBlock) break;
+    if (!block) break;
 
-    ++i;
     sys::millisleep(10);
     cnf_->fasttime(true, TIMEUNIT_SECONDS);
   }

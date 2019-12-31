@@ -473,13 +473,17 @@ EsUrl *EsUrlManager::get() {
 
     log_debug(0, "pool get url %p, load %ld", url, active_);
   }
+
+  url->pool(false);
   return url;
 }
 
 bool EsUrlManager::release(EsUrl *url) {
+  if (url->pool(true)) return false;
+
   util::atomic_dec(&active_);
 
-  if (true || urls_.size() < capacity_ * 2) {
+  if (urls_.size() < capacity_ * 2) {
     log_debug(0, "pool release url %p, load %ld", url, active_);
 
     urls_.push_back(url);
@@ -586,12 +590,12 @@ void EsSender::consume(int pfd)
   assert(nn == sizeof(FileRecord*));
 
   EsUrl *url = urlManager_->get();
-  if (!url->keepalive()) urls_.push_back(url);
+  if (!url->idle()) urls_.push_back(url);
 
   url->reinit((FileRecord *)ptr);
   url->onEvent(pfd);
 
-  if (url->idle() && (urlManager_->release(url) || !url->keepalive())) {
+  if (url->idle() && urlManager_->release(url)) {
     urls_.remove(url);
   }
 }
@@ -609,7 +613,7 @@ void EsSender::eventLoop()
           EsUrl *url = (EsUrl *) events_[i].data.ptr;
           url->onEvent(epfd_);
 
-          if (url->idle() && (urlManager_->release(url) || !url->keepalive())) {
+          if (url->idle() && urlManager_->release(url)) {
             urls_.remove(url);
           }
         }
@@ -619,7 +623,7 @@ void EsSender::eventLoop()
         EsUrl *url = *ite;
         url->onTimeout(epfd_, now);
 
-        if (url->idle() && (urlManager_->release(url) || !url->keepalive())) {
+        if (url->idle() && urlManager_->release(url)) {
           urls_.erase(ite++);
         } else {
           ++ite;
@@ -685,7 +689,6 @@ void EsCtx::flowControl()
       if (i % 500 == 0) {
         log_info(0, "too much data for es #%d, wait %ds, set block, stop produce",
                  overload, i / 100);
-        cnf_->setKafkaBlock(true);
       }
     } else {
       break;
@@ -697,7 +700,6 @@ void EsCtx::flowControl()
 
   if (i > 0) {
     log_info(0, "es #%d, restart produce", overload);
-    cnf_->setKafkaBlock(false);
   }
 }
 

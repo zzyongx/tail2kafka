@@ -14,6 +14,7 @@
 #include "common.h"
 
 #define KAFKA_ERROR_TIMEOUT 60
+#define MAX_FILE_QUEUE_SIZE 10000
 
 class TailStats {
 public:
@@ -41,7 +42,7 @@ public:
   int64_t logRecv() const { return logRecv_; }
   int64_t logError() const { return logError_; }
 
-  int64_t queueSize() { return util::atomic_get(&queueSize_); }
+  int64_t queueSize() const { return util::atomic_get((int64_t *) &queueSize_); }
 
   void get(TailStats *stats) {
     stats->fileRead_ = util::atomic_get(&fileRead_);
@@ -150,8 +151,12 @@ public:
   void setTailLimit(bool tailLimit) { tailLimit_ = tailLimit; }
   bool getTailLimit() const { return tailLimit_; }
 
-  void setKafkaBlock(bool kafkaBlock) { util::atomic_set(&kafkaBlock_, kafkaBlock ? 1 : 0); }
-  bool getKafkaBlock() const { return util::atomic_get((int *) &kafkaBlock_); }
+  void flowControl(bool block) { util::atomic_set(&flowControl_, block ? 1 : 0); }
+
+  bool flowControlOn() const {
+    return util::atomic_get((int *) &flowControl_) ||
+      stats_.queueSize() > MAX_FILE_QUEUE_SIZE;
+  }
 
 private:
   CnfCtx();
@@ -190,7 +195,7 @@ private:
   FileOff    *fileOff_;
 
   bool tailLimit_;
-  int kafkaBlock_;
+  int flowControl_;
 };
 
 #endif

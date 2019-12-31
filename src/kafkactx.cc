@@ -126,7 +126,8 @@ bool KafkaCtx::init(CnfCtx *cnf, char *errbuf)
   errors_ = new int[cnf->getLuaCtxSize()];
   memset(errors_, 0, cnf->getLuaCtxSize());
 
-  for (LuaCtxPtrList::iterator ite = cnf->getLuaCtxs().begin(); ite != cnf->getLuaCtxs().end(); ++ite) {
+  for (LuaCtxPtrList::iterator ite = cnf->getLuaCtxs().begin();
+       ite != cnf->getLuaCtxs().end(); ++ite) {
     LuaCtx *ctx = (*ite);
     while (ctx) {
       rd_kafka_topic_t *rkt = initKafkaTopic(ctx, cnf->getKafkaTopicConf(), errbuf);
@@ -186,7 +187,7 @@ bool KafkaCtx::produce(FileRecord *record)
         return false;
       }
 
-      cnf->setKafkaBlock(true);
+      cnf->flowControl(true);
       int nevent = rd_kafka_poll(rk_, 100 * i);
       log_error(0, "%s kafka produce error(#%d) %s, poll event %d",
                 rd_kafka_topic_name(rkt), i++, rd_kafka_err2str(err), nevent);
@@ -197,7 +198,7 @@ bool KafkaCtx::produce(FileRecord *record)
     }
   }
 
-  cnf->setKafkaBlock(false);
+  cnf->flowControl(false);
   return true;
 }
 

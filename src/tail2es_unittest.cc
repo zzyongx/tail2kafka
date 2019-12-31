@@ -24,7 +24,8 @@ static CnfCtx *cnf = 0;
 
 static LuaCtx *getLuaCtx(const char *file)
 {
-  for (std::vector<LuaCtx *>::iterator ite = cnf->getLuaCtxs().begin(); ite != cnf->getLuaCtxs().end(); ++ite) {
+  for (std::vector<LuaCtx *>::iterator ite = cnf->getLuaCtxs().begin();
+       ite != cnf->getLuaCtxs().end(); ++ite) {
     LuaCtx *ctx = (*ite);
     while (ctx) {
       if (ctx->file() == file) return ctx;
@@ -215,12 +216,7 @@ DEFINE(esProduce)
     datas.assign(1, record);
 
     cnf->getEs()->produce(&datas);
-    if (cnf->getKafkaBlock()) {
-      printf("too much data, sleep 1\n");
-      sleep(1);
-    } else {
-      sys::millisleep(1);
-    }
+    sys::millisleep(1);
   }
 
   bool esOk = false;

@@ -15,7 +15,7 @@
 
 #define NL                  '\n'
 #define MAX_LINE_LEN        8 * 1024 * 1024     // 8M
-#define MAX_TAIL_SIZE       100 * MAX_LINE_LEN  // 200M
+#define MAX_TAIL_SIZE       25 * MAX_LINE_LEN   // 200M
 
 FileReader::StartPosition FileReader::stringToStartPosition(const char *s)
 {
@@ -494,7 +494,7 @@ bool FileReader::setStartPositionEnd(off_t fileSize, char *errbuf)
 bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::string *rawData)
 {
   std::auto_ptr<std::string> rawDataPtr(rawData);
-  if (ctx_->cnf()->getKafkaBlock()) return false;
+  if (ctx_->cnf()->flowControlOn()) return false;
 
   struct stat stat;
   if (stPtr == 0) {

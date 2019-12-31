@@ -25,9 +25,8 @@ class EsUrl {
   template<class T> friend class UNITTEST_HELPER;
 public:
   EsUrl(const std::vector<std::string> &nodes, int idx)
-    : status_(UNINIT), fd_(-1), idx_(idx), nodes_(nodes), record_(0) {
-    node_ = nodes_[idx_];
-  }
+    : pool_(true), status_(UNINIT), fd_(-1), idx_(idx),
+      nodes_(nodes), node_(nodes_[idx_]), record_(0) {}
 
   ~EsUrl() {
     if (fd_ > 0) close(fd_);
@@ -39,11 +38,16 @@ public:
   void onError(int pfd, const char *error);
 
   bool idle() const {
-    return status_ == UNINIT || status_ == IDLE;
+    return status_ == IDLE;
   }
 
-  bool keepalive() const {
-    return status_ != UNINIT;
+  bool pool(bool p) {
+    if (p) assert(status_ == IDLE);
+    else assert(status_ == IDLE || status_ == UNINIT);
+
+    bool r = pool_;
+    pool_ = p;
+    return r;
   }
 
 private:
@@ -62,6 +66,7 @@ private:
   void destroy(int pfd);
 
 private:
+  bool pool_;
   EventStatus status_;
   int fd_;
   time_t activeTime_;

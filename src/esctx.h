@@ -6,6 +6,7 @@
 #include <list>
 #include <pthread.h>
 
+
 #include "gnuatomic.h"
 #include "filerecord.h"
 class CnfCtx;
@@ -21,29 +22,30 @@ enum HttpRespWant {
   BODY, BODY_CHUNK_LEN, BODY_CHUNK_CONTENT, RESP_EOF,
 };
 
+class EsUrlManager;
+
 class EsUrl {
   template<class T> friend class UNITTEST_HELPER;
 public:
-  EsUrl(const std::vector<std::string> &nodes, int idx)
-    : pool_(true), status_(UNINIT), fd_(-1), idx_(idx),
+  EsUrl(const std::vector<std::string> &nodes, int idx, EsUrlManager *mgr)
+    : pool_(true), status_(UNINIT), fd_(-1), urlManager_(mgr), idx_(idx),
       nodes_(nodes), node_(nodes_[idx_]), record_(0) {}
 
   ~EsUrl() {
     if (fd_ > 0) close(fd_);
   }
 
-  void reinit(FileRecord *record, int move = 0);
-  void onEvent(int pfd);
-  void onTimeout(int pfd, time_t now);
-  void onError(int pfd, const char *error);
-
   bool idle() const {
     return status_ == IDLE;
   }
 
+  void reinit(FileRecord *record, int move = 0);
+  bool onEvent(int pfd);
+  bool onTimeout(int pfd, time_t now);
+  bool onError(int pfd, const char *error);
+
   bool pool(bool p) {
-    if (p) assert(status_ == IDLE);
-    else assert(status_ == IDLE || status_ == UNINIT);
+    assert(record_ == 0 && (status_ == IDLE || status_ == UNINIT));
 
     bool r = pool_;
     pool_ = p;
@@ -71,6 +73,7 @@ private:
   int fd_;
   time_t activeTime_;
   size_t timeoutRetry_;
+  EsUrlManager *urlManager_;
 
   int idx_;
   std::vector<std::string> nodes_;
@@ -99,7 +102,7 @@ public:
     : active_(0), capacity_(capacity), nodes_(nodes) {
 
     for (size_t i = 0; i < capacity_; ++i) {
-      EsUrl *url = new EsUrl(nodes, i % nodes.size());
+      EsUrl *url = new EsUrl(nodes, i % nodes.size(), this);
       urls_.push_back(url);
       holder_.push_back(url);
     }
@@ -143,12 +146,9 @@ public:
   void eventLoop();
   bool produce(FileRecord *record);
 
-  size_t load() const {
-    return urlManager_->load();
-  }
-
 private:
   void consume(int pfd);
+  bool flowControl(bool block);
 
 private:
   CnfCtx *cnf_;
@@ -164,6 +164,7 @@ private:
   struct epoll_event *events_;
   std::list<EsUrl*> urls_;
 
+  size_t capacity_;
   EsUrlManager *urlManager_;
 
   volatile bool running_;
@@ -176,9 +177,6 @@ public:
   ~EsCtx();
   bool init(CnfCtx *cnf);
   bool produce(std::vector<FileRecord *> *datas);
-
-private:
-  void flowControl();
 
 private:
   CnfCtx *cnf_;

@@ -44,10 +44,13 @@ void EsUrl::reinit(FileRecord *record, int move)
   body_ = record->data->c_str();
   nbody_ = record->data->size();
 
-  nheader_ = snprintf(header_, MAX_HTTP_HEADER_LEN, ES_CREATE_INDEX_HEADER_TPL,
-                      record->esIndex->c_str(), node_.c_str(), nbody_);
+  std::string docIndex = "debug";
+  // record->esIndex->assign("debug");
 
-  url_ = "http://" + node_ + "/" + *(record->esIndex) + "/_doc";
+  nheader_ = snprintf(header_, MAX_HTTP_HEADER_LEN, ES_CREATE_INDEX_HEADER_TPL,
+                      docIndex.c_str(), node_.c_str(), nbody_);
+
+  url_ = "http://" + node_ + "/" + docIndex + "/_doc";
 
   log_debug(0, "POST %s DATA %s", url_.c_str(), body_);
 
@@ -68,6 +71,8 @@ void EsUrl::reinit(FileRecord *record, int move)
     log_debug(0, "%p reuse connect %s #%d", this, node_.c_str(), fd_);
     status_ = WRITING;
   }
+
+  activeTime_ = time(0);
 }
 
 void EsUrl::destroy(int pfd)
@@ -403,37 +408,37 @@ bool EsUrl::initHttpResponse(const char *eof)
   return respWant_ == RESP_EOF;
 }
 
-void EsUrl::onError(int pfd, const char *error)
+bool EsUrl::onError(int pfd, const char *error)
 {
-  log_fatal(0, "%p #%d POST %s %s INTERNAL ERROR @%d: %s",
-            this, fd_, url_.c_str(), body_, timeoutRetry_, error);
-  record_->ctx->cnf()->stats()->logErrorInc();
+  assert(record_ && !pool_);
 
-  if (timeoutRetry_ % nodes_.size() == 0 && timeoutRetry_ != 0) {
-    sys::millisleep(500);
-  }
+  log_fatal(0, "%p #%d POST %s %s INTERNAL ERROR @%d: %s, load %d",
+            this, fd_, url_.c_str(), body_, timeoutRetry_, error, urlManager_->load());
+  record_->ctx->cnf()->stats()->logErrorInc();
 
   destroy(pfd);
   reinit(record_, 1);
-  onEvent(pfd);
+  return true;
 }
 
-void EsUrl::onTimeout(int pfd, time_t now)
+bool EsUrl::onTimeout(int pfd, time_t now)
 {
-  if (status_ == IDLE) return;
-  assert(status_ != UNINIT && record_);
+  if (status_ == IDLE || now - activeTime_ < 30) return true;
 
-  if (now - activeTime_ > 30) onError(pfd, "timeout");
+  assert(record_);
+  if (status_ == UNINIT) return onEvent(pfd);
+  else return onError(pfd, "timeout");
 }
 
-void EsUrl::onEvent(int pfd)
+bool EsUrl::onEvent(int pfd)
 {
   if (status_ == IDLE) {
     destroy(pfd);
-    return;
+    urlManager_->release(this);
+    return false;
   }
 
-  assert(record_);
+  assert(record_ && !pool_);
   char errbuf[1024] = "OK";
 
   bool rc = true;
@@ -448,14 +453,15 @@ void EsUrl::onEvent(int pfd)
     rc = doConnectFinish(pfd, errbuf);
     if (rc) {
       status_ = WRITING;
-      onEvent(pfd);
+      return onEvent(pfd);
     }
   }
 
   activeTime_ = time(0);
-  if (!rc) {
-    onError(pfd, errbuf);
-  }
+  if (!rc) onError(pfd, errbuf);
+
+  if (status_ == IDLE) return !urlManager_->release(this);
+  else return true;
 }
 
 EsUrl *EsUrlManager::get() {
@@ -463,10 +469,10 @@ EsUrl *EsUrlManager::get() {
 
   EsUrl *url;
   if (urls_.empty()) {
-    url = new EsUrl(nodes_, random() % nodes_.size());
+    url = new EsUrl(nodes_, random() % nodes_.size(), this);
     holder_.push_back(url);
 
-    log_debug(0, "new get url %p, load %ld", url, active_);
+    log_info(0, "new get url %p, load %ld", url, active_);
   } else {
     url = urls_.back();
     urls_.pop_back();
@@ -489,7 +495,7 @@ bool EsUrlManager::release(EsUrl *url) {
     urls_.push_back(url);
     return false;
   } else {
-    log_debug(0, "destroy release url %p, load %ld", url, active_);
+    log_info(0, "destroy release url %p, load %ld", url, active_);
 
     holder_.remove(url);
     delete url;
@@ -511,6 +517,7 @@ bool EsSender::init(CnfCtx *cnf, size_t capacity)
   cnf_ = cnf;
 
   userpass_ = cnf->getEsUserPass();
+  capacity_ = capacity;
   urlManager_ = new EsUrlManager(cnf->getEsNodes(), capacity);
 
   epfd_ = epoll_create(MAX_EPOLL_EVENT);
@@ -531,13 +538,6 @@ bool EsSender::init(CnfCtx *cnf, size_t capacity)
 
   pipeRead_ = pipeFd[0];
   pipeWrite_ = pipeFd[1];
-
-  struct epoll_event ev = {EPOLLIN, &pipeRead_};
-  if (epoll_ctl(epfd_, EPOLL_CTL_ADD, pipeRead_, &ev) == -1) {
-    snprintf(cnf->errbuf(), MAX_ERR_LEN, "epoll_ctl pipe read error: %d:%s",
-             errno, strerror(errno));
-    return false;
-  }
 
   events_ = new struct epoll_event[1024];
   int rc = pthread_create(&tid_, 0, eventLoopRoutine, this);
@@ -580,29 +580,53 @@ bool EsSender::produce(FileRecord *record)
 
 void EsSender::consume(int pfd)
 {
-  uintptr_t ptr;
-  ssize_t nn = read(pipeRead_, &ptr, sizeof(FileRecord *));
-  if (nn == -1) {
-    log_fatal(errno, "esctx consume error");
-    return;
+  do {
+    uintptr_t ptr;
+    ssize_t nn = read(pipeRead_, &ptr, sizeof(FileRecord *));
+    if (nn == -1) {
+      if (errno != EAGAIN) log_fatal(errno, "esctx consume error");
+      return;
+    }
+
+    assert(nn == sizeof(FileRecord*));
+
+    EsUrl *url = urlManager_->get();
+    if (!url->idle()) urls_.push_back(url);
+
+    url->reinit((FileRecord *)ptr);
+    if (!url->onEvent(pfd)) {
+      urls_.remove(url);
+    }
+  } while (urlManager_->load() < capacity_);
+}
+
+bool EsSender::flowControl(bool block)
+{
+  bool rc;
+  if (urlManager_->load() > capacity_) {
+    if (!block) epoll_ctl(epfd_, EPOLL_CTL_DEL, pipeRead_, 0);
+    rc = true;
+  } else {
+    if (block) {
+      struct epoll_event ev = {EPOLLIN, &pipeRead_};
+      epoll_ctl(epfd_, EPOLL_CTL_ADD, pipeRead_, &ev);
+    }
+    rc = false;
   }
 
-  assert(nn == sizeof(FileRecord*));
-
-  EsUrl *url = urlManager_->get();
-  if (!url->idle()) urls_.push_back(url);
-
-  url->reinit((FileRecord *)ptr);
-  url->onEvent(pfd);
-
-  if (url->idle() && urlManager_->release(url)) {
-    urls_.remove(url);
+  if (rc != block) {
+    log_info(0, "flow control load: %d, status %s -> %s", urlManager_->load(),
+             block ? "block" : "ok", rc ? "block" : "ok");
   }
+  return rc;
 }
 
 void EsSender::eventLoop()
 {
+  bool block = true;
   while (running_) {
+    block = flowControl(block);
+
     time_t now = time(0);
     int nfd = epoll_wait(epfd_, events_, MAX_EPOLL_EVENT, 1000);
     if (nfd > 0) {
@@ -611,9 +635,7 @@ void EsSender::eventLoop()
           consume(epfd_);
         } else {
           EsUrl *url = (EsUrl *) events_[i].data.ptr;
-          url->onEvent(epfd_);
-
-          if (url->idle() && urlManager_->release(url)) {
+          if (!url->onEvent(epfd_)) {
             urls_.remove(url);
           }
         }
@@ -621,9 +643,7 @@ void EsSender::eventLoop()
     } else if (nfd == 0) {
       for (std::list<EsUrl*>::iterator ite = urls_.begin(); ite != urls_.end();) {
         EsUrl *url = *ite;
-        url->onTimeout(epfd_, now);
-
-        if (url->idle() && urlManager_->release(url)) {
+        if (!url->onTimeout(epfd_, now)) {
           urls_.erase(ite++);
         } else {
           ++ite;
@@ -647,7 +667,7 @@ bool EsCtx::init(CnfCtx *cnf)
 
   size_t maxc = cnf->getEsMaxConns();
 
-  size_t nthread = (maxc % 500 == 0) ? maxc / 500 : maxc / 500 + 1;
+  size_t nthread = (maxc % 300 == 0) ? maxc / 300 : maxc / 300 + 1;
   if (nthread == 0) nthread = 1;
 
   lastSenderIndex_ = 0;
@@ -673,36 +693,6 @@ EsCtx::~EsCtx()
   }
 }
 
-void EsCtx::flowControl()
-{
-  int i = 0;
-  int overload = 0;
-  while (running_) {
-    int load = 0;
-    for (std::vector<EsSender *>::iterator ite = esSenders_.begin();
-       ite != esSenders_.end(); ++ite) {
-      load += (*ite)->load();
-    }
-
-    overload = load - cnf_->getEsMaxConns();
-    if (overload > 10) {
-      if (i % 500 == 0) {
-        log_info(0, "too much data for es #%d, wait %ds, set block, stop produce",
-                 overload, i / 100);
-      }
-    } else {
-      break;
-    }
-
-    i++;
-    sys::millisleep(10);
-  }
-
-  if (i > 0) {
-    log_info(0, "es #%d, restart produce", overload);
-  }
-}
-
 bool EsCtx::produce(std::vector<FileRecord *> *records)
 {
   if (!running_) return false;
@@ -715,8 +705,6 @@ bool EsCtx::produce(std::vector<FileRecord *> *records)
       FileRecord::destroy(*ite);
       continue;
     }
-
-    flowControl();
 
     if (!esSenders_[lastSenderIndex_]->produce(*ite)) {
       return false;

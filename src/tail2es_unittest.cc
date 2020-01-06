@@ -124,7 +124,7 @@ DEFINE(httpProtocol_1)
 {
   std::vector<std::string> v;
   v.push_back("127.0.0.1:9200");
-  EsUrl url(v, 0);
+  EsUrl url(v, 0, 0);
   url.respWant_ = STATUS_LINE;
   url.resp_ = url.header_;
 

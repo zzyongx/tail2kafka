@@ -17,6 +17,18 @@ enum EventStatus {
   UNINIT, ESTABLISHING, WRITING, READING, IDLE
 };
 
+inline const char *eventStatusToString(EventStatus status)
+{
+  switch (status) {
+  case UNINIT: return "uninit";
+  case ESTABLISHING: return "establishing";
+  case WRITING: return "writing";
+  case READING: return "reading";
+  case IDLE: return "idle";
+  default: return "unknow";
+  }
+}
+
 enum HttpRespWant {
   STATUS_LINE, HEADER, HEADER_NAME, HEADER_VALUE,
   BODY, BODY_CHUNK_LEN, BODY_CHUNK_CONTENT, RESP_EOF,
@@ -28,8 +40,8 @@ class EsUrl {
   template<class T> friend class UNITTEST_HELPER;
 public:
   EsUrl(const std::vector<std::string> &nodes, int idx, EsUrlManager *mgr)
-    : pool_(true), status_(UNINIT), fd_(-1), urlManager_(mgr), idx_(idx),
-      nodes_(nodes), node_(nodes_[idx_]), record_(0) {}
+    : pool_(true), status_(UNINIT), fd_(-1), urlManager_(mgr), keepalive_(0),
+      idx_(idx), nodes_(nodes), node_(nodes_[idx_]), record_(0) {}
 
   ~EsUrl() {
     if (fd_ > 0) close(fd_);
@@ -74,6 +86,7 @@ private:
   time_t activeTime_;
   size_t timeoutRetry_;
   EsUrlManager *urlManager_;
+  int keepalive_;
 
   int idx_;
   std::vector<std::string> nodes_;
@@ -147,7 +160,7 @@ public:
   bool produce(FileRecord *record);
 
 private:
-  void consume(int pfd);
+  void consume(int pfd, bool once);
   bool flowControl(bool block);
 
 private:

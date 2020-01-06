@@ -59,8 +59,8 @@ void EsUrl::reinit(FileRecord *record, int move)
   respWant_ = STATUS_LINE;
   resp_ = header_;
 
-  wantLen_ = 0;
-  chunkLen_ = 0;
+  wantLen_ = -1;
+  chunkLen_ = -1;
 
   respCode_ = 0;
   respBody_.clear();
@@ -328,10 +328,11 @@ void EsUrl::initHttpResponseHeader(const char *eof)
         want = HEADER_VALUE;
         value = p + 1;
       } else if (*p == '\r' && *(p+1) == '\n') {
-        if (wantLen_ > 0) {
+        if (wantLen_ >= 0) {
           respWant_ = BODY;
         } else {
           respWant_ = BODY_CHUNK_LEN;
+          wantLen_ = 0;
         }
         resp_ = p + 2;
         break;
@@ -400,7 +401,7 @@ bool EsUrl::initHttpResponse(const char *eof)
     if (eof - resp_ > 0) respBody_.append(resp_, eof - resp_);
     resp_ = header_;
     offset_ = 0;
-    if (respBody_.size() == wantLen_) respWant_ = RESP_EOF;
+    if (respBody_.size() == (size_t) wantLen_) respWant_ = RESP_EOF;
   } else if (respWant_ == BODY_CHUNK_LEN || respWant_ == BODY_CHUNK_CONTENT) {
     initHttpResponseBody(eof);
   }

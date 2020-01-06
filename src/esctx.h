@@ -90,8 +90,8 @@ private:
 
   HttpRespWant respWant_;
   int respCode_;
-  size_t wantLen_;
-  size_t chunkLen_;
+  int wantLen_;
+  int chunkLen_;
   char *resp_;
   std::string respBody_;
 };

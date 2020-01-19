@@ -13,8 +13,8 @@
 #include "kafkactx.h"
 #include "common.h"
 
-#define KAFKA_ERROR_TIMEOUT 60
-#define MAX_FILE_QUEUE_SIZE 10000
+#define QUEUE_ERROR_TIMEOUT 60
+#define MAX_FILE_QUEUE_SIZE 50000
 
 class TailStats {
 public:

@@ -182,7 +182,7 @@ bool KafkaCtx::produce(FileRecord *record)
                                 record->data->size(), 0, 0, record)) != 0) {
     rd_kafka_resp_err_t err = rd_kafka_last_error();
     if (err == RD_KAFKA_RESP_ERR__QUEUE_FULL) {
-      if (cnf->fasttime() - startTime > KAFKA_ERROR_TIMEOUT + 2) {
+      if (cnf->fasttime() - startTime > QUEUE_ERROR_TIMEOUT + 2) {
         // librdkafka may trap this loop, call exit to restart
         return false;
       }
@@ -192,7 +192,8 @@ bool KafkaCtx::produce(FileRecord *record)
       log_error(0, "%s kafka produce error(#%d) %s, poll event %d",
                 rd_kafka_topic_name(rkt), i++, rd_kafka_err2str(err), nevent);
     } else {
-      log_fatal(0, "%s kafka produce error %s", rd_kafka_topic_name(rkt), rd_kafka_err2str(err));
+      log_fatal(0, "%s kafka produce error %s",
+                rd_kafka_topic_name(rkt), rd_kafka_err2str(err));
       FileRecord::destroy(record);
       break;
     }

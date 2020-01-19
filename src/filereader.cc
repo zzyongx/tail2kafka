@@ -15,7 +15,7 @@
 
 #define NL                  '\n'
 #define MAX_LINE_LEN        8 * 1024 * 1024     // 8M
-#define MAX_TAIL_SIZE       25 * MAX_LINE_LEN   // 200M
+#define MAX_TAIL_SIZE       50 * MAX_LINE_LEN   // 400M
 
 FileReader::StartPosition FileReader::stringToStartPosition(const char *s)
 {
@@ -325,7 +325,7 @@ void FileReader::tagRotate(int action, const char *oldFile, const char *newFile)
     ctx_->setCurrentFile(oldFile);
   }
 
-  if (ctx_->cnf()->fasttime() - fileRotateTime_ < KAFKA_ERROR_TIMEOUT ||
+  if (ctx_->cnf()->fasttime() - fileRotateTime_ < QUEUE_ERROR_TIMEOUT ||
       (ctx_->getRotateDelay() > 0 && ctx_->cnf()->fasttime() - fileRotateTime_ < ctx_->getRotateDelay())) {
     log_fatal(0, "%d %s rotate %s too frequent, may lose data", fd_, ctx_->file().c_str(),
               flagsToString(flags_).c_str());
@@ -401,7 +401,7 @@ bool FileReader::checkRotate(const struct stat *stPtr, std::string *rotateFileNa
     if (bits_test(flags_, FILE_MOVED) || bits_test(flags_, FILE_CREATED)) {
       *closeFd = false;
 
-      if (ctx_->cnf()->fasttime() - fileRotateTime_ > KAFKA_ERROR_TIMEOUT &&
+      if (ctx_->cnf()->fasttime() - fileRotateTime_ > QUEUE_ERROR_TIMEOUT &&
           ctx_->addHistoryFile(*rotateFileName)) {
         log_fatal(0, "kafka queue full duration %d, kafka may unavaliable, %s turn on history",
                   (int) (ctx_->cnf()->fasttime() - fileRotateTime_), ctx_->topic().c_str());

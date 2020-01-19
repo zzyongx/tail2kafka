@@ -129,7 +129,7 @@ public:
     }
   }
 
-  EsUrl *get();
+  EsUrl *get(bool *pool = 0);
   bool release(EsUrl *url);
 
   size_t load() const {

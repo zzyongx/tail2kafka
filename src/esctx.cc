@@ -45,7 +45,7 @@ void EsUrl::reinit(FileRecord *record, bool move)
   nbody_ = record->data->size();
 
   std::string docIndex = *(record->esIndex);
-  docIndex = "debug";
+  // docIndex = "debug";
 
   nheader_ = snprintf(header_, MAX_HTTP_HEADER_LEN, ES_CREATE_INDEX_HEADER_TPL,
                       docIndex.c_str(), node_.c_str(), nbody_);
@@ -477,7 +477,7 @@ bool EsUrl::onEvent(int pfd)
   else return true;
 }
 
-EsUrl *EsUrlManager::get() {
+EsUrl *EsUrlManager::get(bool *pool) {
   util::atomic_inc(&active_);
 
   EsUrl *url;
@@ -485,11 +485,13 @@ EsUrl *EsUrlManager::get() {
     url = new EsUrl(nodes_, random() % nodes_.size(), this);
     holder_.push_back(url);
 
+    if (pool) *pool = false;
     log_info(0, "new get url %p, load %ld", url, active_);
   } else {
     url = urls_.back();
     urls_.pop_back();
 
+    if (pool) *pool = true;
     log_debug(0, "pool get url %p, load %ld", url, active_);
   }
 
@@ -593,6 +595,7 @@ bool EsSender::produce(FileRecord *record)
 
 void EsSender::consume(int pfd, bool once)
 {
+  bool pool = true;
   do {
     uintptr_t ptr;
     ssize_t nn = read(pipeRead_, &ptr, sizeof(FileRecord *));
@@ -603,20 +606,20 @@ void EsSender::consume(int pfd, bool once)
 
     assert(nn == sizeof(FileRecord*));
 
-    EsUrl *url = urlManager_->get();
+    EsUrl *url = urlManager_->get(&pool);
     if (!url->idle()) urls_.push_back(url);
 
     url->reinit((FileRecord *)ptr);
     if (!url->onEvent(pfd)) {
       urls_.remove(url);
     }
-  } while (urlManager_->load() < capacity_ && !once);
+  } while (urlManager_->load() < capacity_ && !once && pool);
 }
 
 bool EsSender::flowControl(bool block)
 {
   bool rc;
-  if (urlManager_->load() > capacity_) {
+  if (urlManager_->load() >= capacity_ * 3/2) {
     if (!block) epoll_ctl(epfd_, EPOLL_CTL_DEL, pipeRead_, 0);
     rc = true;
   } else {
@@ -643,9 +646,10 @@ void EsSender::eventLoop()
     time_t now = time(0);
     int nfd = epoll_wait(epfd_, events_, MAX_EPOLL_EVENT, 1000);
     if (nfd > 0) {
+      bool pipeReadOk = false;
       for (int i = 0; i < nfd; ++i) {
         if (events_[i].data.ptr == &pipeRead_) {
-          consume(epfd_, false);
+          pipeReadOk = true;
         } else {
           EsUrl *url = (EsUrl *) events_[i].data.ptr;
           if (!url->onEvent(epfd_)) {
@@ -655,6 +659,7 @@ void EsSender::eventLoop()
           }
         }
       }
+      if (pipeReadOk) consume(epfd_, false);
     } else if (nfd == 0) {
       for (std::list<EsUrl*>::iterator ite = urls_.begin(); ite != urls_.end();) {
         EsUrl *url = *ite;

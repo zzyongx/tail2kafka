@@ -427,7 +427,9 @@ bool EsUrl::onError(int pfd, const char *error)
 
   destroy(pfd);
   reinit(record_, move);
-  return true;
+
+  if (move) return true;  // wait timeout retry
+  else return onEvent(pfd);  // wait right now
 }
 
 bool EsUrl::onTimeout(int pfd, time_t now)

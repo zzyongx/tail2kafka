@@ -25,7 +25,7 @@
   "Content-Length: %d\r\n"                            \
   "\r\n"
 
-void EsUrl::reinit(FileRecord *record, int move)
+void EsUrl::reinit(FileRecord *record, bool move)
 {
   assert(record);
 
@@ -45,6 +45,7 @@ void EsUrl::reinit(FileRecord *record, int move)
   nbody_ = record->data->size();
 
   std::string docIndex = *(record->esIndex);
+  docIndex = "debug";
 
   nheader_ = snprintf(header_, MAX_HTTP_HEADER_LEN, ES_CREATE_INDEX_HEADER_TPL,
                       docIndex.c_str(), node_.c_str(), nbody_);
@@ -415,15 +416,17 @@ bool EsUrl::onError(int pfd, const char *error)
 {
   assert(record_ && !pool_);
 
+  bool move = false;
   if (error && error[0]) {
     log_fatal(0, "%p #%d POST %s %s INTERNAL ERROR @%d: %s, load %d, keepalive %d",
               this, fd_, url_.c_str(), body_, timeoutRetry_, error,
               urlManager_->load(), keepalive_);
     record_->ctx->cnf()->stats()->logErrorInc();
+    move = true;
   }
 
   destroy(pfd);
-  reinit(record_, 1);
+  reinit(record_, move);
   return true;
 }
 

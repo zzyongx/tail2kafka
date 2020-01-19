@@ -51,7 +51,7 @@ public:
     return status_ == IDLE;
   }
 
-  void reinit(FileRecord *record, int move = 0);
+  void reinit(FileRecord *record, bool move = false);
   bool onEvent(int pfd);
   bool onTimeout(int pfd, time_t now);
   bool onError(int pfd, const char *error);

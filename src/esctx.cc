@@ -593,19 +593,23 @@ bool EsSender::produce(FileRecord *record)
   return true;
 }
 
-void EsSender::consume(int pfd, bool once)
+size_t EsSender::consume(int pfd, bool once)
 {
+  size_t c = 0;
+  if (urlManager_->load() >= capacity_) return c;
+
   bool pool = true;
   do {
     uintptr_t ptr;
     ssize_t nn = read(pipeRead_, &ptr, sizeof(FileRecord *));
     if (nn == -1) {
       if (errno != EAGAIN) log_fatal(errno, "esctx consume error");
-      return;
+      return c;
     }
 
     assert(nn == sizeof(FileRecord*));
 
+    ++c;
     EsUrl *url = urlManager_->get(&pool);
     if (!url->idle()) urls_.push_back(url);
 
@@ -614,9 +618,11 @@ void EsSender::consume(int pfd, bool once)
       urls_.remove(url);
     }
   } while (urlManager_->load() < capacity_ && !once && pool);
+
+  return c;
 }
 
-bool EsSender::flowControl(bool block)
+bool EsSender::flowControl(bool block, size_t cn)
 {
   bool rc;
   if (urlManager_->load() >= capacity_ * 3/2) {
@@ -631,7 +637,8 @@ bool EsSender::flowControl(bool block)
   }
 
   if (rc != block) {
-    log_info(0, "flow control load: %d, status %s -> %s", urlManager_->load(),
+    log_info(0, "flow control load: %d, cn: %lu, status %s -> %s",
+             urlManager_->load(), cn,
              block ? "block" : "ok", rc ? "block" : "ok");
   }
   return rc;
@@ -640,8 +647,10 @@ bool EsSender::flowControl(bool block)
 void EsSender::eventLoop()
 {
   bool block = true;
+  size_t cn = 0;
+
   while (running_) {
-    block = flowControl(block);
+    block = flowControl(block, cn);
 
     time_t now = time(0);
     int nfd = epoll_wait(epfd_, events_, MAX_EPOLL_EVENT, 1000);
@@ -654,12 +663,12 @@ void EsSender::eventLoop()
           EsUrl *url = (EsUrl *) events_[i].data.ptr;
           if (!url->onEvent(epfd_)) {
             urls_.remove(url);
-          } else if (block) {
-            consume(epfd_, true);
+          } else if (block || cn == 0) {
+            cn = consume(epfd_, true);
           }
         }
       }
-      if (pipeReadOk) consume(epfd_, false);
+      if (pipeReadOk) cn = consume(epfd_, false);
     } else if (nfd == 0) {
       for (std::list<EsUrl*>::iterator ite = urls_.begin(); ite != urls_.end();) {
         EsUrl *url = *ite;

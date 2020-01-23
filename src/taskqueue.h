@@ -3,6 +3,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cassert>
 #include <string>
 #include <vector>
 #include <queue>
@@ -71,6 +72,8 @@ public:
     }
 
     if (!ret) stop(true);
+    else quit_ = false;
+
     return ret;
   }
 
@@ -83,6 +86,8 @@ public:
       pthread_join(*ite, 0);
     }
     tids_.clear();
+
+    assert(force || tasks_.empty());
   }
 
 private:

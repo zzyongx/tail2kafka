@@ -160,8 +160,8 @@ public:
   bool produce(FileRecord *record);
 
 private:
-  void consume(int pfd, bool once);
-  bool flowControl(bool block);
+  size_t consume(int pfd, bool once);
+  bool flowControl(bool block, size_t cn);
 
 private:
   CnfCtx *cnf_;

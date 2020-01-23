@@ -2,8 +2,13 @@
 
 ES="http://127.0.0.1:9200"
 
-TMPF=$(mktemp /tmp/es_clean.XXXXXX)
-curl -Ss -f "$ES/_cat/indices?local=true" > $TMPF
+TMPF=$1
+if [ "$TMPF" = "" ]; then
+  TMPF=$(mktemp /tmp/es_clean.XXXXXX)
+  curl -Ss -f "$ES/_cat/indices?local=true" > $TMPF
+fi
+
+EXPIRE_DAY=10
 
 NOW=$(date +%s)
 
@@ -17,11 +22,12 @@ while read line; do
 
   EXPIRE=0
   TS=$(date --date $SUFFIX +%s)
-  (test $? != 0 || test $(($TS + 86400 * 30)) -le $NOW) && EXPIRE=1
+  (test $? != 0 || test $(($TS + 86400 * $EXPIRE_DAY)) -le $NOW) && EXPIRE=1
 
   test $EXPIRE == 1 && {
     echo "DELETE $ES/$INDICE"
     curl -Ss -f -X DELETE "$ES/$INDICE"
+    sleep 5
   }
 done < $TMPF
 

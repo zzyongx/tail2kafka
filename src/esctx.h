@@ -101,6 +101,8 @@ private:
   int nbody_;
   int offset_;
 
+  bool esError_;
+
   HttpRespWant respWant_;
   int respCode_;
   int wantLen_;

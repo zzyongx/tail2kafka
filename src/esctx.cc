@@ -56,6 +56,8 @@ void EsUrl::reinit(FileRecord *record, bool move)
 
   offset_ = 0;
 
+  esError_ = false;
+
   respWant_ = STATUS_LINE;
   resp_ = header_;
 
@@ -276,22 +278,28 @@ bool EsUrl::doResponse(int /*pfd*/, char *errbuf)
 
   if (status_ == IDLE) {
     assert(record_);
-    record_->ctx->cnf()->stats()->logSendInc();
 
     if (respCode_ != 201) {
       log_fatal(0, "INDEX ret status %d body %s, POST %s %s ",
                 respCode_, respBody_.c_str(), url_.c_str(), body_);
-      if (respCode_ != 400 && respCode_ != 429) {
-        record_->ctx->cnf()->stats()->logErrorInc();
+    }
+
+    if (respCode_ == 201 || respCode_ == 400) {
+      record_->ctx->cnf()->stats()->logSendInc();
+
+      if (record_->off != (off_t) -1 && record_->inode > 0) {
+        record_->ctx->getFileReader()->updateFileOffRecord(record_);
       }
-    }
 
-    if (record_->off != (off_t) -1 && record_->inode > 0) {
-      record_->ctx->getFileReader()->updateFileOffRecord(record_);
-    }
+      FileRecord::destroy(record_);
+      record_ = 0;
 
-    FileRecord::destroy(record_);
-    record_ = 0;
+      return true;
+    } else {
+      snprintf(errbuf, 1024, "INDEX error %d", respCode_);
+      esError_ = true;
+      return false;
+    }
   }
 
   return true;
@@ -418,17 +426,17 @@ bool EsUrl::onError(int pfd, const char *error)
 
   bool move = false;
   if (error && error[0]) {
-    log_fatal(0, "%p #%d POST %s %s INTERNAL ERROR @%d: %s, load %d, keepalive %d",
-              this, fd_, url_.c_str(), body_, timeoutRetry_, error,
-              urlManager_->load(), keepalive_);
+    log_fatal(0, "%p #%d POST %s INTERNAL ERROR @%d: %s, load %d, keepalive %d, body %s",
+              this, fd_, url_.c_str(), timeoutRetry_, error,
+              urlManager_->load(), keepalive_, body_);
     record_->ctx->cnf()->stats()->logErrorInc();
-    move = true;
+    if (!esError_) move = true;
   }
 
   destroy(pfd);
   reinit(record_, move);
 
-  if (move) return true;  // wait timeout retry
+  if (move || esError_) return true;  // wait timeout retry
   else return onEvent(pfd);  // wait right now
 }
 

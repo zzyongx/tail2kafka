@@ -239,5 +239,6 @@ bool KafkaCtx::produce(std::vector<FileRecord *> *datas)
     }
   }
 
+  rd_kafka_poll(rk_, 0);
   return true;
 }

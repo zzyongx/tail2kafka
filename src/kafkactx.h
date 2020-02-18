@@ -21,6 +21,8 @@ public:
   bool ping(LuaCtx *ctx);
 
 private:
+  CnfCtx *cnf_;
+
   rd_kafka_t        *rk_;
   size_t             nrkt_;
   rd_kafka_topic_t **rkts_;

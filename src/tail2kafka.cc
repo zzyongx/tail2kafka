@@ -175,6 +175,7 @@ void *routine(void *data)
     assert(nn == sizeof(ptr));
 
     if (!ptr) break;  // terminate task
+
     if (kafka && !kafka->produce((std::vector<FileRecord*>*) ptr)) {
       log_fatal(0, "rd_kafka_poll timeout, librdkafka may have bug or kafka service is unavailable, exit");
       runStatus->set(RunStatus::STOP);

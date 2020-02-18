@@ -33,6 +33,7 @@ static void log_cb(const rd_kafka_t *, int level, const char *fac, const char *b
 static void dr_msg_cb(rd_kafka_t *, const rd_kafka_message_t *rkmsg, void *)
 {
   FileRecord *record = (FileRecord *) rkmsg->_private;
+  record->ctx->cnf()->stats()->logSendInc();
 
   if (record->off != (off_t) -1) {
     LuaCtx *ctx = record->ctx;
@@ -120,6 +121,8 @@ rd_kafka_topic_t *KafkaCtx::initKafkaTopic(LuaCtx *ctx, const std::map<std::stri
 
 bool KafkaCtx::init(CnfCtx *cnf, char *errbuf)
 {
+  cnf_ = cnf;
+
   if (!initKafka(cnf->getBrokers(), cnf->getKafkaGlobalConf(), errbuf)) return false;
 
   rkts_ = new rd_kafka_topic_t*[cnf->getLuaCtxSize()];
@@ -192,6 +195,7 @@ bool KafkaCtx::produce(FileRecord *record)
       log_error(0, "%s kafka produce error(#%d) %s, poll event %d",
                 rd_kafka_topic_name(rkt), i++, rd_kafka_err2str(err), nevent);
     } else {
+      cnf->stats()->logErrorInc();
       log_fatal(0, "%s kafka produce error %s",
                 rd_kafka_topic_name(rkt), rd_kafka_err2str(err));
       FileRecord::destroy(record);
@@ -205,6 +209,8 @@ bool KafkaCtx::produce(FileRecord *record)
 
 bool KafkaCtx::produce(std::vector<FileRecord *> *datas)
 {
+  cnf_->stats()->logRecvInc(datas->size());
+
   assert(!datas->empty());
   rd_kafka_topic_t *rkt = rkts_[datas->at(0)->ctx->rktId()];
 

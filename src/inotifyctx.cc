@@ -16,6 +16,7 @@
 #include "luactx.h"
 #include "filereader.h"
 #include "inotifyctx.h"
+#include "kafkactx.h"
 
 #define MAX_ERR_LEN 512
 
@@ -71,6 +72,9 @@ void InotifyCtx::flowControl(RunStatus *runStatus)
 
     sys::millisleep(10);
     cnf_->fasttime(true, TIMEUNIT_SECONDS);
+
+    KafkaCtx *kafka = cnf_->getKafka();
+    if (kafka) kafka->poll(10);
   }
 }
 

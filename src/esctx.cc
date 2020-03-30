@@ -659,6 +659,7 @@ void EsSender::eventLoop()
 
   while (running_) {
     block = flowControl(block, cn);
+    cn = 0;
 
     time_t now = time(0);
     int nfd = epoll_wait(epfd_, events_, MAX_EPOLL_EVENT, 1000);
@@ -677,7 +678,18 @@ void EsSender::eventLoop()
         }
       }
       if (pipeReadOk) cn = consume(epfd_, false);
-    } else if (nfd == 0) {
+    } else if (nfd < 0) {
+      if (errno == EINTR) {
+        log_fatal(errno, "epoll_wait error");
+        continue;
+      } else {
+        log_fatal(errno, "epoll_wait error, exit");
+        running_ = false;
+        break;
+      }
+    }
+
+    if (nfd == 0 || cn == 0) {
       for (std::list<EsUrl*>::iterator ite = urls_.begin(); ite != urls_.end();) {
         EsUrl *url = *ite;
         if (!url->onTimeout(epfd_, now)) {
@@ -685,14 +697,6 @@ void EsSender::eventLoop()
         } else {
           ++ite;
         }
-      }
-    } else {
-      if (errno == EINTR) {
-        log_fatal(errno, "epoll_wait error");
-      } else {
-        log_fatal(errno, "epoll_wait error, exit");
-        running_ = false;
-        break;
       }
     }
   }

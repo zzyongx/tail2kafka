@@ -49,7 +49,6 @@ int main(int argc, char *argv[])
     return EXIT_FAILURE;
   }
 
-
   bool daemonOff = getenv("DAEMON_OFF");
 
   if (!daemonOff) {

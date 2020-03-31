@@ -185,7 +185,7 @@ bool EsUrl::doConnect(int pfd, char *errbuf)
       estr = "EPOLLIN|EPOLLOUT";
     }
 
-    struct epoll_event event = {e, this};
+    struct epoll_event event = {e, {this}};
     if (epoll_ctl(pfd, EPOLL_CTL_ADD, fd_, &event) != 0) {
       snprintf(errbuf, 1024, "epoll_ctl_add(%d, %s) error: %s",
                fd_, estr, strerror(errno));
@@ -238,7 +238,7 @@ bool EsUrl::doRequest(int pfd, char *errbuf)
   if (status_ == READING) {
     log_debug(0, "wait response %p epoll_ctl_mod(#%d, EPOLLIN)", this, fd_);
 
-    struct epoll_event event = {EPOLLIN, this};
+    struct epoll_event event = {EPOLLIN, {this}};
     if (epoll_ctl(pfd, EPOLL_CTL_MOD, fd_, &event) != 0) {
       snprintf(errbuf, 1024, "epoll_ctl_mod(#%d, EPOLLIN) error: %s",
                fd_, strerror(errno));
@@ -638,7 +638,7 @@ bool EsSender::flowControl(bool block, size_t cn)
     rc = true;
   } else {
     if (block) {
-      struct epoll_event ev = {EPOLLIN, &pipeRead_};
+      struct epoll_event ev = {EPOLLIN, {&pipeRead_}};
       epoll_ctl(epfd_, EPOLL_CTL_ADD, pipeRead_, &ev);
     }
     rc = false;

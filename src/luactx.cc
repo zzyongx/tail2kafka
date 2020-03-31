@@ -36,7 +36,9 @@ bool loadFile(const char *file, T *q)
     }
 
     buffer[n-1] = '\0';
-    q->push_back(buffer);
+    if (std::find(q->begin(), q->end(), std::string(buffer)) == q->end()) {
+      q->push_back(buffer);  // uniq
+    }
   }
 
   fclose(fp);

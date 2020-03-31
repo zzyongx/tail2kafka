@@ -7,10 +7,13 @@
 #include <cstring>
 #include <cassert>
 #include <string>
+#include <vector>
 #include <memory>
+#include <algorithm>
 #include <stdint.h>
 #include <stdarg.h>
 #include <time.h>
+#include <glob.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
@@ -20,7 +23,6 @@
 #include <pthread.h>
 
 #define N100M 100 * 1024 * 1024
-#define NFILE 3
 #define LOGGER_INIT() Logger *Logger::defLogger = 0;
 #define LOGGER_ONCE(once) Logger::defLogger->setOnce((once));
 
@@ -44,10 +46,11 @@ public:
 
   static Logger *defLogger;
 
-  static Logger *create(const std::string &file, Rotate rotate, bool def = false, time_t *nowPtr = 0) {
+  static Logger *create(const std::string &file, Rotate rotate, bool def = false,
+                        time_t *nowPtr = 0, int nfile = 0) {
     if (def && defLogger) return defLogger;
 
-    std::auto_ptr<Logger> logger(new Logger(file, rotate, nowPtr));
+    std::auto_ptr<Logger> logger(new Logger(file, rotate, nowPtr, nfile));
     if (logger->init()) {
       Logger *ptr = logger.release();
       if (def) defLogger = ptr;
@@ -138,7 +141,7 @@ public:
   }
 
 private:
-  Logger(const std::string &file, Rotate rotate, time_t *nowPtr)
+  Logger(const std::string &file, Rotate rotate, time_t *nowPtr, int nfile)
     : limit_(N100M), once_(false), rotate_(rotate), reopen_(false), nowPtr_(nowPtr),
       bindStdout_(false), bindStderr_(false), handle_(-1), file_(file) {
 #if _DEBUG_
@@ -146,6 +149,22 @@ private:
 #else
     setLevel(INFO);
 #endif
+
+    if (nfile == 0) {
+      if (rotate_ == SIZE) {
+        nfile_ = 12;
+      } else if (rotate_ == HOUR) {
+        nfile_ = 48;
+      } else if (rotate_ ==  DAY) {
+        nfile_ = 7;
+      }
+    } else if (nfile > 0) {
+      nfile_ = nfile;
+    }
+
+    if (rotate_ == SIZE && nfile < 0) {
+      nfile_ = 3;
+    }
   }
 
   bool init() {
@@ -177,6 +196,39 @@ private:
     else assert(0);
   }
 
+  void rotateByTime() {
+    std::string pattern = file_ + "_*";
+    glob_t g;
+    if (nfile_ > 0 && glob(pattern.c_str(), 0, 0, &g) == 0) {
+      if (int(g.gl_pathc) > nfile_) {
+        std::vector<std::string> files;
+        for (size_t i = 0; i < g.gl_pathc; ++i) {
+          files.push_back(g.gl_pathv[i]);
+        }
+        std::sort(files.begin(), files.end());
+        for (int i = 0; i < int(g.gl_pathc) - nfile_; ++i) {
+          unlink(files[i].c_str());
+        }
+      }
+      globfree(&g);
+    }
+  }
+
+  void rotateBySize() {
+    char buffer[32];
+    sprintf(buffer, ".%d", nfile_);
+    std::string nfile = file_ + buffer;
+
+    for (int i = nfile_-1; i > 0; --i) {
+      sprintf(buffer, ".%d", i);
+      std::string rfile = file_ + buffer;
+
+      if (access(rfile.c_str(), F_OK) == 0) rename(rfile.c_str(), nfile.c_str());
+      nfile = rfile;
+    }
+    rename(file_.c_str(), nfile.c_str());
+  }
+
   bool openFile(time_t now, struct tm *tm) {
     std::string file(file_);
     if (rotate_ == DAY || rotate_ == HOUR) {
@@ -184,27 +236,15 @@ private:
       size_t n = 0;
       if (rotate_ == DAY) n = strftime(buffer, 32, "_%Y-%m-%d", tm);
       else n = strftime(buffer, 32, "_%Y-%m-%d_%H", tm);
+
+      rotateByTime();
       file.append(buffer, n);
     } else if (rotate_ == SIZE) {
       if (size_ == 0) {
         struct stat st;
         if (stat(file.c_str(), &st) == 0) size_ = st.st_size;
       }
-
-      if (size_ >= limit_) {
-        char buffer[32];
-        sprintf(buffer, ".%d", NFILE);
-        std::string nfile = file + buffer;
-
-        for (int i = NFILE-1; i > 0; --i) {
-          sprintf(buffer, ".%d", i);
-          std::string rfile = file + buffer;
-
-          if (access(rfile.c_str(), F_OK) == 0) rename(rfile.c_str(), nfile.c_str());
-          nfile = rfile;
-        }
-        rename(file.c_str(), nfile.c_str());
-      }
+      if (size_ >= limit_) rotateBySize();
     }
 
     int fd = open(file.c_str(), O_WRONLY | O_APPEND | O_CREAT,
@@ -282,6 +322,7 @@ private:
 
   uint8_t level_;
   Rotate  rotate_;
+  int     nfile_;
   bool    reopen_;
   time_t *nowPtr_;
 
@@ -295,11 +336,7 @@ private:
   time_t fileTime_;
 };
 
-// extern Logger *Logger::defLogger = 0;
-
-#ifdef NO_LOGGER
-
-# define LOG_IMPL(level, eno, fmt, args...) do {         \
+#define LOG_STDOUT(level, eno, fmt, args...) do {        \
   time_t now__ = time(0);                                \
   struct tm ltm__;                                       \
   localtime_r(&now__, &ltm__);                           \
@@ -310,20 +347,29 @@ private:
          eno, eno ? strerror(eno) : "", ##args);         \
 } while (0)
 
-# define log_fatal(eno, fmt, args...) LOG_IMPL("FATAL", eno, fmt, ##args)
-# define log_error(eno, fmt, args...) LOG_IMPL("ERROR", eno, fmt, ##args)
-# define log_info(eno, fmt, args...)  LOG_IMPL("INFO",  eno, fmt, ##args)
-# define log_debug(eno, fmt, args...) LOG_IMPL("DEBUG", eno, fmt, ##args)
-# define log_opaque(ptr, len, autonl) printf("%.*s%s", (int) len, ptr, autonl ? "\n" : "")
+#define log_fatal(eno, fmt, args...) do {                                                \
+  if (Logger::defLogger) Logger::defLogger->fatal(__FILE__, __LINE__, eno, fmt, ##args); \
+  else LOG_STDOUT("FATAL", eno, fmt, ##args);                                            \
+} while (0)
 
-#else
+#define log_error(eno, fmt, args...) do {                                                \
+  if (Logger::defLogger) Logger::defLogger->error(__FILE__, __LINE__, eno, fmt, ##args); \
+  else LOG_STDOUT("ERROR", eno, fmt, ##args);                                            \
+} while (0)
 
-# define log_fatal(eno, fmt, args...) Logger::defLogger->fatal(__FILE__, __LINE__, eno, fmt, ##args)
-# define log_error(eno, fmt, args...) Logger::defLogger->error(__FILE__, __LINE__, eno, fmt, ##args)
-# define log_info(eno, fmt, args...)  Logger::defLogger->info(__FILE__, __LINE__, eno, fmt, ##args)
-# define log_debug(eno, fmt, args...) Logger::defLogger->debug(__FILE__, __LINE__, eno, fmt, ##args)
-# define log_opaque(ptr, len, autonl) Logger::defLogger->print(ptr, len, autonl);
+#define log_info(eno, fmt, args...)  do {                                                \
+  if (Logger::defLogger) Logger::defLogger->info(__FILE__, __LINE__, eno, fmt, ##args);  \
+  else LOG_STDOUT("INFO",  eno, fmt, ##args);                                            \
+} while (0)
 
-#endif
+#define log_debug(eno, fmt, args...) do {                                                \
+  if (Logger::defLogger) Logger::defLogger->debug(__FILE__, __LINE__, eno, fmt, ##args); \
+  else LOG_STDOUT("DEBUG", eno, fmt, ##args);                                            \
+} while (0)
+
+#define log_opaque(ptr, len, autonl) do {                                                \
+  if (Logger::defLogger) Logger::defLogger->print(ptr, len, autonl);                     \
+  else printf("%.*s%s", (int) len, ptr, autonl ? "\n" : "");                             \
+} while (0)
 
 #endif

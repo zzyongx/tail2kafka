@@ -120,10 +120,13 @@ DEFINE(loadCnf)
 {
   static char errbuf[MAX_ERR_LEN];
 
+  const char *hostname = getenv("HOSTNAME");
+  check(hostname, "run export HOSTNAME=$(hostname)");
+
   cnf = CnfCtx::loadCnf(ETCDIR, errbuf);
   check(cnf, "loadCnf %s", errbuf);
 
-  check(cnf->host() == "zzyong", "cnf host %s", cnf->host().c_str());
+  check(cnf->host() == hostname, "cnf host %s", cnf->host().c_str());
   check(cnf->partition() == 0, "cnf partition %d", cnf->partition());
   check(cnf->getPollLimit() == 50, "cnf polllimit %d", cnf->getPollLimit());
 
@@ -371,13 +374,15 @@ DEFINE(initFileReader)
 
   time_t now = 1518493737;  // 2018-02-13 11:48:57
 
+  std::string host(getenv("HOSTNAME"));
+
   ctx->md5sum_ = false;
   std::string *s = ctx->fileReader_->buildFileStartRecord(now);
-  std::string json = "#zzyong {'time':'2018-02-13T11:48:57', 'event':'START'}";
+  std::string json = "#" + host + " {'time':'2018-02-13T11:48:57', 'event':'START'}";
   check(*s == util::replace(&json, '\'', '"'), "start record error %s != %s", PTRS(*s), PTRS(json));
 
   s = ctx->fileReader_->buildFileEndRecord(now, 100, "oldFileName");
-  json = "#zzyong {'time':'2018-02-13T11:48:57', 'event':'END', 'file':'oldFileName', 'size':100, 'sendsize':0, 'lines':0, 'sendlines':0, 'md5':''}";
+  json = "#" + host + " {'time':'2018-02-13T11:48:57', 'event':'END', 'file':'oldFileName', 'size':100, 'sendsize':0, 'lines':0, 'sendlines':0, 'md5':''}";
   check(*s == util::replace(&json, '\'', '"'), "end record error %s != %s", PTRS(*s), PTRS(json));
 
   const char *topics[] = {"basic", "basic2", "filter", "grep", "transform", "aggregate"};

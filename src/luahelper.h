@@ -39,11 +39,25 @@ public:
     return true;
   }
 
+  std::string luaString(lua_State *L, int index) {
+    size_t len;
+    const char *ptr = lua_tolstring(L, index, &len);
+    return std::string(ptr, len);
+  }
+
+  void luaString(lua_State *L, int index, std::string *r, bool append = false) {
+    size_t len;
+    const char *ptr = lua_tolstring(L, index, &len);
+
+    if (append) r->append(ptr, len);
+    else r->assign(ptr, len);
+  }
+
   bool getString(const char *name, std::string *value) {
     bool rc = true;
     lua_getglobal(L_, name);
     if (lua_isstring(L_, 1)) {
-      value->assign(lua_tostring(L_, 1));
+      luaString(L_, 1, value);
     } else {
       snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be string", file_.c_str(), name);
       rc = false;
@@ -59,7 +73,7 @@ public:
       value->assign(def);
     } else {
       if (lua_isstring(L_, 1)) {
-        value->assign(lua_tostring(L_, 1));
+        luaString(L_, 1, value);
       } else {
         snprintf(errbuf_, MAX_ERR_LEN, "%s %s must be string", file_.c_str(), name);
         rc = false;
@@ -123,7 +137,7 @@ public:
           snprintf(errbuf_, MAX_ERR_LEN, "%s %s value must be string", file_.c_str(), name);
           rc = false;
         } else {
-          map->insert(std::make_pair(lua_tostring(L_, -2), lua_tostring(L_, -1)));
+          map->insert(std::make_pair(luaString(L_, -2), luaString(L_, -1)));
         }
         lua_pop(L_, 1);
       }
@@ -150,7 +164,7 @@ public:
       while (rc && lua_next(L_, 1) != 0) {
         std::string key;
         if (lua_type(L_, -2) == LUA_TSTRING) {
-          key = lua_tostring(L_, -2);
+          luaString(L_, -2, &key);
         } else {
           snprintf(errbuf_, MAX_ERR_LEN, "%s %s key must be string", file_.c_str(), name);
           rc = false;
@@ -159,7 +173,7 @@ public:
 
         std::vector<std::string> value;
         if (lua_type(L_, -1) == LUA_TSTRING || lua_type(L_, -1) == LUA_TNUMBER) {
-          value.push_back(lua_tostring(L_, -1));
+          value.push_back(luaString(L_, -1));
           map->insert(std::make_pair(key, value));
         } else if (lua_type(L_, -1) == LUA_TTABLE) {
           int size = lua_objlen(L_, -1);
@@ -168,7 +182,7 @@ public:
             lua_pushinteger(L_, i+1);
             lua_gettable(L_, -2);
             if (lua_type(L_, -1) == LUA_TSTRING || lua_type(L_, -1) == LUA_TNUMBER) {
-              value.push_back(lua_tostring(L_, -1));
+              value.push_back(luaString(L_, -1));
             } else {
               snprintf(errbuf_, MAX_ERR_LEN, "%s %s->%s element #%d must be string",
                        file_.c_str(), name, key.c_str(), i);
@@ -176,7 +190,7 @@ public:
             }
             lua_settop(L_, top);
           }
-          if (rc) map->insert(std::make_pair(lua_tostring(L_, -2), value));
+          if (rc) map->insert(std::make_pair(luaString(L_, -2), value));
         } else {
           snprintf(errbuf_, MAX_ERR_LEN, "%s %s->%s value must be string/array", file_.c_str(), name, key.c_str());
           rc = false;
@@ -237,7 +251,7 @@ public:
         lua_pushinteger(L_, i+1);
         lua_gettable(L_, 1);
         if (lua_type(L_, -1) == LUA_TSTRING || lua_type(L_, -1) == LUA_TNUMBER) {
-          value->push_back(lua_tostring(L_, -1));
+          value->push_back(luaString(L_, -1));
         } else {
           snprintf(errbuf_, MAX_ERR_LEN, "%s %s element must be string", file_.c_str(), name);
           rc = false;
@@ -260,7 +274,7 @@ public:
       value->assign(def);
     } else {
       if (lua_isstring(L_, 1)) {
-        value->assign(lua_tostring(L_, 1));
+        luaString(L_, 1, value);
       } else if (lua_isfunction(L_, 1)) {
         value->assign(name);
       } else {
@@ -316,7 +330,7 @@ public:
         lua_settop(L_, 0);
         return false;
       }
-      result->append(lua_tostring(L_, -1));
+      luaString(L_, -1, result, true);
     }
 
     lua_settop(L_, 0);
@@ -335,19 +349,19 @@ public:
     return true;
   }
 
-  bool callResultString(const char *name, std::string *result) {
+  bool callResultString(const char *name, std::string *result, bool append = false) {
     if (!lua_isstring(L_, 1)) {
       snprintf(errbuf_, MAX_ERR_LEN, "%s %s return #1 must be string(nil)", file_.c_str(), name);
       lua_settop(L_, 0);
       return false;
     }
 
-    result->append(lua_tostring(L_, 1));
+    luaString(L_, 1, result, append);
     lua_settop(L_, 0);
     return true;
   }
 
-  bool callResultString(const char *name, std::string *r1, std::string *r2) {
+  bool callResultString(const char *name, std::string *r1, std::string *r2, bool append = false) {
     std::string *r[2] = {r1, r2};
     for (int i = 0; i < 2; ++i) {
       if (!lua_isstring(L_, i+1)) {
@@ -356,7 +370,7 @@ public:
         return false;
       }
 
-      r[i]->assign(lua_tostring(L_, i+1));
+      luaString(L_, i+1, r[i], append);
     }
 
     lua_settop(L_, 0);
@@ -369,7 +383,7 @@ public:
       lua_settop(L_, 0);
       return false;
     }
-    s->assign(lua_tostring(L_, 1));
+    luaString(L_, 1, s);
 
     if (!lua_istable(L_, 2)) {
       snprintf(errbuf_, MAX_ERR_LEN, "%s %s return #2 must be hash table", file_.c_str(), name);
@@ -389,7 +403,7 @@ public:
         lua_settop(L_, 0);
         return false;
       }
-      map->insert(std::make_pair(lua_tostring(L_, -2), (int) lua_tonumber(L_, -1)));
+      map->insert(std::make_pair(luaString(L_, -2), (int) lua_tonumber(L_, -1)));
       lua_pop(L_, 1);
     }
 

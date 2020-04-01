@@ -125,7 +125,7 @@ int LuaFunction::transform(off_t off, const char *line, size_t nline, std::vecto
   std::string *result = new std::string;
   if (ctx_->withhost()) result = addHost(result, ctx_->cnf()->host(), off, true);
 
-  if (helper_->callResultString(funName_.c_str(), result)) {
+  if (helper_->callResultString(funName_.c_str(), result, true)) {
     records->push_back(FileRecord::create(0, off, result));
     return 1;
   } else {

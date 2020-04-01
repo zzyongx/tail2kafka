@@ -21,6 +21,7 @@ test -f $BINDIR/../ENV.sh && source $BINDIR/../ENV.sh
 KAFKAHOME=${KAFKAHOME:-"/opt/kafka"}
 ZOOKEEPER=${ZOOKEEPER:-"localhost:2181/kafka"}
 KAFKASERVER=${KAFKASERVER:-"localhost:9092"}
+HOSTNAME=${HOSTNAME:-$(hostname)}
 
 echo "WARN: YOU MUST KILL tail2kafka and kafka2file first, both may create topic automatic"
 
@@ -51,7 +52,7 @@ done
 
 cd -
 
-OLDFILE=$K2FDIR/basic/zzyong_basic.log.old
+OLDFILE=$K2FDIR/basic/${HOSTNAME}_basic.log.old
 test -d $K2FDIR || mkdir $K2FDIR
 rm -f $K2FDIR/basic.0.offset $OLDFILE
 

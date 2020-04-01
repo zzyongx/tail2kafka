@@ -1,10 +1,10 @@
 Name:      tail2kafka
-Version:   2.2.1
+Version:   2.2.2
 Release:   1
 Summary:   stream file data to kafka/stream kafka data to file
 Group:     tail2kafka
 License:   Apache2
-Source0:   tail2kafka-2.2.1.tar.gz
+Source0:   tail2kafka-2.2.2.tar.gz
 BuildRoot: /var/tmp/tail2kafka
 BuildRequires: libcurl-devel >= 7.19.7
 BuildRequires: openssl-devel >= 1.0.1e-30
@@ -72,6 +72,9 @@ rm -rf $RPM_BUILD_ROOT
 ln -sf ../init.d/tail2kafka /etc/rc.d/rc3.d/S88tail2kafka
 
 %changelog
+* Wed Apr  1 2020 zzyongx <iamzhengzhiyong@gmail.com> -2.2.2-1
+- Bugfix: multi file tail to one kafka cause coredump
+
 * Mon Mar 18 2019 zzyongx <iamzhengzhiyong@gmail.com> -2.1.2-1
 - Changes: tail2es add flow control
 - Changes: tail2es use multi-thread

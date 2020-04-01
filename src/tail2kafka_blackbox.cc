@@ -18,7 +18,7 @@
 static const char *BROKERS = "127.0.0.1:9092";
 
 typedef std::vector<std::string> StringList;
-static const char *hostname = "zzyong";
+static const char *hostname;
 
 #define LOG(f) "logs/"f
 
@@ -29,6 +29,12 @@ int main()
 {
   const char *env = getenv("KAFKASERVER");
   if (env) BROKERS = env;
+
+  hostname = getenv("HOSTNAME");
+  if (!hostname) {
+    fprintf(stderr, "run export HOSTNAME=$(hostname)\n");
+    return EXIT_FAILURE;
+  }
 
   start_producer();
   sleep(1);

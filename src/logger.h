@@ -362,10 +362,16 @@ private:
   else LOG_STDOUT("INFO",  eno, fmt, ##args);                                            \
 } while (0)
 
+# if _DEBUG_
 #define log_debug(eno, fmt, args...) do {                                                \
   if (Logger::defLogger) Logger::defLogger->debug(__FILE__, __LINE__, eno, fmt, ##args); \
   else LOG_STDOUT("DEBUG", eno, fmt, ##args);                                            \
 } while (0)
+# else
+#define log_debug(eno, fmt, args...) do {                                                \
+  if (Logger::defLogger) Logger::defLogger->debug(__FILE__, __LINE__, eno, fmt, ##args); \
+} while (0)
+# endif
 
 #define log_opaque(ptr, len, autonl) do {                                                \
   if (Logger::defLogger) Logger::defLogger->print(ptr, len, autonl);                     \

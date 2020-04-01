@@ -65,16 +65,16 @@ void InotifyCtx::flowControl(RunStatus *runStatus)
 {
   while (runStatus->get() == RunStatus::WAIT) {
     bool block = cnf_->stats()->queueSize() > MAX_FILE_QUEUE_SIZE;
-    cnf_->flowControl(block);
-
     cnf_->logStats();
+
+    KafkaCtx *kafka = cnf_->getKafka();
+    if (kafka) break;
+
+    cnf_->flowControl(block);
     if (!block) break;
 
     sys::millisleep(10);
     cnf_->fasttime(true, TIMEUNIT_SECONDS);
-
-    KafkaCtx *kafka = cnf_->getKafka();
-    if (kafka) kafka->poll(10);
   }
 }
 
@@ -195,11 +195,7 @@ void InotifyCtx::globalCheck()
 {
   for (std::vector<LuaCtx *>::iterator ite = cnf_->getLuaCtxs().begin();
        ite != cnf_->getLuaCtxs().end(); ++ite) {
-    LuaCtx *ctx = *ite;
-    while (ctx) {
-      ctx->getFileReader()->checkCache();
-      ctx = ctx->next();
-    }
+    (*ite)->getFileReader()->checkCache();
   }
   unEofCheck();
 }

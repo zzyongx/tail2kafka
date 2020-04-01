@@ -191,9 +191,9 @@ void CnfCtx::logStats()
 
   TailStats s;
   stats_.get(&s);
-  log_error(0, "kafka/es status %s, TailStatus,fileRead=%ld,logRead=%ld,logWrite=%ld,logSend=%ld,logRecv=%ld,logError=%ld,queueSize=%ld",
-            block ? "block" : "ok", s.fileRead(), s.logRead(), s.logWrite(),
-            s.logSend(), s.logRecv(), s.logError(), s.queueSize());
+  log_info(0, "kafka/es status %s, TailStatus,fileRead=%ld,logRead=%ld,logWrite=%ld,logSend=%ld,logRecv=%ld,logError=%ld,queueSize=%ld",
+           block ? "block" : "ok", s.fileRead(), s.logRead(), s.logWrite(),
+           s.logSend(), s.logRecv(), s.logError(), s.queueSize());
   lastLog_ = fasttime();
 }
 

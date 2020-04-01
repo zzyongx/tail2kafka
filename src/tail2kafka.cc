@@ -44,14 +44,14 @@ int main(int argc, char *argv[])
     return EXIT_FAILURE;
   }
 
-  if (!Logger::create(cnf->logdir() + "/tail2kafka.log", Logger::DAY, true)) {
-    fprintf(stderr, "%d:%s init logger error\n", errno, strerror(errno));
-    return EXIT_FAILURE;
+  if (cnf->logdir() != "-") {
+    if (!Logger::create(cnf->logdir() + "/tail2kafka.log", Logger::DAY, true)) {
+      fprintf(stderr, "%d:%s init logger error\n", errno, strerror(errno));
+      return EXIT_FAILURE;
+    }
   }
 
-  bool daemonOff = getenv("DAEMON_OFF");
-
-  if (!daemonOff) {
+  if (cnf->daemonize() == 1) {
     if (getenv("TAIL2KAFKA_NOSTDIO")) {
       daemon(1, 0);
     } else {
@@ -59,10 +59,13 @@ int main(int argc, char *argv[])
     }
   }
 
+
   RunStatus *runStatus = RunStatus::create();
   cnf->setRunStatus(runStatus);
 
-  if (daemonOff) return runForeGround(cnf);
+  if (cnf->daemonize() == -1) {
+    return runForeGround(cnf);
+  }
 
   if (!sys::initSingleton(cnf->getPidFile(), errbuf)) {
     log_fatal(0, "init singleton %s", errbuf);

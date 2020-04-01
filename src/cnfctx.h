@@ -147,6 +147,7 @@ public:
   char *errbuf() { return errbuf_; }
   const std::string &libdir() const { return libdir_; }
   const std::string &logdir() const { return logdir_; }
+  int daemonize() const { return daemonize_; }
 
   void setTailLimit(bool tailLimit) { tailLimit_ = tailLimit; }
   bool getTailLimit() const { return tailLimit_; }
@@ -173,6 +174,7 @@ private:
   std::string pingbackUrl_;
   std::string logdir_;
   std::string libdir_;
+  int daemonize_;
 
   size_t                 count_;
   std::vector<LuaCtx *>  luaCtxs_;

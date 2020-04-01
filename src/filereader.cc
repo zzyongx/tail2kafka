@@ -40,6 +40,8 @@ FileReader::FileReader(LuaCtx *ctx)
   fileRotateTime_ = ctx->cnf()->fasttime();
   holdFd_ = -1;
   eof_ = false;
+
+  parent_ = 0;
 }
 
 FileReader::~FileReader()
@@ -69,6 +71,8 @@ bool FileReader::tryOpen(char *errbuf)
 
 bool FileReader::init(char *errbuf)
 {
+  assert(parent_ == 0);
+
   if (!tryOpen(errbuf)) return false;
 
   struct stat st;
@@ -96,6 +100,8 @@ bool FileReader::init(char *errbuf)
 
 bool FileReader::checkRewatch()
 {
+  assert(parent_ == 0);
+
   // rewatch only existing file
   int tmpFd = -1;
   bool rewatch = access(ctx_->file().c_str(), F_OK) == 0;
@@ -139,6 +145,8 @@ bool FileReader::checkRewatch()
 
 bool FileReader::reinit()
 {
+  assert(parent_ == 0);
+
   bool reopen = false;
   bool rewatch = false;
   if (bits_test(flags_, FILE_OPENONLY)) {   // datafile change
@@ -203,6 +211,8 @@ bool FileReader::reinit()
 
 bool FileReader::setStartPosition(off_t fileSize, char *errbuf)
 {
+  assert(parent_ == 0);
+
   StartPosition startPosition = stringToStartPosition(ctx_->getStartPosition());
   if (startPosition == FileReader::LOG_START) {
     size_ = ctx_->cnf()->getFileOff()->getOff(inode_);
@@ -228,6 +238,8 @@ bool FileReader::setStartPosition(off_t fileSize, char *errbuf)
 
 void FileReader::initFileOffRecord(FileOffRecord * fileOffRecord)
 {
+  assert(parent_ == 0);
+
   fileOffRecord_ = fileOffRecord;
   fileOffRecord_->inode = inode_;
   fileOffRecord_->off   = size_;
@@ -236,7 +248,14 @@ void FileReader::initFileOffRecord(FileOffRecord * fileOffRecord)
 // FileOffRecord should be called in only one thread, but it must not call thread unsafe function
 void FileReader::updateFileOffRecord(const FileRecord *record)
 {
+  ctx_->cnf()->stats()->logSendInc();
   ctx_->cnf()->stats()->queueSizeDec();
+
+  if (record->off == (off_t) -1) {
+    return;
+  }
+
+  assert(parent_ == 0);
 
   if (record->inode != fileOffRecord_->inode) {
     // rename file does not change inode
@@ -307,6 +326,8 @@ inline std::string flagsToString(uint32_t flags)
 
 void FileReader::tagRotate(int action, const char *oldFile, const char *newFile)
 {
+  assert(parent_ == 0);
+
   bits_set(flags_, action);
 
   std::string oldFileName;
@@ -334,6 +355,8 @@ void FileReader::tagRotate(int action, const char *oldFile, const char *newFile)
 
 void FileReader::checkHistoryRotate(const struct stat *stPtr)
 {
+  assert(parent_ == 0);
+
   if (bits_test(flags_, FILE_HISTORY) && stPtr->st_size == size_) {
     std::string oldFile = ctx_->datafile();
 
@@ -357,6 +380,8 @@ void FileReader::checkHistoryRotate(const struct stat *stPtr)
 // we wait use roateDelay to reduce data lose
 bool FileReader::waitRotate()
 {
+  assert(parent_ == 0);
+
   bool rc = false;
   if (bits_test(flags_, FILE_MOVED) || bits_test(flags_, FILE_CREATED)) {
     if (ctx_->getRotateDelay() > 0) {  // if config rotate delay
@@ -380,6 +405,8 @@ bool FileReader::waitRotate()
 
 bool FileReader::checkRotate(const struct stat *stPtr, std::string *rotateFileName, bool *closeFd)
 {
+  assert(parent_ == 0);
+
   if (bits_test(flags_, FILE_MOVED)) rotateFileName->assign(getFileNameFromFd(holdFd_ > 0 ? holdFd_ : fd_));
   else if (bits_test(flags_, FILE_CREATED)) rotateFileName->assign(ctx_->file());
 
@@ -419,6 +446,8 @@ bool FileReader::checkRotate(const struct stat *stPtr, std::string *rotateFileNa
 
 bool FileReader::remove()
 {
+  assert(parent_ == 0);
+
   struct stat st;
   if (fstat(fd_, &st) != 0) {
     log_error(0, "%d %s fstat error", fd_, ctx_->file().c_str());
@@ -469,6 +498,8 @@ bool FileReader::remove()
 
 bool FileReader::setStartPositionEnd(off_t fileSize, char *errbuf)
 {
+  assert(parent_ == 0);
+
   if (fileSize == 0) {
     size_ = 0;
     return true;
@@ -494,6 +525,8 @@ bool FileReader::setStartPositionEnd(off_t fileSize, char *errbuf)
 
 bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::string *rawData)
 {
+  assert(parent_ == 0);
+
   std::auto_ptr<std::string> rawDataPtr(rawData);
   if (ctx_->cnf()->flowControlOn()) return false;
 
@@ -572,6 +605,8 @@ bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::st
 
 void FileReader::propagateTailContent(size_t size)
 {
+  assert(parent_ == 0);
+
   LuaCtx *ctx = ctx_->next();
   while (ctx) {
     FileReader *f = ctx->getFileReader();
@@ -586,6 +621,8 @@ void FileReader::propagateTailContent(size_t size)
 
 void FileReader::propagateProcessLines(ino_t inode, off_t *off)
 {
+  assert(parent_ == 0);
+
   LuaCtx *ctx = ctx_;
   while (ctx) {
     ctx->getFileReader()->processLines(inode, off);
@@ -596,6 +633,8 @@ void FileReader::propagateProcessLines(ino_t inode, off_t *off)
 
 std::string *FileReader::buildFileStartRecord(time_t now)
 {
+  assert(parent_ == 0);
+
   std::string dt = sys::timeFormat(now, "%Y-%m-%dT%H:%M:%S");
 
   char buffer[8192];
@@ -606,6 +645,8 @@ std::string *FileReader::buildFileStartRecord(time_t now)
 
 std::string *FileReader::buildFileEndRecord(time_t now, off_t size, const char *oldFileName)
 {
+  assert(parent_ == 0);
+
   std::string dt = sys::timeFormat(now, "%Y-%m-%dT%H:%M:%S");
 
   if (ctx_->md5sum() && md5_.empty()) {
@@ -626,7 +667,7 @@ std::string *FileReader::buildFileEndRecord(time_t now, off_t size, const char *
 
 void FileReader::propagateRawData(const std::string *data)
 {
-  assert(data != 0);
+  assert(data != 0 && parent_ == 0);
   log_info(0, "%d %s META %s", fd_, ctx_->file().c_str(), data->c_str());
 
   LuaCtx *ctx = ctx_;
@@ -654,7 +695,7 @@ void FileReader::processLines(ino_t inode, off_t *offPtr)
       if (offPtr) *offPtr += pos - buffer_ + 1;
 
       if (np > 0) line_++;
-      if (ctx_->md5sum() && pos != buffer_) MD5_Update(&md5Ctx_, buffer_, pos - buffer_ + 1);
+      if (parent_ == 0 && ctx_->md5sum() && pos != buffer_) MD5_Update(&md5Ctx_, buffer_, pos - buffer_ + 1);
       n = (pos+1) - buffer_;
     }
   } else {
@@ -664,7 +705,7 @@ void FileReader::processLines(ino_t inode, off_t *offPtr)
       if (offPtr) *offPtr += pos - (buffer_ + n) + 1;
 
       if (np > 0) line_++;
-      if (ctx_->md5sum() && pos != buffer_ + n) MD5_Update(&md5Ctx_, buffer_ + n, pos - (buffer_ + n) + 1);
+      if (parent_ == 0 && ctx_->md5sum() && pos != buffer_ + n) MD5_Update(&md5Ctx_, buffer_ + n, pos - (buffer_ + n) + 1);
       n = (pos+1) - buffer_;
       if (n == npos_) break;
     }
@@ -709,6 +750,8 @@ int FileReader::processLine(off_t off, char *line, size_t nline, std::vector<Fil
 
 bool FileReader::checkCache()
 {
+  assert(parent_ == 0);
+
   LuaCtx *ctx = ctx_;
   while (ctx) {
     std::vector<FileRecord *> *records = new std::vector<FileRecord *>;

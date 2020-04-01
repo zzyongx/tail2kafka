@@ -40,7 +40,7 @@ public:
   bool loadHistoryFile();
   bool rectifyHistoryFile();
 
-  bool initFileReader(char *errbuf);
+  bool initFileReader(FileReader *reader, char *errbuf);
   FileReader *getFileReader() { return fileReader_; }
 
   void setRktId(int id) { rktId_ = id; }

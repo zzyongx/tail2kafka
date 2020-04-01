@@ -378,10 +378,14 @@ bool LuaCtx::setCurrentFile(const std::string &currentFile) const
   return writeFile("current", current.c_str(), files);
 }
 
-bool LuaCtx::initFileReader(char *errbuf)
+bool LuaCtx::initFileReader(FileReader *reader, char *errbuf)
 {
   std::auto_ptr<FileReader> fileReader(new FileReader(this));
-  if (!fileReader->init(errbuf)) return false;
+  if (reader) {
+    fileReader->init(reader);
+  } else {
+    if (!fileReader->init(errbuf)) return false;
+  }
   fileReader_ = fileReader.release();
   return true;
 }

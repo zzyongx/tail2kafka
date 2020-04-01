@@ -340,7 +340,7 @@ DEFINE(initFileReader)
   LuaCtx *ctx = getLuaCtx("basic");
   ctx->startPosition_ = "LOG_END";
 
-  check(ctx->initFileReader(cnf->errbuf()), "%s", cnf->errbuf());
+  check(ctx->initFileReader(0, cnf->errbuf()), "%s", cnf->errbuf());
   check(ctx->fileReader_->buffer_, "buffer init ok");
   check(ctx->fileReader_->npos_ == 0, "%d", (int) ctx->fileReader_->npos_);
   check(ctx->fileReader_->size_ == 7, "%d", (int) ctx->fileReader_->size_);
@@ -348,21 +348,21 @@ DEFINE(initFileReader)
 
   cnf->fileOff_->map_.insert(std::make_pair(st.st_ino, 3));
 
-  check(ctx->initFileReader(cnf->errbuf()), "%s", cnf->errbuf());
+  check(ctx->initFileReader(0, cnf->errbuf()), "%s", cnf->errbuf());
   check(ctx->fileReader_->npos_ == 0, "%d", (int) ctx->fileReader_->npos_);
   check(ctx->fileReader_->size_ == 3, "%d", (int) ctx->fileReader_->size_);
   SAFE_DELETE(ctx->fileReader_);
 
   cnf->fileOff_->map_[st.st_ino] = 7;
   ctx->startPosition_ = "LOG_START";
-  check(ctx->initFileReader(cnf->errbuf()), "%s", cnf->errbuf());
+  check(ctx->initFileReader(0, cnf->errbuf()), "%s", cnf->errbuf());
   check(ctx->fileReader_->size_ == 7, "%d", (int) ctx->fileReader_->size_);
   SAFE_DELETE(ctx->fileReader_);
 
   cnf->fileOff_->map_.clear();
 
   ctx->startPosition_ = "START";
-  check(ctx->initFileReader(cnf->errbuf()), "%s", cnf->errbuf());
+  check(ctx->initFileReader(0, cnf->errbuf()), "%s", cnf->errbuf());
   check(ctx->fileReader_->size_ == 0, "%d", (int) ctx->fileReader_->size_);
   SAFE_DELETE(ctx->fileReader_);
 

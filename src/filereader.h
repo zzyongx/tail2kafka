@@ -33,6 +33,10 @@ public:
   FileReader(LuaCtx *ctx);
   ~FileReader();
 
+  void init(FileReader *reader) {
+    parent_ = reader;
+  }
+
   bool init(char *errbuf);
   bool reinit();
 
@@ -85,6 +89,8 @@ private:
 
   MD5_CTX md5Ctx_;
   std::string md5_;
+
+  FileReader *parent_;
 
   char         *buffer_;
   size_t        npos_;

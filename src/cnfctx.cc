@@ -11,6 +11,9 @@ CnfCtx *CnfCtx::loadCnf(const char *dir, char *errbuf)
   std::vector<std::string> luaFiles;
   if (!sys::readdir(dir, ".lua", &luaFiles, errbuf)) return 0;
 
+  // useful when lua->next_ != 0
+  std::sort(luaFiles.begin(), luaFiles.end());
+
   std::string mainlua = std::string(dir) + "/main.lua";
   CnfCtx *cnf = CnfCtx::loadFile(mainlua.c_str(), errbuf);
   if (!cnf) return 0;
@@ -82,6 +85,8 @@ CnfCtx *CnfCtx::loadFile(const char *file, char *errbuf)
     return 0;
   }
 
+  if (!helper->getInt("daemonize", &cnf->daemonize_, 1)) return 0;
+
   if (!helper->getString("pidfile", &cnf->pidfile_)) return 0;
 
   if (!helper->getString("brokers", &cnf->brokers_, "")) return 0;
@@ -108,7 +113,7 @@ CnfCtx *CnfCtx::loadFile(const char *file, char *errbuf)
   if (!sys::isdir(cnf->libdir_.c_str(), errbuf)) return 0;
 
   if (!helper->getString("logdir", &cnf->logdir_, "/var/log/tail2kafka")) return 0;
-  if (!sys::isdir(cnf->logdir_.c_str(), errbuf)) return 0;
+  if (cnf->logdir_ != "-") if (!sys::isdir(cnf->logdir_.c_str(), errbuf)) return 0;
 
   cnf->helper_ = helper.release();
 
@@ -168,8 +173,10 @@ bool CnfCtx::initFileReader()
 {
   for (std::vector<LuaCtx *>::iterator ite = luaCtxs_.begin(); ite != luaCtxs_.end(); ++ite) {
     LuaCtx *ctx = *ite;
+    FileReader *reader = 0;
     while (ctx) {
-      if (!ctx->initFileReader(errbuf_)) return false;
+      if (!ctx->initFileReader(reader, errbuf_)) return false;
+      if (!reader) reader = ctx->getFileReader();
       ctx = ctx->next();
     }
   }

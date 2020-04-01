@@ -426,7 +426,7 @@ bool EsUrl::onError(int pfd, const char *error)
 
   bool move = false;
   if (error && error[0]) {
-    log_fatal(0, "%p #%d POST %s INTERNAL ERROR @%d: %s, load %d, keepalive %d, body %s",
+    log_fatal(0, "%p #%d POST %s INTERNAL ERROR %lu: %s, load %lu, keepalive %d, body %s",
               this, fd_, url_.c_str(), timeoutRetry_, error,
               urlManager_->load(), keepalive_, body_);
     record_->ctx->cnf()->stats()->logErrorInc();
@@ -645,7 +645,7 @@ bool EsSender::flowControl(bool block, size_t cn)
   }
 
   if (rc != block) {
-    log_info(0, "flow control load: %d, cn: %lu, status %s -> %s",
+    log_info(0, "flow control load: %lu, cn: %lu, status %s -> %s",
              urlManager_->load(), cn,
              block ? "block" : "ok", rc ? "block" : "ok");
   }

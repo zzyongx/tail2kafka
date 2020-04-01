@@ -632,11 +632,13 @@ void FileReader::propagateRawData(const std::string *data)
   LuaCtx *ctx = ctx_;
   while (ctx) {
     if (ctx->withhost()) {
-      std::vector<FileRecord *> *records = new std::vector<FileRecord *>(1, FileRecord::create(-1, -1, data));
+      std::string *raw = new std::string(*data);
+      std::vector<FileRecord *> *records = new std::vector<FileRecord *>(1, FileRecord::create(-1, -1, raw));
       ctx->getFileReader()->sendLines(-1, records);
     }
     ctx = ctx->next();
   }
+  delete data;
 }
 
 void FileReader::processLines(ino_t inode, off_t *offPtr)
@@ -682,6 +684,12 @@ void FileReader::processLines(ino_t inode, off_t *offPtr)
     npos_ = 0;
   }
 }
+
+#define TR_NOTPRINT(line, nline) do {     \
+  for (size_t i = 0; i < nline; ++i) {    \
+    if (!isprint(line[i])) line[i] = 'X'; \
+  }                                       \
+} while (0)
 
 /* line without NL */
 int FileReader::processLine(off_t off, char *line, size_t nline, std::vector<FileRecord *> *records)

@@ -67,13 +67,13 @@ void InotifyCtx::flowControl(RunStatus *runStatus)
     bool block = cnf_->stats()->queueSize() > MAX_FILE_QUEUE_SIZE;
     cnf_->logStats();
 
-    KafkaCtx *kafka = cnf_->getKafka();
-    if (kafka) break;
-
     cnf_->flowControl(block);
     if (!block) break;
 
-    sys::millisleep(10);
+    KafkaCtx *kafka = cnf_->getKafka();
+    if (kafka) kafka->poll(10);
+    else sys::millisleep(10);
+
     cnf_->fasttime(true, TIMEUNIT_SECONDS);
   }
 }

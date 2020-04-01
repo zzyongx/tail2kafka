@@ -285,12 +285,7 @@ bool EsUrl::doResponse(int /*pfd*/, char *errbuf)
     }
 
     if (respCode_ == 201 || respCode_ == 400) {
-      record_->ctx->cnf()->stats()->logSendInc();
-
-      if (record_->off != (off_t) -1 && record_->inode > 0) {
-        record_->ctx->getFileReader()->updateFileOffRecord(record_);
-      }
-
+      record_->ctx->getFileReader()->updateFileOffRecord(record_);
       FileRecord::destroy(record_);
       record_ = 0;
 

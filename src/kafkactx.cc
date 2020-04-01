@@ -33,13 +33,7 @@ static void log_cb(const rd_kafka_t *, int level, const char *fac, const char *b
 static void dr_msg_cb(rd_kafka_t *, const rd_kafka_message_t *rkmsg, void *)
 {
   FileRecord *record = (FileRecord *) rkmsg->_private;
-  record->ctx->cnf()->stats()->logSendInc();
-
-  if (record->off != (off_t) -1) {
-    LuaCtx *ctx = record->ctx;
-    ctx->getFileReader()->updateFileOffRecord(record);
-  }
-
+  record->ctx->getFileReader()->updateFileOffRecord(record);
   FileRecord::destroy(record);
 }
 

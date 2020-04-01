@@ -351,8 +351,10 @@ bool LuaCtx::parseEsIndexDoc(const std::string &esIndex, const std::string &esDo
 bool LuaCtx::addHistoryFile(const std::string &historyFile)
 {
   if (fqueue_.empty() || fqueue_.back() != historyFile) {
-    fqueue_.push_back(historyFile);
-    writeHistoryFile(cnf_->libdir(), fileAlias_, fqueue_);
+    if (std::find(fqueue_.begin(), fqueue_.end(), historyFile) == fqueue_.end()) {
+      fqueue_.push_back(historyFile);
+      writeHistoryFile(cnf_->libdir(), fileAlias_, fqueue_);
+    }
     return true;
   } else {
     return false;

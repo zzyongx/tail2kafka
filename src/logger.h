@@ -24,7 +24,7 @@
 
 #define N100M 100 * 1024 * 1024
 #define LOGGER_INIT() Logger *Logger::defLogger = 0;
-#define LOGGER_ONCE(once) Logger::defLogger->setOnce((once));
+#define LOGGER_ONCE(once) do {if (Logger::defLogger) Logger::defLogger->setOnce((once)); } while(0)
 
 static const size_t ERR_STR = 4095;
 static pthread_mutex_t LOGGER_MUTEX = PTHREAD_MUTEX_INITIALIZER;

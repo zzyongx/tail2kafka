@@ -24,7 +24,7 @@ public:
 private:
   static const char *typeToString(Type type);
 
-  LuaFunction(LuaCtx *ctx) : ctx_(ctx), type_(NIL) {}
+  LuaFunction(LuaCtx *ctx) : ctx_(ctx), helper_(0), type_(NIL) {}
   void init(LuaHelper *helper, const std::string &funName, Type type) {
     helper_  = helper;
     funName_ = funName;

@@ -14,6 +14,7 @@ public:
     : TaskQueue::Task(3), curl_(curl), url_(url)  {
   }
   bool doIt();
+  ~PingbackTask();
 
 private:
   CURL *curl_;
@@ -40,7 +41,6 @@ bool PingbackTask::doIt()
   CURLcode rc = curl_easy_perform(curl_);
   if (rc != CURLE_OK) {
     log_error(0, "pingback %s error %s", url_, curl_easy_strerror(rc));
-    delete url_;
     return false;
   }
 
@@ -48,8 +48,11 @@ bool PingbackTask::doIt()
   curl_easy_getinfo(curl_, CURLINFO_RESPONSE_CODE, &status);
   log_info(0, "pingback %s status %ld", url_, status);
 
-  delete url_;
   return true;
+}
+
+PingbackTask::~PingbackTask() {
+  delete []url_;
 }
 
 Metrics *Metrics::metrics_ = 0;

@@ -189,6 +189,7 @@ bool KafkaCtx::produce(FileRecord *record)
       log_error(0, "%s kafka produce error(#%d) %s, poll event %d",
                 rd_kafka_topic_name(rkt), i++, rd_kafka_err2str(err), nevent);
     } else {
+      cnf->stats()->queueSizeDec();
       cnf->stats()->logErrorInc();
       log_fatal(0, "%s kafka produce error %s",
                 rd_kafka_topic_name(rkt), rd_kafka_err2str(err));

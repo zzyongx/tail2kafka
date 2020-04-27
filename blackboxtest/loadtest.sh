@@ -4,8 +4,10 @@ BINDIR=$(readlink -e $(dirname "${BASH_SOURCE[0]}"))
 CFGDIR="$BINDIR/loadtest"
 PIDF=/var/run/tail2kafka.pid
 LIBDIR=/var/lib/tail2kafka
-T2KDIR=$HOME/data
-K2FDIR=$HOME/data/kafka2file
+
+DATADIR=${DATADIR:-$HOME}
+T2KDIR=$DATADIR/data
+K2FDIR=$DATADIR/data/kafka2file
 
 test -f $BINDIR/../ENV.sh && source $BINDIR/../ENV.sh
 KAFKASERVER=${KAFKASERVER:-"localhost:9092"}
@@ -37,12 +39,15 @@ N=${LOADTEST_N:-500000}
 SIZE=0
 
 # prepare history file
-rm -f $LIBDIR/biglog.history
+rm -f $LIBDIR/{biglog.history,biglog.current}
 for suffix in 2 1; do
   gen_bigdata "history.$suffix" $N 4096 $T2KDIR/big.log.history.$suffix
   echo "$T2KDIR/big.log.history.$suffix" >> $LIBDIR/biglog.history
   SIZE=$((SIZE + $(stat -c %s $T2KDIR/big.log.history.$suffix)))
 done
+
+echo "history file"
+cat $LIBDIR/biglog.history
 
 export BLACKBOXTEST_OUTFILE_TPL=$K2FDIR/catnull
 
@@ -66,6 +71,8 @@ mv $CFGDIR/linecopy.lua.backup $CFGDIR/linecopy.lua
 gen_bigdata "current" $N 4096 $T2KDIR/big.log
 SIZE=$((SIZE + $(stat -c %s $T2KDIR/big.log)))
 mv $T2KDIR/big.log $T2KDIR/big.log.2
+
+echo "$(date) current move to ${T2KDIR}/big.log.2"
 
 CHILDPID=$(pgrep -P $(cat $PIDF))
 while [ true ]; do
@@ -99,7 +106,11 @@ for block in 4096 2048 1024 512; do
   START=$(date +%s)
 
   gen_bigdata "current" $N $block $T2KDIR/big.log
+
+  sleep 5
+  echo "$(date) current move to /search/odin/data/big.log.$block"
   mv $T2KDIR/big.log $T2KDIR/big.log.$block
+
   ROTATESPAN=$(($(date +%s) - START - 2))
 
   while [ true ]; do

@@ -382,14 +382,13 @@ bool FileReader::waitRotate()
 {
   assert(parent_ == 0);
 
-  bool rc = false;
-  if (bits_test(flags_, FILE_MOVED) || bits_test(flags_, FILE_CREATED)) {
+  bool rc = true;
+  if (bits_test(flags_, FILE_MOVED) || bits_test(flags_, FILE_CREATED) || bits_test(flags_, FILE_DELETED)) {
+    rc = false;
     if (ctx_->getRotateDelay() > 0) {  // if config rotate delay
       if (bits_test(flags_, FILE_LOGGED) && ctx_->cnf()->fasttime() - fileRotateTime_ >= ctx_->getRotateDelay()) {
         rc = true;  // rotate delay timeout
       }
-    } else if (bits_test(flags_, FILE_MOVED) && access(ctx_->file().c_str(), F_OK) == 0) {  // if file reopened
-      rc = true;
     }
 
     if (!rc && !bits_test(flags_, FILE_LOGGED)) {

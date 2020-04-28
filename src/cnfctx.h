@@ -127,7 +127,6 @@ public:
   std::vector<LuaCtx *> &getLuaCtxs() { return luaCtxs_; }
 
   int getPollLimit() const { return pollLimit_; }
-  int getRotateDelay() const { return rotateDelay_; }
   const std::string &pingbackUrl() const { return pingbackUrl_; }
 
   uint32_t addr() const { return addr_; }
@@ -170,7 +169,6 @@ private:
   uint32_t    addr_;
   int         partition_;
   int         pollLimit_;
-  int         rotateDelay_;
   std::string pingbackUrl_;
   std::string logdir_;
   std::string libdir_;

@@ -165,35 +165,15 @@ bool LuaCtx::loadHistoryFile()
     return false;
   }
 
-  std::string current = cnf_->libdir() + "/" + fileAlias_ + ".current";
-  std::vector<std::string> files;
-  if (!::loadFile(current.c_str(), &files)) {
-    snprintf(cnf_->errbuf(), MAX_ERR_LEN, "load current file %s error %d:%s",
-             current.c_str(), errno, strerror(errno));
-    return false;
-  }
-
-  if (files.size() == 1 && !files[0].empty()) fcurrent_ = files[0];
-  else fcurrent_.clear();
-
   return true;
 }
 
 bool LuaCtx::rectifyHistoryFile()
 {
-  struct stat st;
-  if (!fcurrent_.empty()) {
-    bool exitWhenRotate = fqueue_.empty() && stat(fcurrent_.c_str(), &st) == 0 &&
-      cnf_->getFileOff()->getOff(st.st_ino) != (off_t) -1;
-
-    bool exitWhenRotateWithHistory = !fqueue_.empty() && fqueue_.back() != fcurrent_;
-
-    if (exitWhenRotate || exitWhenRotateWithHistory) fqueue_.push_back(fcurrent_);
-  }
-
   bool rc = true;
   while (!fqueue_.empty()) {
     std::string f = fqueue_.front();
+    struct stat st;
     rc = stat(f.c_str(), &st) == 0;
     if (!rc && errno == ENOENT) {               // datafile not longer exists
       fqueue_.pop_front();
@@ -272,7 +252,6 @@ LuaCtx *LuaCtx::loadFile(CnfCtx *cnf, const char *file)
   if (!helper->getBool("withtime", &ctx->withtime_, true)) return 0;
   if (!helper->getBool("autonl", &ctx->autonl_, true)) return 0;
   if (!helper->getBool("withhost", &ctx->withhost_, true)) return 0;
-  if (!helper->getInt("rotatedelay", &ctx->rotateDelay_, -1)) return 0;
   if (!helper->getString("pkey", &ctx->pkey_, "")) return 0;
 
   LuaFunction::Type luafType;
@@ -369,13 +348,6 @@ bool LuaCtx::removeHistoryFile()
   }
 
   return fqueue_.empty();
-}
-
-bool LuaCtx::setCurrentFile(const std::string &currentFile) const
-{
-  std::string current = cnf_->libdir() + "/" + fileAlias_ + ".current";
-  std::vector<std::string> files(1, currentFile);
-  return writeFile("current", current.c_str(), files);
 }
 
 bool LuaCtx::initFileReader(FileReader *reader, char *errbuf)

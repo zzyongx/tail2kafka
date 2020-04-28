@@ -94,7 +94,6 @@ CnfCtx *CnfCtx::loadFile(const char *file, char *errbuf)
 
   if (!helper->getInt("partition", &cnf->partition_, -1)) return 0;
   if (!helper->getInt("polllimit", &cnf->pollLimit_, 100)) return 0;
-  if (!helper->getInt("rotatedelay", &cnf->rotateDelay_, -1)) return 0;
 
   if (!helper->getString("pingbackurl", &cnf->pingbackUrl_, "")) return 0;
 

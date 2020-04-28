@@ -22,11 +22,10 @@ private:
     return pos != fdToCtx_.end() ? pos->second : 0;
   }
 
-  bool tryReWatch();
-  void tryRmWatch(LuaCtx *ctx, int wd);
-  void tryRmWatch();
+  bool addWatch(LuaCtx *ctx, bool strict);
+  void tryReWatch();
+  void tagRotate(LuaCtx *ctx, int wd);
   void globalCheck();
-  void unEofCheck();
 
   void flowControl(RunStatus *runStatus);
 

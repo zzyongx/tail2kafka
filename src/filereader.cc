@@ -37,8 +37,6 @@ FileReader::FileReader(LuaCtx *ctx)
   size_ = dsize_ = 0;
   line_ = dline_ = 0;
 
-  fileRotateTime_ = ctx->cnf()->fasttime();
-  holdFd_ = -1;
   eof_ = false;
 
   parent_ = 0;
@@ -48,165 +46,100 @@ FileReader::~FileReader()
 {
   delete[] buffer_;
   if (fd_ > 0) close(fd_);
-  if (holdFd_ > 0) close(holdFd_);
 }
 
-// try best to watch the file
-bool FileReader::tryOpen(char *errbuf)
+bool FileReader::openFile(struct stat *st, char *errbuf)
 {
-  const std::string &file = ctx_->datafile();
+  assert(parent_ == 0);
 
-  for (int i = 0; i < 15; ++i) {
-    fd_ = open(file.c_str(), O_RDONLY);
-    if (fd_ == -1) sleep(1);
-    else break;
-  }
+  const std::string &file = ctx_->datafile();
+  log_info(0, "file current tail %s", file.c_str());
+
+  fd_ = open(file.c_str(), (ctx_->autocreat() ? O_CREAT : 0) | O_RDONLY, 0644);
   if (fd_ == -1) {
-    snprintf(errbuf, MAX_ERR_LEN, "%s open error: %s", file.c_str(), strerror(errno));
+    if (errbuf) {
+      snprintf(errbuf, 1024, "open file %s error: %d:%s",
+               file.c_str(), errno, strerror(errno));
+    } else {
+      log_fatal(errno, "open file %s error", file.c_str());
+    }
     return false;
-  } else {
-    return true;
   }
+
+  if (ctx_->fileOwner() && chown(ctx_->file().c_str(), ctx_->uid(), ctx_->gid()) != 0) {
+    if (errbuf) {
+      snprintf(errbuf, 1024, "file %s chown(%s) error: %d:%s", file.c_str(),
+               ctx_->fileOwner(), errno, strerror(errno));
+    } else {
+      log_fatal(errno, "file %s chown(%s) error", file.c_str(), ctx_->fileOwner());
+    }
+    close(fd_);
+    fd_ = -1;
+    return false;
+  }
+
+  fstat(fd_, st);
+  inode_ = st->st_ino;
+
+  MD5_Init(&md5Ctx_);
+  md5_.clear();
+
+  return true;
 }
 
 bool FileReader::init(char *errbuf)
 {
-  assert(parent_ == 0);
-
-  if (!tryOpen(errbuf)) return false;
+  std::string timeFormatFile;
+  if (ctx_->getTimeFormatFile(&timeFormatFile)) {
+    ctx_->setTimeFormatFile(timeFormatFile);
+  }
 
   struct stat st;
-  fstat(fd_, &st);
-  inode_ = st.st_ino;
-
-  log_info(0, "open file %s fd %d inode %ld", ctx_->datafile().c_str(), fd_, inode_);
-
-  bits_set(flags_, FILE_WATCHED);
-  if (ctx_->datafile() != ctx_->file()) {
-    bits_set(flags_, FILE_HISTORY);
-    holdFd_ = open(ctx_->file().c_str(), O_RDONLY, 0644);
-    if (holdFd_ == -1) {
-      log_fatal(errno, "open holdFd %s error", ctx_->file().c_str());
-      return false;
-    } else {
-      log_info(0, "open file %s fd %d as holdFd", ctx_->file().c_str(), holdFd_);
-    }
+  if (openFile(&st, errbuf)) {
+    return setStartPosition(st.st_size, errbuf);
+  } else {
+    return false;
   }
-
-  MD5_Init(&md5Ctx_);
-  md5_.clear();
-  return setStartPosition(st.st_size, errbuf);
 }
 
-bool FileReader::checkRewatch()
+bool FileReader::tryReinit()
 {
   assert(parent_ == 0);
 
-  // rewatch only existing file
-  int tmpFd = -1;
-  bool rewatch = access(ctx_->file().c_str(), F_OK) == 0;
-  if (!rewatch && ctx_->autocreat()) {
-    tmpFd = open(ctx_->file().c_str(), O_CREAT | O_RDONLY, 0644);
-    if (tmpFd != -1) {
-      rewatch = true;
-      if (ctx_->fileOwner() && chown(ctx_->file().c_str(), ctx_->uid(), ctx_->gid()) != 0) {
-        log_fatal(errno, "file %s chown(%s) error", ctx_->file().c_str(), ctx_->fileOwner());
-      }
-    } else {
-      log_fatal(errno, "create file %s error", ctx_->file().c_str());
-    }
-  }
+  struct stat st;
 
-  // if datafile is not the file, use holdFd to track file name changes
-  if (rewatch && bits_test(flags_, FILE_HISTORY)) {
-    if (holdFd_ > 0) {
-      close(holdFd_);
-      log_info(0, "close holdFd %d", holdFd_);
-    }
-
-    if (tmpFd != -1) {
-      holdFd_ = tmpFd;
-      tmpFd = -1;
-    } else {
-      holdFd_ = open(ctx_->file().c_str(), O_RDONLY, 0644);
-    }
-    if (holdFd_ == -1) {
-      log_fatal(errno, "open holdFd %s error", ctx_->file().c_str());
-      rewatch = false;
-    } else {
-      log_info(0, "open file %s fd %d as holdFd", ctx_->file().c_str(), holdFd_);
-    }
-  }
-
-  if (tmpFd != -1) close(tmpFd);
-  if (rewatch) bits_set(flags_, FILE_WATCHED);
-  return rewatch;
-}
-
-bool FileReader::reinit()
-{
-  assert(parent_ == 0);
-
-  bool reopen = false;
-  bool rewatch = false;
-  if (bits_test(flags_, FILE_OPENONLY)) {   // datafile change
-    reopen = true;
-  } else if (!bits_test(flags_, FILE_WATCHED)) {
-    if (fd_ == -1) reopen = true;         // fd > 0, use history fd
-    rewatch = true;
-  }
-
-  bool tryNext = true;
-  while (reopen && tryNext) {
-    tryNext = false;
-    const std::string &file = ctx_->datafile();
-    log_info(0, "reopen %s", file.c_str());
-
-    bool doOpen = false;
-    if (!bits_test(flags_, FILE_HISTORY) && holdFd_ > 0) {
-      fd_ = holdFd_;
-      holdFd_ = -1;
-    } else {
-      fd_ = open(file.c_str(), (ctx_->autocreat() ? O_CREAT : 0) | O_RDONLY, 0644);
-      if (fd_ != -1 && ctx_->fileOwner() && chown(ctx_->file().c_str(), ctx_->uid(), ctx_->gid()) != 0) {
-        log_fatal(errno, "file %s chown(%s) error", ctx_->file().c_str(), ctx_->fileOwner());
-      }
-      doOpen = true;
-    }
-
-    if (fd_ != -1) {
-      struct stat st;
+  if (fd_ != -1) {
+    bool reinit = false;
+    if (eof_ && ctx_->datafile() != ctx_->file()) {
       fstat(fd_, &st);
-      size_ = 0;
-      line_ = 0;
-      npos_ = 0;
-      inode_ = st.st_ino;
-      bits_clear(flags_, FILE_OPENONLY);
-
-      MD5_Init(&md5Ctx_);
-      md5_.clear();
-
-      if (doOpen) log_info(0, "open file %s fd %d inode %ld", file.c_str(), fd_, inode_);
-      else log_info(0, "%d %s use holdFd instead of reopen inode %ld", fd_, ctx_->datafile().c_str(), inode_);
-
-      tail2kafka(START, &st, buildFileStartRecord(time(0)));
-    } else if (bits_test(flags_, FILE_HISTORY)) {
-      if (ctx_->removeHistoryFile()) bits_clear(flags_, FILE_HISTORY);
-      log_fatal(errno, "history file %s reinit error, try next %s", file.c_str(), ctx_->datafile().c_str());
-      tryNext = true;
-    } else {
-      log_error(errno, "%s reinit error", file.c_str());
-      rewatch = false;
+      if (st.st_size == size_) {
+        reinit = true;
+      }
     }
+
+    if (!reinit) return false;
+
+    log_info(0, "%s size=%lu sendsize=%lu lines=%lu sendlines=%lu md5=%s %s", ctx_->file().c_str(),
+             size_, dsize_, line_, dline_, md5_.c_str(), ctx_->datafile().c_str());
+    util::Metrics::pingback("ROTATE", "file=%s&size=%lu&md5=%s", ctx_->datafile().c_str(), size_, md5_.c_str());
+
+    tail2kafka(END, &st, buildFileEndRecord(time(0), size_, ctx_->datafile().c_str()));
+
+    close(fd_);
+    fd_ = -1;
+    eof_ = false;
+    ctx_->removeHistoryFile();
   }
 
-  // as a side effect, poll history file
-  if (!reopen && bits_test(flags_, FILE_HISTORY)) {
-    tail2kafka();
-  }
+  if (fd_ == -1 && openFile(&st)) {
+    size_ = 0;
+    line_ = 0;
+    npos_ = 0;
 
-  if (rewatch) rewatch = checkRewatch();
-  return rewatch;
+    tail2kafka(START, &st, buildFileStartRecord(time(0)));
+    return true;
+  }
+  return false;
 }
 
 bool FileReader::setStartPosition(off_t fileSize, char *errbuf)
@@ -280,21 +213,6 @@ void FileReader::updateFileOffRecord(const FileRecord *record)
   }
 }
 
-static std::string getFileNameFromFd(int fd)
-{
-  char buffer[64];
-  snprintf(buffer, 64, "/proc/self/fd/%d", fd);
-
-  char path[1024];
-  ssize_t n;
-  if ((n = readlink(buffer, path, 1024)) == -1) {
-    log_error(errno, "readlink error");
-    return "";
-  } else {
-    return std::string(path, n);
-  }
-}
-
 static struct FileInotifyStatusWithDesc {
   uint32_t    flags;
   const char *desc;
@@ -304,11 +222,6 @@ static struct FileInotifyStatusWithDesc {
   { FILE_ICHANGE,   "FILE_ICHANGE" },
   { FILE_TRUNCATED, "FILE_TRUNCATED" },
   { FILE_DELETED,   "FILE_DELETED" },
-
-  { FILE_LOGGED,    "FILE_LOGGED" },
-  { FILE_WATCHED,   "FILE_WATCHED" },
-  { FILE_OPENONLY,  "FILE_OPENONLY" },
-  { FILE_HISTORY,   "FILE_HISTORY" },
   { 0, 0 }
 };
 
@@ -324,128 +237,23 @@ inline std::string flagsToString(uint32_t flags)
   return s;
 }
 
-void FileReader::tagRotate(int action, const char *oldFile, const char *newFile)
+void FileReader::tagRotate(int action, const char *newFile)
 {
   assert(parent_ == 0);
+  if (action != FILE_MOVED && action != FILE_DELETED) return;
 
   bits_set(flags_, action);
+  ctx_->addHistoryFile(newFile);
 
-  std::string oldFileName;
-  if (!oldFile && bits_test(flags_, FILE_MOVED)) {
-    oldFileName = getFileNameFromFd(holdFd_ > 0 ? holdFd_ : fd_);
-    oldFile = oldFileName.c_str();
-    newFile = ctx_->file().c_str();
-  }
-
-  if (oldFile && newFile) {
-    log_info(0, "%d %s rotate %s to %s", fd_, oldFile, flagsToString(flags_).c_str(), newFile);
-    util::Metrics::pingback("TAG_ROTATE", "new=%s&old=%s", newFile, oldFile);
-  }
-
-  if (oldFile && (bits_test(flags_, FILE_MOVED) || bits_test(flags_, FILE_CREATED))) {
-    ctx_->setCurrentFile(oldFile);
-  }
-
-  if (ctx_->cnf()->fasttime() - fileRotateTime_ < QUEUE_ERROR_TIMEOUT ||
-      (ctx_->getRotateDelay() > 0 && ctx_->cnf()->fasttime() - fileRotateTime_ < ctx_->getRotateDelay())) {
-    log_fatal(0, "%d %s rotate %s too frequent, may lose data", fd_, ctx_->file().c_str(),
-              flagsToString(flags_).c_str());
-  }
-}
-
-void FileReader::checkHistoryRotate(const struct stat *stPtr)
-{
-  assert(parent_ == 0);
-
-  if (bits_test(flags_, FILE_HISTORY) && stPtr->st_size == size_) {
-    std::string oldFile = ctx_->datafile();
-
-    if (tail2kafka(END, stPtr, buildFileEndRecord(time(0), size_, oldFile.c_str()))) {
-      log_info(0, "%d %s size=%lu sendsize=%lu lines=%lu sendlines=%lu md5=%s historyrotate %s",
-               fd_, oldFile.c_str(), size_, dsize_, line_, dline_, md5_.c_str(), oldFile.c_str());
-      util::Metrics::pingback("ROTATE", "file=%s&size=%lu&md5=%s", oldFile.c_str(), size_, md5_.c_str());
-
-      bits_set(flags_, FILE_OPENONLY);
-      if (ctx_->removeHistoryFile()) bits_clear(flags_, FILE_HISTORY);
-
-      log_info(0, "history file %s finished, close fd %d try next %s",
-               oldFile.c_str(), fd_, ctx_->datafile().c_str());
-      close(fd_);
-      fd_ = -1;
-    }
-  }
-}
-
-// when mv x to x.old, the process may still write to x.old untill reopen x
-// we wait use roateDelay to reduce data lose
-bool FileReader::waitRotate()
-{
-  assert(parent_ == 0);
-
-  bool rc = true;
-  if (bits_test(flags_, FILE_MOVED) || bits_test(flags_, FILE_CREATED) || bits_test(flags_, FILE_DELETED)) {
-    rc = false;
-    if (ctx_->getRotateDelay() > 0) {  // if config rotate delay
-      if (bits_test(flags_, FILE_LOGGED) && ctx_->cnf()->fasttime() - fileRotateTime_ >= ctx_->getRotateDelay()) {
-        rc = true;  // rotate delay timeout
-      }
-    }
-
-    if (!rc && !bits_test(flags_, FILE_LOGGED)) {
-      log_info(0, "inotify %s %s, wait rotatedelay timeout or wait reopen", ctx_->file().c_str(),
-               flagsToString(flags_).c_str());
-    }
-  }
-
-  if (!bits_test(flags_, FILE_LOGGED)) fileRotateTime_ = ctx_->cnf()->fasttime();
-  bits_set(flags_, FILE_LOGGED);
-  return rc;
-}
-
-bool FileReader::checkRotate(const struct stat *stPtr, std::string *rotateFileName, bool *closeFd)
-{
-  assert(parent_ == 0);
-
-  if (bits_test(flags_, FILE_MOVED)) rotateFileName->assign(getFileNameFromFd(holdFd_ > 0 ? holdFd_ : fd_));
-  else if (bits_test(flags_, FILE_CREATED)) rotateFileName->assign(ctx_->file());
-
-  std::string oldFileName = *rotateFileName;
-  if (oldFileName.empty()) oldFileName = ctx_->file() + "." + sys::timeFormat(time(0), "%Y-%m-%d_%H:%M:%S");
-
-  bool rc;
-  if (bits_test(flags_, FILE_HISTORY) || fd_ == -1) { // FILE_HISTORY exec flow #HISTORY_ROTATE
-    rc = false;
-  } else {
-    if (stPtr->st_size != size_) rc = tail2kafka(NIL, stPtr, 0);   // waiting for file sending to complete
-    if (stPtr->st_size == size_) {
-      rc = tail2kafka(END, stPtr, buildFileEndRecord(time(0), size_, oldFileName.c_str()));
-    }
-  }
-
-  *closeFd = true;
-  if (!rc) {   // kafka may unavaliable, or slow
-    if (bits_test(flags_, FILE_MOVED) || bits_test(flags_, FILE_CREATED)) {
-      *closeFd = false;
-
-      if (ctx_->cnf()->fasttime() - fileRotateTime_ > QUEUE_ERROR_TIMEOUT &&
-          ctx_->addHistoryFile(*rotateFileName)) {
-        log_fatal(0, "kafka queue full duration %d, kafka may unavaliable, %s turn on history",
-                  (int) (ctx_->cnf()->fasttime() - fileRotateTime_), ctx_->topic().c_str());
-        util::Metrics::pingback("KAFKA_ERROR", "topic=%s", ctx_->topic().c_str());
-        rc = true;
-      }
-    } else {
-      log_info(0, "%d %s treat tail2kafka fail as success when file status is %s",
-               fd_, ctx_->file().c_str(), flagsToString(flags_).c_str());
-      rc = true;
-    }
-  }
-  return rc;
+  log_info(0, "%s rotate to %s", ctx_->file().c_str(), newFile);
+  util::Metrics::pingback("TAG_ROTATE", "new=%s&old=%s", newFile, ctx_->file().c_str());
 }
 
 bool FileReader::remove()
 {
   assert(parent_ == 0);
+
+  if (fd_ == -1) return tryReinit();
 
   struct stat st;
   if (fstat(fd_, &st) != 0) {
@@ -453,44 +261,24 @@ bool FileReader::remove()
     return false;
   }
 
-  // make reinit REOPEN  #flow HISTORY_ROTATE
-  checkHistoryRotate(&st);
-
   if (st.st_nlink == 0) bits_set(flags_, FILE_DELETED);
   else if (st.st_size < size_) bits_set(flags_, FILE_TRUNCATED);
   else if (st.st_ino != inode_) bits_set(flags_, FILE_ICHANGE);
 
   std::string timeFormatFile;
-  if (ctx_->getTimeFormatFile(&timeFormatFile) && access(timeFormatFile.c_str(), F_OK) == 0) {
-    if (!bits_test(flags_, FILE_CREATED)) tagRotate(FILE_CREATED, ctx_->file().c_str(), timeFormatFile.c_str());
+  if (ctx_->getTimeFormatFile(&timeFormatFile) && timeFormatFile != ctx_->file() &&
+      access(timeFormatFile.c_str(), F_OK) == 0) {
+
+    bits_set(flags_, FILE_CREATED);
+    tagRotate(FILE_CREATED, timeFormatFile.c_str());
+    ctx_->setTimeFormatFile(timeFormatFile);
   }
 
   bool rc = bits_test(flags_, FILE_MOVED) || bits_test(flags_, FILE_CREATED) ||
     bits_test(flags_, FILE_DELETED) || bits_test(flags_, FILE_TRUNCATED) || bits_test(flags_, FILE_ICHANGE);
 
-  if (rc) rc = waitRotate();
-
-  bool closeFd;
-  std::string rotateFileName;
-  if (rc) rc = checkRotate(&st, &rotateFileName, &closeFd);
-
-  if (rc) {
-    if (closeFd) {
-      const char *oldFile = rotateFileName.empty() ? "NIL" : rotateFileName.c_str();
-      log_info(0, "%d %s size=%lu sendsize=%lu lines=%lu sendlines=%lu md5=%s %s %s, close fd %d", fd_, ctx_->file().c_str(),
-               size_, dsize_, line_, dline_, md5_.c_str(), flagsToString(flags_).c_str(), oldFile, fd_);
-
-      util::Metrics::pingback("ROTATE", "file=%s&size=%lu&md5=%s", oldFile, size_, md5_.c_str());
-
-      // TODO add inode file
-      close(fd_);
-      fd_ = -1;
-      flags_ = 0;
-    } else {
-      flags_ = FILE_HISTORY;
-    }
-    ctx_->setTimeFormatFile(timeFormatFile);
-  }
+  flags_ = 0;
+  if (rc) tryReinit();
 
   return rc;
 }
@@ -525,9 +313,10 @@ bool FileReader::setStartPositionEnd(off_t fileSize, char *errbuf)
 bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::string *rawData)
 {
   assert(parent_ == 0);
+  if (fd_ == -1 && !tryReinit()) return false;
 
   std::auto_ptr<std::string> rawDataPtr(rawData);
-  if (ctx_->cnf()->flowControlOn()) return false;
+  if (pos == NIL && ctx_->cnf()->flowControlOn()) return false;
 
   struct stat stat;
   if (stPtr == 0) {
@@ -559,6 +348,7 @@ bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::st
     ctx_->cnf()->setTailLimit(true);
   } else {
     size_ = stPtr->st_size;
+    eof_ = true;
   }
 
   if (size_ > 0 && fileStart) {
@@ -568,8 +358,6 @@ bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::st
 
   off_t loff = off - npos_;
   assert(loff >= 0);
-
-  eof_ = true;
 
   while (off < size_) {
     size_t min = std::min(size_ - off, (off_t) (MAX_LINE_LEN - npos_));
@@ -599,7 +387,8 @@ bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::st
     propagateRawData(rawDataPtr.release());
   }
 
-  return eof_;
+  if (pos == NIL && eof_)  return tryReinit();
+  else return eof_;
 }
 
 void FileReader::propagateTailContent(size_t size)

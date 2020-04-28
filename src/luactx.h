@@ -86,7 +86,6 @@ public:
   const char *getStartPosition() const { return startPosition_.c_str(); }
   const std::string &host() const { return cnf_->host(); }
 
-  int getRotateDelay() const { return rotateDelay_ <= 0 ? cnf_->getRotateDelay() : rotateDelay_; }
   bool fileWithTimeFormat() const { return fileWithTimeFormat_; }
 
   bool getTimeFormatFile(std::string *timeFormatFile) const {
@@ -104,7 +103,10 @@ public:
     if (fileWithTimeFormat_) timeFormatFile_ = timeFormatFile;
   }
 
-  const std::string &file() const { return fileWithTimeFormat_ ? timeFormatFile_ : file_; }
+  const std::string &file() const {
+    return fileWithTimeFormat_ ? timeFormatFile_ : file_;
+  }
+
   const std::string & datafile() const {
     if (!fqueue_.empty()) return fqueue_.front();
     else return fileWithTimeFormat_ ? timeFormatFile_ : file_;
@@ -112,7 +114,6 @@ public:
 
   bool addHistoryFile(const std::string &historyFile);
   bool removeHistoryFile();
-  bool setCurrentFile(const std::string &file) const;
 
   const std::string &topic() const { return topic_; }
   LuaFunction *function() const { return function_; }
@@ -121,6 +122,9 @@ public:
   const char *fileOwner() const { return autocreat_ && !fileOwner_.empty() ? fileOwner_.c_str() : 0; }
   int uid() const { return uid_; }
   int gid() const { return gid_; }
+
+  int holdFd() const { return holdFd_; }
+  void holdFd(int fd) { holdFd_ = fd; }
 
 private:
   LuaCtx();
@@ -149,13 +153,11 @@ private:
   bool          withtime_;
   int           timeidx_;
   bool          autonl_;
-  int           rotateDelay_;
   std::string   pkey_;
 
   bool          fileWithTimeFormat_;
   std::string   timeFormatFile_;
   std::deque<std::string> fqueue_;
-  std::string             fcurrent_;
 
   uint32_t      addr_;
   bool          autoparti_;
@@ -172,6 +174,7 @@ private:
   LuaHelper    *helper_;
 
   size_t rktId_;
+  int holdFd_;
 };
 
 #endif

@@ -136,7 +136,6 @@ DEFINE(loadCnf)
   check(cnf->getKafkaTopicConf().count("request.required.acks"), "kafkaTopicConf request.required.acks notfound");
   check(cnf->getKafkaTopicConf().find("request.required.acks")->second == "1", "kafkaTopicConf request.required.acks = %s", PTRS(cnf->getKafkaTopicConf().find("request.required.acks")->second));
 
-  check(cnf->rotateDelay_ == 10, "rotatedelay %d", cnf->rotateDelay_);
   check(cnf->pingbackUrl_ == "http://localhost/pingback/tail2kafka", "pingbackUrl %s", cnf->pingbackUrl_.c_str());
 
   check(cnf->getLuaCtxSize() == LUACNF_SIZE, "%d", (int) cnf->getLuaCtxSize());
@@ -338,6 +337,7 @@ DEFINE(initFileReader)
   fstat(fd, &st);
 
   LuaCtx *ctx = getLuaCtx("basic");
+  while (!ctx->removeHistoryFile());
   ctx->startPosition_ = "LOG_END";
 
   check(ctx->initFileReader(0, cnf->errbuf()), "%s", cnf->errbuf());
@@ -430,8 +430,7 @@ DEFINE(watchLoop)
   write(fd, s2, strlen(s2));
   close(fd);
 
-  time_t renameStartTime = cnf->fasttime(true, TIMEUNIT_SECONDS);
-  rename(LOG("basic.log"), LOG("basic.log.old"));
+  rename(LOG("basic.log"), LOG("basic.log.1"));
 
   uintptr_t nptr;
   read(cnf->accept, &nptr, sizeof(nptr));
@@ -463,9 +462,6 @@ DEFINE(watchLoop)
   check(ptr->find("\"event\":\"END\"") != std::string::npos, "%s", PTRS(*ptr));
   check(ptr->find("\"md5\":\"7b88e495713969b037e50ca7b9b54af5\"") != std::string::npos, "%s", PTRS(*ptr));
 
-  time_t renameEndTime = cnf->fasttime(true, TIMEUNIT_SECONDS);
-  check(renameEndTime - renameStartTime >= cnf->rotateDelay_, "%d", (int) (renameEndTime - renameStartTime));
-
   cnf->pollLimit_ = 300;
   ctx->rawcopy_ = true;
 
@@ -489,6 +485,16 @@ DEFINE(watchLoop)
 
   ptr = records->at(0)->data;
   check(*ptr == "*" + cnf->host() + "@" + std::string(PADDING_LEN, '0') + " abcd\nefg\n", "%s", PTRS(*ptr));
+
+  sleep(10);
+  rename(LOG("basic.log"), LOG("basic.log.2"));  // rename here to avoid rotate too frequent
+
+  read(cnf->accept, &nptr, sizeof(nptr));
+  records = (std::vector<FileRecord*>*) nptr;
+
+  check(records->size() == 1, "%d", (int) records->size());
+  ptr = records->at(0)->data;
+  check(ptr->find("\"event\":\"END\"") != std::string::npos, "%s", PTRS(*ptr));
 
   runStatus->set(RunStatus::STOP);
   pthread_join(tid, 0);

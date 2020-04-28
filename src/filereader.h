@@ -17,11 +17,6 @@ enum FileInotifyStatus {
   FILE_ICHANGE   = 0x0004,
   FILE_TRUNCATED = 0x0008,
   FILE_DELETED   = 0x0010,
-
-  FILE_LOGGED    = 0x0020,
-  FILE_WATCHED   = 0x0040,
-  FILE_OPENONLY  = 0x0080,
-  FILE_HISTORY   = 0x0100,
 };
 
 class FileReader {
@@ -38,11 +33,10 @@ public:
   }
 
   bool init(char *errbuf);
-  bool reinit();
 
   bool eof() const { return eof_; }
 
-  void tagRotate(int action, const char *oldFile = 0, const char *newFile = 0);
+  void tagRotate(int action, const char *newFile);
   bool remove();
 
   bool tail2kafka(StartPosition pos = NIL, const struct stat *stPtr = 0, std::string *rawData = 0);
@@ -52,13 +46,15 @@ public:
   void updateFileOffRecord(const FileRecord *record);
 
 private:
+  bool tryReinit();
+
   void propagateTailContent(size_t size);
   void propagateProcessLines(ino_t inode, off_t *off);
   void processLines(ino_t inode, off_t *off);
   int processLine(off_t off, char *line, size_t nline, std::vector<FileRecord *> *records);
   bool sendLines(ino_t inode, std::vector<FileRecord *> *records);
 
-  bool tryOpen(char *errbuf);
+  bool openFile(struct stat *st, char *errbuf = 0);
   bool setStartPosition(off_t fileSize, char *errbuf);
   bool setStartPositionEnd(off_t fileSize, char *errbuf);
 
@@ -66,20 +62,12 @@ private:
   std::string *buildFileEndRecord(time_t now, off_t size, const char *oldFileName);
   void propagateRawData(const std::string *data);
 
-  bool checkRewatch();
-  void checkHistoryRotate(const struct stat *stPtr);
-  bool waitRotate();
-  bool checkRotate(const struct stat *stPtr, std::string *rotateFileName, bool *closeFd);
-
 private:
   int      fd_;
   off_t    size_;
   ino_t    inode_;
   uint32_t flags_;
   bool eof_;
-
-  time_t   fileRotateTime_;
-  int      holdFd_;    // trace moved file when datafile != file
 
   FileOffRecord *fileOffRecord_;
 

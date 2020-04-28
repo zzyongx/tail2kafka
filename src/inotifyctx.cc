@@ -32,6 +32,43 @@ InotifyCtx::~InotifyCtx()
   if (wfd_ > 0) close(wfd_);
 }
 
+bool InotifyCtx::addWatch(LuaCtx *ctx, bool strict)
+{
+  const std::string &file = ctx->file();
+
+  int fd = open(file.c_str(), O_RDONLY);
+  if (fd == -1) {
+    if (strict) {
+      snprintf(cnf_->errbuf(), MAX_ERR_LEN, "%s open error %d:%s",
+               file.c_str(), errno, strerror(errno));
+    } else {
+      log_fatal(errno, "rewatch open %s error", file.c_str());
+      ctx->holdFd(-1);
+    }
+    return false;
+  }
+
+  int wd = inotify_add_watch(wfd_, file.c_str(), WATCH_EVENT);
+  if (wd == -1) {
+    close(fd);
+
+    if (strict) {
+      snprintf(cnf_->errbuf(), MAX_ERR_LEN, "%s add watch error %d:%s",
+               file.c_str(), errno, strerror(errno));
+    } else {
+      log_fatal(errno, "rewatch add %s error", file.c_str());
+      ctx->holdFd(-1);
+    }
+    return false;
+  }
+
+  log_info(0, "%s %s @%d", strict ? "watch" : "rewatch", file.c_str(), wd);
+
+  ctx->holdFd(fd);
+  fdToCtx_.insert(std::make_pair(wd, ctx));
+  return true;
+}
+
 bool InotifyCtx::init()
 {
   // inotify_init1 Linux 2.6.27
@@ -46,17 +83,7 @@ bool InotifyCtx::init()
 
   for (std::vector<LuaCtx *>::iterator ite = cnf_->getLuaCtxs().begin();
        ite != cnf_->getLuaCtxs().end(); ++ite) {
-    LuaCtx *ctx = *ite;
-    const std::string &file = ctx->file();
-
-    int wd = inotify_add_watch(wfd_, file.c_str(), WATCH_EVENT);
-    if (wd == -1) {
-      snprintf(cnf_->errbuf(), MAX_ERR_LEN, "%s add watch error %d:%s",
-               file.c_str(), errno, strerror(errno));
-      return false;
-    }
-    fdToCtx_.insert(std::make_pair(wd, ctx));
-    log_info(0, "add watch %s @%d", file.c_str(), wd);
+    if (!addWatch(*ite, true)) return false;
   }
   return true;
 }
@@ -78,47 +105,55 @@ void InotifyCtx::flowControl(RunStatus *runStatus)
   }
 }
 
-bool InotifyCtx::tryReWatch()
+/* file was moved */
+void InotifyCtx::tagRotate(LuaCtx *ctx, int wd)
 {
+  char buffer[64];
+  snprintf(buffer, 64, "/proc/self/fd/%d", ctx->holdFd());
+
+  char path[2048];
+  ssize_t n;
+  if ((n = readlink(buffer, path, 2048)) == -1) {
+    log_fatal(errno, "readlink error");
+  } else {
+    path[n] = '\0';
+    log_info(0, "tag remove %d %s", wd, ctx->file().c_str());
+    ctx->getFileReader()->tagRotate(FILE_MOVED, path);
+  }
+}
+
+/* unlink or truncate */
+void InotifyCtx::tryReWatch()
+{
+  std::vector<int> wds;
+
+  for (std::map<int, LuaCtx *>::iterator ite = fdToCtx_.begin(); ite != fdToCtx_.end(); ++ite) {
+    LuaCtx *ctx = ite->second;
+
+    if (ctx->getFileReader()->remove()) {
+      wds.push_back(ite->first);
+    }
+  }
+
+  for (std::vector<int>::iterator ite = wds.begin(); ite != wds.end(); ++ite) {
+    inotify_rm_watch(wfd_, *ite);
+
+    std::map<int, LuaCtx *>::iterator pos = fdToCtx_.find(*ite);
+    LuaCtx *ctx = pos->second;
+
+    fdToCtx_.erase(pos);
+    close(ctx->holdFd());
+
+    addWatch(ctx, false);
+    ctx->getFileReader()->tail2kafka();
+  }
+
   for (std::vector<LuaCtx *>::iterator ite = cnf_->getLuaCtxs().begin();
        ite != cnf_->getLuaCtxs().end(); ++ite) {
     LuaCtx *ctx = *ite;
 
-    if (ctx->getFileReader()->reinit()) {
-      int wd = inotify_add_watch(wfd_, ctx->file().c_str(), WATCH_EVENT);
-      if (wd == -1) {
-        log_fatal(errno, "rewatch %s error", ctx->file().c_str());
-      } else {
-        fdToCtx_.insert(std::make_pair(wd, ctx));
-
-        log_info(0, "rewatch %s @%d", ctx->file().c_str(), wd);
-        ctx->getFileReader()->tail2kafka();
-      }
-    }
-  }
-  return true;
-}
-
-/* file was moved */
-void InotifyCtx::tryRmWatch(LuaCtx *ctx, int wd)
-{
-  log_info(0, "tag remove %d %s", wd, ctx->file().c_str());
-  ctx->getFileReader()->tagRotate(FILE_MOVED);
-}
-
-/* unlink or truncate */
-void InotifyCtx::tryRmWatch()
-{
-  for (std::map<int, LuaCtx *>::iterator ite = fdToCtx_.begin(); ite != fdToCtx_.end(); ) {
-    LuaCtx *ctx = ite->second;
-
-    if (ctx->getFileReader()->remove()) {
-      log_info(0, "remove watch %s @%d", ctx->file().c_str(), ite->first);
-
-      inotify_rm_watch(wfd_, ite->first);
-      fdToCtx_.erase(ite++);
-    } else {
-      ++ite;
+    if (ctx->holdFd() == -1) {
+      addWatch(ctx, false);
     }
   }
 }
@@ -134,7 +169,10 @@ void InotifyCtx::loop()
     {wfd_, POLLIN, 0 }
   };
 
+  bool rotate = false;
   long savedTime = cnf_->fasttime(true, TIMEUNIT_MILLI);
+  long rewatchTime = savedTime;
+
   while (runStatus->get() == RunStatus::WAIT) {
     int nfd = poll(fds, 1, cnf_->getTailLimit() ? 1 : 500);
     cnf_->fasttime(true, TIMEUNIT_SECONDS);
@@ -165,15 +203,14 @@ void InotifyCtx::loop()
           LuaCtx *ctx = getLuaCtx(event->wd);
           if (ctx) {
             log_info(0, "inotify %s was moved", ctx->file().c_str());
-            tryRmWatch(ctx, event->wd);
+            tagRotate(ctx, event->wd);
+            rotate = true;
           } else {
             log_fatal(0, "@%d could not found ctx", event->wd);
           }
         }
         p += sizeof(struct inotify_event) + event->len;
       }
-
-      unEofCheck();
     }
 
     if (cnf_->fasttime() != savedTime) {
@@ -181,8 +218,11 @@ void InotifyCtx::loop()
       savedTime = cnf_->fasttime();
     }
 
-    tryRmWatch();
-    tryReWatch();
+    if (cnf_->fasttime() > rewatchTime + 5 || rotate) {
+      tryReWatch();
+      rewatchTime = cnf_->fasttime();
+      rotate = false;
+    }
 
     if (cnf_->getPollLimit()) sys::millisleep(cnf_->getPollLimit());
     flowControl(runStatus);
@@ -195,16 +235,9 @@ void InotifyCtx::globalCheck()
 {
   for (std::vector<LuaCtx *>::iterator ite = cnf_->getLuaCtxs().begin();
        ite != cnf_->getLuaCtxs().end(); ++ite) {
-    (*ite)->getFileReader()->checkCache();
-  }
-  unEofCheck();
-}
 
-void InotifyCtx::unEofCheck()
-{
-  for (std::vector<LuaCtx *>::iterator ite = cnf_->getLuaCtxs().begin();
-       ite != cnf_->getLuaCtxs().end(); ++ite) {
     LuaCtx *ctx = *ite;
-    if (!ctx->getFileReader()->eof()) ctx->getFileReader()->tail2kafka();
+    ctx->getFileReader()->checkCache();
+    ctx->getFileReader()->tail2kafka();
   }
 }

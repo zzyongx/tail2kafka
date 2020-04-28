@@ -18,10 +18,11 @@
 #include "luahelper.h"
 #include "luactx.h"
 
-template <class T>
-bool loadFile(const char *file, T *q)
+static bool loadHistoryFile(const std::string &libdir, const std::string &name, std::deque<std::string> *q)
 {
-  FILE *fp = fopen(file, "r");
+  std::string file = libdir + "/" + name + ".history";
+
+  FILE *fp = fopen(file.c_str(), "r");
   if (!fp) {
     if (errno == ENOENT) return true;
     else return false;
@@ -36,6 +37,13 @@ bool loadFile(const char *file, T *q)
     }
 
     buffer[n-1] = '\0';
+
+    struct stat st;
+    if (stat(buffer, &st) != 0) {
+      log_info(0, "history file %s ignore %s", file.c_str(), buffer);
+      continue;
+    }
+
     if (std::find(q->begin(), q->end(), std::string(buffer)) == q->end()) {
       q->push_back(buffer);  // uniq
     }
@@ -45,49 +53,38 @@ bool loadFile(const char *file, T *q)
   return true;
 }
 
-static bool loadHistoryFile(const std::string &libdir, const std::string &name, std::deque<std::string> *q)
+static bool writeHistoryFile(const std::string &libdir, const std::string &name, const std::deque<std::string> &q)
 {
   std::string file = libdir + "/" + name + ".history";
-  return loadFile(file.c_str(), q);
-}
 
-template <class T>
-bool writeFile(const char *tips, const char *file, const T &q)
-{
   if (q.empty()) {
-    bool rc = unlink(file) == 0 || errno == ENOENT;
+    bool rc = unlink(file.c_str()) == 0 || errno == ENOENT;
     if (rc) {
-      log_info(0, "delete %s file %s", tips, file);
+      log_info(0, "delete history file %s", file.c_str());
     } else {
-      log_fatal(errno, "delete %s file %s error", tips, file);
+      log_fatal(errno, "delete history file %s error", file.c_str());
     }
     return rc;
   }
 
   std::string flist = util::join(q.begin(), q.end(), ',');
-  log_info(0, "write %s file %s start %s", tips, file, flist.c_str());
+  log_info(0, "write history file %s start %s", file.c_str(), flist.c_str());
 
-  int fd = open(file, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+  int fd = open(file.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
   if (fd == -1) {
-    log_fatal(errno, "write %s file %s error", tips, file);
+    log_fatal(errno, "write history file %s error", file.c_str());
     return false;
   }
-  for (typename T::const_iterator ite = q.begin(); ite != q.end(); ++ite) {
+  for (std::deque<std::string>::const_iterator ite = q.begin(); ite != q.end(); ++ite) {
     struct iovec iovs[2] = {{(void *) ite->c_str(), ite->size()}, {(void *) "\n", 1}};
     if (writev(fd, iovs, 2) == -1) {
-      log_fatal(errno, "write %s file %s line %s error", tips, file, ite->c_str());
+      log_fatal(errno, "write history file %s line %s error", file.c_str(), ite->c_str());
     }
   }
   close(fd);
 
-  log_info(0, "wirte %s file %s end %s", tips, file, flist.c_str());
+  log_info(0, "wirte history file %s end %s", file.c_str(), flist.c_str());
   return true;
-}
-
-static bool writeHistoryFile(const std::string &libdir, const std::string &name, const std::deque<std::string> &q)
-{
-  std::string file = libdir + "/" + name + ".history";
-  return writeFile("history", file.c_str(), q);
 }
 
 static bool parseUserGroup(const char *username, uid_t *uid, gid_t *gid, char *errbuf)
@@ -166,23 +163,6 @@ bool LuaCtx::loadHistoryFile()
   }
 
   return true;
-}
-
-bool LuaCtx::rectifyHistoryFile()
-{
-  bool rc = true;
-  while (!fqueue_.empty()) {
-    std::string f = fqueue_.front();
-    struct stat st;
-    rc = stat(f.c_str(), &st) == 0;
-    if (!rc && errno == ENOENT) {               // datafile not longer exists
-      fqueue_.pop_front();
-    } else {
-      break;
-    }
-  }
-  if (rc) rc = writeHistoryFile(cnf_->libdir(), fileAlias_, fqueue_);
-  return rc;
 }
 
 LuaCtx *LuaCtx::loadFile(CnfCtx *cnf, const char *file)

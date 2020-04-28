@@ -170,7 +170,7 @@ void InotifyCtx::loop()
   };
 
   bool rotate = false;
-  long savedTime = cnf_->fasttime(true, TIMEUNIT_MILLI);
+  long savedTime = cnf_->fasttime(true, TIMEUNIT_SECONDS);
   long rewatchTime = savedTime;
 
   while (runStatus->get() == RunStatus::WAIT) {

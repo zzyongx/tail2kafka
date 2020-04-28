@@ -83,7 +83,6 @@ public:
 public:
   static CnfCtx *loadCnf(const char *dir, char *errbuf);
   bool reset();
-  bool rectifyHistoryFile();
 
   static CnfCtx *loadFile(const char *file, char *errbuf);
   ~CnfCtx();

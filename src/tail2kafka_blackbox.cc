@@ -350,11 +350,11 @@ void start_producer()
   int max = 0;
   pthread_t ptids[6];
   pthread_create(&ptids[max++], NULL, basic_routine, NULL);
+  pthread_create(&ptids[max++], NULL, basic2_routine, NULL);
   pthread_create(&ptids[max++], NULL, filter_routine, NULL);
   pthread_create(&ptids[max++], NULL, grep_routine, NULL);
-  pthread_create(&ptids[max++], NULL, aggregate_routine, NULL);
   pthread_create(&ptids[max++], NULL, transform_routine, NULL);
-  pthread_create(&ptids[max++], NULL, basic2_routine, NULL);
+  pthread_create(&ptids[max++], NULL, aggregate_routine, NULL);
   for (int i = 0; i < max; ++i) {
     pthread_join(ptids[i], NULL);
   }
@@ -485,11 +485,11 @@ void start_consumer()
 {
   ConsumerCtx ctxs[] = {
     {"basic",     basic_consumer},
-    {"basic2",    basic2_consumer},
     {"filter",    filter_consumer},
     {"grep",      grep_consumer},
     {"aggregate", aggregate_consumer},
     {"transform", transform_consumer},
+    {"basic2",    basic2_consumer},
   };
 
   int max = sizeof(ctxs)/sizeof(ctxs[0]);

@@ -59,7 +59,6 @@ int main(int argc, char *argv[])
     }
   }
 
-
   RunStatus *runStatus = RunStatus::create();
   cnf->setRunStatus(runStatus);
 
@@ -251,7 +250,6 @@ int runForeGround(CnfCtx *cnf)
   if (!inotify.init()) return -1;
 
   if (!cnf->initFileOff()) return -1;
-  if (!cnf->rectifyHistoryFile()) return -1;
 
   run(&inotify, cnf);
 
@@ -265,7 +263,6 @@ pid_t spawn(CnfCtx *cnf, CnfCtx *ocnf)
   if (!inotify.init()) return -1;
 
   if (!cnf->initFileOff()) return -1;
-  if (!cnf->rectifyHistoryFile()) return -1;
 
   /* unload old cnf before fork */
   if (ocnf) delete ocnf;

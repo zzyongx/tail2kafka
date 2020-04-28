@@ -39,6 +39,7 @@ public:
   void tagRotate(int action, const char *newFile);
   bool remove();
 
+  bool tryReinit();
   bool tail2kafka(StartPosition pos = NIL, const struct stat *stPtr = 0, std::string *rawData = 0);
   bool checkCache();
 
@@ -46,8 +47,6 @@ public:
   void updateFileOffRecord(const FileRecord *record);
 
 private:
-  bool tryReinit();
-
   void propagateTailContent(size_t size);
   void propagateProcessLines(ino_t inode, off_t *off);
   void processLines(ino_t inode, off_t *off);

@@ -60,15 +60,6 @@ bool CnfCtx::reset()
   return true;
 }
 
-bool CnfCtx::rectifyHistoryFile()
-{
-  for (std::vector<LuaCtx *>::iterator ite = luaCtxs_.begin(); ite != luaCtxs_.end(); ++ite) {
-    LuaCtx *ctx = *ite;
-    if (!ctx->rectifyHistoryFile()) return false;
-  }
-  return true;
-}
-
 CnfCtx *CnfCtx::loadFile(const char *file, char *errbuf)
 {
   std::auto_ptr<CnfCtx> cnf(new CnfCtx);

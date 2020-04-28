@@ -38,7 +38,6 @@ public:
 
   bool testFile(const char *luaFile, char *errbuf);
   bool loadHistoryFile();
-  bool rectifyHistoryFile();
 
   bool initFileReader(FileReader *reader, char *errbuf);
   FileReader *getFileReader() { return fileReader_; }

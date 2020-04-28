@@ -94,6 +94,8 @@ bool FileReader::init(char *errbuf)
     ctx_->setTimeFormatFile(timeFormatFile);
   }
 
+  ctx_->addHistoryFile(ctx_->datafile());
+
   struct stat st;
   if (openFile(&st, errbuf)) {
     return setStartPosition(st.st_size, errbuf);
@@ -240,7 +242,7 @@ inline std::string flagsToString(uint32_t flags)
 void FileReader::tagRotate(int action, const char *newFile)
 {
   assert(parent_ == 0);
-  if (action != FILE_MOVED && action != FILE_DELETED) return;
+  if (action != FILE_MOVED && action != FILE_CREATED) return;
 
   bits_set(flags_, action);
   ctx_->addHistoryFile(newFile);
@@ -266,9 +268,7 @@ bool FileReader::remove()
   else if (st.st_ino != inode_) bits_set(flags_, FILE_ICHANGE);
 
   std::string timeFormatFile;
-  if (ctx_->getTimeFormatFile(&timeFormatFile) && timeFormatFile != ctx_->file() &&
-      access(timeFormatFile.c_str(), F_OK) == 0) {
-
+  if (ctx_->getTimeFormatFile(&timeFormatFile) && timeFormatFile != ctx_->file()) {
     bits_set(flags_, FILE_CREATED);
     tagRotate(FILE_CREATED, timeFormatFile.c_str());
     ctx_->setTimeFormatFile(timeFormatFile);
@@ -351,7 +351,7 @@ bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::st
     eof_ = true;
   }
 
-  if (size_ > 0 && fileStart) {
+  if (size_ > 0 && fileStart) {  // ignore empty file
     if (pos == START) propagateRawData(rawDataPtr.release());
     else propagateRawData(buildFileStartRecord(time(0)));
   }

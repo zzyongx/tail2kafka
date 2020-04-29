@@ -27,7 +27,7 @@ private:
   void tagRotate(LuaCtx *ctx, int wd);
   void globalCheck();
 
-  void flowControl(RunStatus *runStatus);
+  void flowControl(RunStatus *runStatus, bool remedy);
 
 private:
   CnfCtx *cnf_;

@@ -23,7 +23,7 @@ static const char *hostname;
 #define LOG(f) "logs/"f
 
 void start_producer();
-void start_consumer();
+void *start_consumer(void *);
 
 int main()
 {
@@ -36,9 +36,14 @@ int main()
     return EXIT_FAILURE;
   }
 
-  start_producer();
+  pthread_t tid;
+  pthread_create(&tid, 0, start_consumer, 0);
   sleep(1);
-  start_consumer();
+  start_producer();
+
+  printf("produce ok, wait consume\n");
+  pthread_join(tid, 0);
+
   printf("OK\n");
   return EXIT_SUCCESS;
 }
@@ -205,6 +210,7 @@ class AggregateProducer {
 public:
   AggregateProducer() : i(0), pkey(false) {}
   void reset() { i = 0; pkey = false; }
+
   char *operator()(bool t = false) {
     assert(i < 100);
     if (t) {
@@ -295,6 +301,49 @@ void *transform_routine(void *)
   return NULL;
 }
 
+class MatchProducer {
+public:
+  MatchProducer() : i_(0), offset_(1, 0) {}
+  void reset() {
+    result_ = true;
+    i_ = 10;
+  }
+
+  char *operator()() {
+    if (result_) {
+      std::string id = util::toStr(offset_[i_], PADDING_LEN);
+      snprintf(buffer_, 256, "*%s@%s [%d] message\n", hostname, id.c_str(), i_);
+      i_++;
+    } else {
+      int n = snprintf(buffer_, 256, "[%d] message", i_);
+      offset_.push_back(offset_.back() + n+1);
+      i_++;
+    }
+    return buffer_;
+  }
+private:
+  int i_;
+  std::vector<int> offset_;
+  bool result_;
+  char buffer_[256];
+};
+
+MatchProducer matchPro;
+
+void *match_routine(void *)
+{
+  FILE *fp = fopen(LOG("match.log"), "a");
+  assert(fp);
+
+  for (int i = 0; i < 99; ++i) {
+    fprintf(fp, "%s\n", matchPro());
+  }
+  fclose(fp);
+
+  matchPro.reset();
+  return NULL;
+}
+
 #define AUTO_ROTATE_INTERVAL 60
 class AutoRotateProducer {
 public:
@@ -348,19 +397,20 @@ void *basic2_routine(void *)
 void start_producer()
 {
   int max = 0;
-  pthread_t ptids[6];
+  pthread_t ptids[7];
   pthread_create(&ptids[max++], NULL, basic_routine, NULL);
-  pthread_create(&ptids[max++], NULL, basic2_routine, NULL);
+//  pthread_create(&ptids[max++], NULL, basic2_routine, NULL);
   pthread_create(&ptids[max++], NULL, filter_routine, NULL);
   pthread_create(&ptids[max++], NULL, grep_routine, NULL);
   pthread_create(&ptids[max++], NULL, transform_routine, NULL);
-  pthread_create(&ptids[max++], NULL, aggregate_routine, NULL);
+//  pthread_create(&ptids[max++], NULL, aggregate_routine, NULL);
+  pthread_create(&ptids[max++], NULL, match_routine, NULL);
   for (int i = 0; i < max; ++i) {
     pthread_join(ptids[i], NULL);
   }
 }
 
-typedef void (*ConsumerFun)(rd_kafka_message_t *rkm);
+typedef void (*ConsumerFun)(const char *topic, int num, rd_kafka_message_t *rkm);
 struct ConsumerCtx {
   const char *topic;
   ConsumerFun fun;
@@ -385,17 +435,17 @@ void *consumer_routine(void *data)
 
   rd_kafka_topic_t *rkt = rd_kafka_topic_new(rk, ctx->topic, 0);
 
-  if (rd_kafka_consume_start(rkt, 0,
-                             RD_KAFKA_OFFSET_BEGINNING) == -1) {
+  if (rd_kafka_consume_start(rkt, 0, RD_KAFKA_OFFSET_END) == -1) {
     fprintf(stderr, "%s failed to start consuming: %s\n", ctx->topic,
             rd_kafka_err2name(rd_kafka_last_error()));
     return THREAD_FAILURE;
   }
 
+  int num = 0;
   void *rc = THREAD_FAILURE;
   while (true) {
     rd_kafka_message_t *rkm;
-    rkm = rd_kafka_consume(rkt, 0, 5000);
+    rkm = rd_kafka_consume(rkt, 0, 30000);
     if (!rkm) {
       fprintf(stderr, "%s timeout, exit\n", ctx->topic);
       break;
@@ -408,88 +458,63 @@ void *consumer_routine(void *data)
         fprintf(stderr, "%s error, %s\n", ctx->topic, rd_kafka_message_errstr(rkm));
       }
     } else {
-      ctx->fun(rkm);
-      rc = THREAD_SUCCESS;
+      if (memcmp(rkm->payload, "#", 1) != 0) {
+        ctx->fun(ctx->topic, num++, rkm);
+        rc = THREAD_SUCCESS;
+      }
     }
   }
   return rc;
 }
 
-void basic_consumer(rd_kafka_message_t *rkm)
+void message_checker(const char *topic, int num, const char *want, rd_kafka_message_t *rkm)
 {
-  if (memcmp(rkm->payload, "#", 1) == 0) return;   // skip comment line
+  printf("RKM: %.*s\n", (int) rkm->len, (char *) rkm->payload);
 
-  const char *ptr = basicPro();
-  check(rkm->len == strlen(ptr),
-        "basic: length(%.*s) != length(%s)", (int) rkm->len, (char *) rkm->payload, ptr);
-  check(memcmp(rkm->payload, ptr, rkm->len) == 0,
-        "basic: %.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
+  check(rkm->len == strlen(want), "%s#%d: length(%.*s) != length(%s)",
+        topic, num, (int) rkm->len, (char *) rkm->payload, want);
+  check(memcmp(rkm->payload, want, rkm->len) == 0, "%s#%d: %.*s != %s",
+        topic, num, (int) rkm->len, (char *) rkm->payload, want);
 }
 
-void basic2_consumer(rd_kafka_message_t *rkm)
-{
-  if (memcmp(rkm->payload, "#", 1) == 0) return;   // skip comment line
-
-  const char *ptr = autoRotatePro();
-  check(rkm->len == strlen(ptr),
-        "basic: length(%.*s) != length(%s)", (int) rkm->len, (char *) rkm->payload, ptr);
-  check(memcmp(rkm->payload, ptr, rkm->len) == 0,
-        "basic: %.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
+void basic_consumer(const char *topic, int num, rd_kafka_message_t *rkm) {
+  message_checker(topic, num, basicPro(), rkm);
 }
 
-void filter_consumer(rd_kafka_message_t *rkm)
-{
-  if (memcmp(rkm->payload, "#", 1) == 0) return;   // skip comment line
-
-  const char *ptr = filterPro();
-  check(rkm->len == strlen(ptr),
-        "filter: length(%.*s) != length(%s)", (int) rkm->len, (char *) rkm->payload, ptr);
-  check(memcmp(rkm->payload, ptr, rkm->len) == 0,
-        "filter: %.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
+void basic2_consumer(const char *topic, int num, rd_kafka_message_t *rkm) {
+  message_checker(topic, num, autoRotatePro(), rkm);
 }
 
-void grep_consumer(rd_kafka_message_t *rkm)
-{
-  if (memcmp(rkm->payload, "#", 1) == 0) return;   // skip comment line
-
-  const char *ptr = grepPro();
-  check(rkm->len == strlen(ptr),
-        "grep: length(%.*s) != length(%s)", (int) rkm->len, (char *) rkm->payload, ptr);
-  check(memcmp(rkm->payload, ptr, rkm->len) == 0,
-        "grep: %.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
+void filter_consumer(const char *topic, int num, rd_kafka_message_t *rkm) {
+  message_checker(topic, num, filterPro(), rkm);
 }
 
-void aggregate_consumer(rd_kafka_message_t *rkm)
-{
-  if (memcmp(rkm->payload, "#", 1) == 0) return;   // skip comment line
-
-  const char *ptr = aggregatePro(true);
-  check(rkm->len == strlen(ptr),
-        "aggregate: length(%.*s) != length(%s)", (int) rkm->len, (char *) rkm->payload, ptr);
-  check(memcmp(rkm->payload, ptr, rkm->len) == 0,
-        "aggregate: %.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
+void grep_consumer(const char *topic, int num, rd_kafka_message_t *rkm) {
+  message_checker(topic, num, grepPro(), rkm);
 }
 
-void transform_consumer(rd_kafka_message_t *rkm)
-{
-  if (memcmp(rkm->payload, "#", 1) == 0) return;   // skip comment line
-
-  const char *ptr = transformPro();
-  check(rkm->len == strlen(ptr),
-        "transform: length(%.*s) != length(%s)", (int) rkm->len, (char *) rkm->payload, ptr);
-  check(memcmp(rkm->payload, ptr, rkm->len) == 0,
-        "transform: %.*s != %s", (int) rkm->len, (char *) rkm->payload, ptr);
+void aggregate_consumer(const char *topic, int num, rd_kafka_message_t *rkm) {
+  message_checker(topic, num, aggregatePro(true), rkm);
 }
 
-void start_consumer()
+void transform_consumer(const char *topic, int num, rd_kafka_message_t *rkm) {
+  message_checker(topic, num, transformPro(), rkm);
+}
+
+void match_consumer(const char *topic, int num, rd_kafka_message_t *rkm) {
+  message_checker(topic, num, matchPro(), rkm);
+}
+
+void *start_consumer(void *)
 {
   ConsumerCtx ctxs[] = {
     {"basic",     basic_consumer},
     {"filter",    filter_consumer},
     {"grep",      grep_consumer},
-    {"aggregate", aggregate_consumer},
+//    {"aggregate", aggregate_consumer},
     {"transform", transform_consumer},
-    {"basic2",    basic2_consumer},
+    {"match",     match_consumer},
+//    {"basic2",    basic2_consumer},
   };
 
   int max = sizeof(ctxs)/sizeof(ctxs[0]);
@@ -504,4 +529,5 @@ void start_consumer()
     pthread_join(ctids[i], &rc);
     check(rc == THREAD_SUCCESS, "%s %s", ctxs[i].topic, rc == THREAD_SUCCESS ? "OK" : "ERROR");
   }
+  return 0;
 }

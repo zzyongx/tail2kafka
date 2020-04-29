@@ -19,7 +19,6 @@ fi
 # delete.topic.enable=true
 test -f $BINDIR/../ENV.sh && source $BINDIR/../ENV.sh
 KAFKAHOME=${KAFKAHOME:-"/opt/kafka"}
-ZOOKEEPER=${ZOOKEEPER:-"localhost:2181/kafka"}
 KAFKASERVER=${KAFKASERVER:-"localhost:9092"}
 HOSTNAME=${HOSTNAME:-$(hostname)}
 
@@ -27,11 +26,12 @@ echo "WARN: YOU MUST KILL tail2kafka and kafka2file first, both may create topic
 
 T2KDIR=logs
 K2FDIR=kafka2filedir
+TOPICS="basic basic2 filter grep aggregate transform match"
 
 echo "kill tail2kafka"
 (test -f $PIDF && test -d /proc/$(cat $PIDF)) && kill $(cat $PIDF); sleep 2
 echo "kill kafka2file"
-for TOPIC in "basic" "basic2" "filter" "grep" "aggregate" "transform"; do
+for TOPIC in $TOPICS; do
   K2FPID=$K2FDIR/$TOPIC.0.lock
   (test -f $K2FPID && test -d /proc/$(cat $K2FPID)) && kill $(cat $K2FPID); sleep 2;  kill -9 $(cat $K2FPID 2>/dev/null) 2>/dev/null
 done
@@ -39,15 +39,15 @@ done
 find $T2KDIR -type f -name "*.log" -delete
 
 cd $KAFKAHOME
-for TOPIC in "basic" "basic2" "filter" "grep" "aggregate" "transform"; do
-  bin/kafka-topics.sh --delete --if-exists --zookeeper $ZOOKEEPER  --topic $TOPIC
+for TOPIC in $TOPICS; do
+  bin/kafka-topics.sh --bootstrap-server $KAFKASERVER --delete --topic $TOPIC
 done
-bin/kafka-topics.sh --list --zookeeper $ZOOKEEPER | egrep 'aggregate|basic|filter|grep|transform' && {
+bin/kafka-topics.sh --bootstrap-server $KAFKASERVER --list | egrep "$(echo $TOPICS | tr ' ' '|')" && {
   echo "$LINENO delete kafka topic error"
   exit 1
 }
-for TOPIC in "basic" "basic2" "filter" "grep" "aggregate" "transform"; do
-  bin/kafka-topics.sh --create --zookeeper $ZOOKEEPER --replication-factor 1 --partitions 1 --topic $TOPIC
+for TOPIC in $TOPICS; do
+  bin/kafka-topics.sh --bootstrap-server $KAFKASERVER --create --replication-factor 1 --partitions 1 --topic $TOPIC
 done
 
 cd -

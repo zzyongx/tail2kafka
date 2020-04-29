@@ -88,20 +88,23 @@ bool InotifyCtx::init()
   return true;
 }
 
-void InotifyCtx::flowControl(RunStatus *runStatus)
+void InotifyCtx::flowControl(RunStatus *runStatus, bool remedy)
 {
   while (runStatus->get() == RunStatus::WAIT) {
     bool block = cnf_->stats()->queueSize() > MAX_FILE_QUEUE_SIZE;
     cnf_->logStats();
 
     cnf_->flowControl(block);
-    if (!block) break;
 
-    KafkaCtx *kafka = cnf_->getKafka();
-    if (kafka) kafka->poll(10);
-    else sys::millisleep(10);
+    if (block || remedy) {
+      KafkaCtx *kafka = cnf_->getKafka();
+      if (kafka) kafka->poll(10);
+      else if (block) sys::millisleep(10);
 
-    cnf_->fasttime(true, TIMEUNIT_SECONDS);
+      cnf_->fasttime(true, TIMEUNIT_SECONDS);
+    } else {
+      break;
+    }
   }
 }
 
@@ -234,16 +237,17 @@ void InotifyCtx::loop()
       savedTime = cnf_->fasttime();
     }
 
-    if (cnf_->fasttime() > remedyTime + 60 ||
-        cnf_->fasttime() > rewatchTime + 5 || rotate) {
-      tryReWatch(cnf_->fasttime() > remedyTime + 60);
-      if (cnf_->fasttime() > remedyTime + 60) remedyTime = cnf_->fasttime();
+    bool remedy = cnf_->fasttime() > remedyTime + 60;
+
+    if (cnf_->fasttime() > rewatchTime + 5 || remedy || rotate) {
+      tryReWatch(remedy);
+      if (remedy) remedyTime = cnf_->fasttime();
       rewatchTime = cnf_->fasttime();
       rotate = false;
     }
 
     if (cnf_->getPollLimit()) sys::millisleep(cnf_->getPollLimit());
-    flowControl(runStatus);
+    flowControl(runStatus, remedy);
   }
 
   runStatus->set(RunStatus::STOP);

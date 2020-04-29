@@ -102,6 +102,7 @@ void InotifyCtx::flowControl(RunStatus *runStatus, bool remedy)
       else if (block) sys::millisleep(10);
 
       cnf_->fasttime(true, TIMEUNIT_SECONDS);
+      remedy = false;
     } else {
       break;
     }

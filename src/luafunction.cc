@@ -1,8 +1,73 @@
 #include <memory>
-
+#include <hs/hs.h>
 #include "util.h"
 #include "luactx.h"
 #include "luafunction.h"
+
+class RegexFun {
+public:
+  static RegexFun *create(const std::map<std::string, std::string> &cfg, char *errbuf);
+  int match(const char *data, size_t len);
+
+  ~RegexFun() {
+    hs_free_scratch(scratch_);
+    hs_free_database(re_);
+  }
+
+private:
+  hs_database_t *re_;
+  hs_scratch_t *scratch_;
+};
+
+RegexFun * RegexFun::create(const std::map<std::string, std::string> &cfg, char *errbuf)
+{
+  std::map<std::string, std::string>::const_iterator pos = cfg.find("pattern");
+  if (pos == cfg.end()) {
+    snprintf(errbuf, MAX_ERR_LEN, "match.pattern is required");
+    return 0;
+  }
+
+  std::string pattern = pos->second;
+
+  hs_database_t *database;
+  hs_compile_error_t *compile_err;
+  if (hs_compile(pattern.c_str(), 0, HS_MODE_BLOCK, NULL, &database,
+                 &compile_err) != HS_SUCCESS) {
+    snprintf(errbuf, MAX_ERR_LEN, "unable to compile pattern \"%s\": %s",
+             pattern.c_str(), compile_err->message);
+    hs_free_compile_error(compile_err);
+    return 0;
+  }
+
+  hs_scratch_t * scratch = NULL;
+  if (hs_alloc_scratch(database, &scratch) != HS_SUCCESS) {
+    snprintf(errbuf, MAX_ERR_LEN, "unable to allocate scratch space");
+    hs_free_database(database);
+    return 0;
+  }
+
+
+  RegexFun *fun = new RegexFun;
+  fun->re_ = database;
+  fun->scratch_ = scratch;
+  return fun;
+}
+
+static int matchHandler(unsigned int, unsigned long long,
+                        unsigned long long, unsigned int, void *ctx) {
+  size_t *found = (size_t *) ctx;
+  ++(*found);
+  return 0;
+}
+
+int RegexFun::match(const char *data, size_t len)
+{
+  size_t found = 0;
+  if (hs_scan(re_, data, len, 0, scratch_, matchHandler, &found) != HS_SUCCESS) {
+    return -1;
+  }
+  return found;
+}
 
 #define PADDING_LEN 13
 
@@ -10,6 +75,7 @@ const char *LuaFunction::typeToString(Type type)
 {
   switch (type) {
   case FILTER: return "filter";
+  case MATCH: return "match";
   case GREP: return "grep";
   case TRANSFORM: return "transform";
   case AGGREGATE: return "aggregate";
@@ -22,11 +88,22 @@ const char *LuaFunction::typeToString(Type type)
 
 LuaFunction *LuaFunction::create(LuaCtx *ctx, LuaHelper *helper, Type defType)
 {
+  char *errbuf = ctx->cnf()->errbuf();
   std::auto_ptr<LuaFunction> function(new LuaFunction(ctx));
 
   if (!helper->getArray("filter", &function->filters_, false)) return 0;
   if (!function->filters_.empty()) {
     function->init(helper, "filter", FILTER);
+    return function.release();
+  }
+
+  std::map<std::string, std::string> m;
+  if (!helper->getTable("match", &m, false)) return 0;
+  if (!m.empty()) {
+    function->matchFun_ = RegexFun::create(m, errbuf);
+    if (!function->matchFun_) return 0;
+
+    function->init(helper, "match", MATCH);
     return function.release();
   }
 
@@ -51,13 +128,13 @@ LuaFunction *LuaFunction::create(LuaCtx *ctx, LuaHelper *helper, Type defType)
 
   if (function->type_ == NIL) function->type_ = defType;
   if (function->type_ == NIL) {
-    snprintf(ctx->cnf()->errbuf(), MAX_ERR_LEN, "%s, topic or es_index,es_doc or indexdoc is required",
+    snprintf(errbuf, MAX_ERR_LEN, "%s, topic or es_index,es_doc or indexdoc is required",
              helper->file());
     return 0;
   }
 
   if (function->type_ == AGGREGATE && ctx->timeidx() < 0) {
-    snprintf(ctx->cnf()->errbuf(), MAX_ERR_LEN, "%s aggreagte must have timeidx", helper->file());
+    snprintf(errbuf, MAX_ERR_LEN, "%s aggreagte must have timeidx", helper->file());
     return 0;
   }
 
@@ -98,6 +175,14 @@ int LuaFunction::filter(off_t off, const std::vector<std::string> &fields, std::
 
   records->push_back(FileRecord::create(0, off, result));
   return 1;
+}
+
+int LuaFunction::match(off_t off, const char *line, size_t nline, std::vector<FileRecord *> *records)
+{
+  int cnt = matchFun_->match(line, nline);
+  if (cnt <= 0) return cnt;
+
+  return kafkaPlain(off, line, nline, records);
 }
 
 int LuaFunction::grep(off_t off, const std::vector<std::string> &fields, std::vector<FileRecord *> *records)
@@ -323,6 +408,8 @@ int LuaFunction::process(off_t off, const char *line, size_t nline, std::vector<
     }
   } else if (type_ == KAFKAPLAIN) {
     return kafkaPlain(off, line, nline, records);
+  } else if (type_ == MATCH) {
+    return match(off, line, nline, records);
   } else if (type_ == ESPLAIN) {
     return esPlain(off, line, nline, records);
   } else {

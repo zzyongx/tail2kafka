@@ -9,10 +9,12 @@
 #include "luactx.h"
 #include "filerecord.h"
 
+class RegexFun;
+
 class LuaFunction {
   template<class T> friend class UNITTEST_HELPER;
 public:
-  enum Type { FILTER, GREP, TRANSFORM, AGGREGATE, INDEXDOC, KAFKAPLAIN, ESPLAIN, NIL };
+  enum Type { FILTER, MATCH, GREP, TRANSFORM, AGGREGATE, INDEXDOC, KAFKAPLAIN, ESPLAIN, NIL };
 
   static LuaFunction *create(LuaCtx *ctx, LuaHelper *helper, Type defType);
   int process(off_t off, const char *line, size_t nline, std::vector<FileRecord *> *records);
@@ -32,6 +34,7 @@ private:
   }
 
   int filter(off_t off, const std::vector<std::string> &fields, std::vector<FileRecord *> *records);
+  int match(off_t off, const char *line, size_t nline, std::vector<FileRecord *> *records);
   int grep(off_t off, const std::vector<std::string> &fields, std::vector<FileRecord *> *records);
   int transform(off_t off, const char *line, size_t nline, std::vector<FileRecord *> *records);
   int aggregate(const std::vector<std::string> &fields, std::vector<FileRecord *> *records);
@@ -51,6 +54,7 @@ private:
   size_t      extraSize_;
 
   std::vector<int> filters_;
+  RegexFun *matchFun_;
 
   std::string                                        lasttime_;
   std::map<std::string, std::map<std::string, int> > aggregateCache_;

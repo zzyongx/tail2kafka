@@ -122,13 +122,28 @@ void InotifyCtx::tagRotate(LuaCtx *ctx, int wd)
   }
 }
 
-/* unlink or truncate */
-void InotifyCtx::tryReWatch()
+/* unlink or truncate
+ * Note that the event queue can overflow. In this case, events are lost.
+ */
+
+void InotifyCtx::tryReWatch(bool remedy)
 {
   std::vector<int> wds;
 
   for (std::map<int, LuaCtx *>::iterator ite = fdToCtx_.begin(); ite != fdToCtx_.end(); ++ite) {
     LuaCtx *ctx = ite->second;
+
+    if (remedy) {
+      struct stat got, want;
+      if (fstat(ctx->holdFd(), &got) == 0 && stat(ctx->file().c_str(), &want) == 0) {
+        if (got.st_ino != want.st_ino) {
+          log_error(0, "inotify may failed, tagRotate manual");
+          tagRotate(ctx, ite->first);
+        }
+      } else {
+        log_fatal(errno, "stat holdFd %d or file %s error", ctx->holdFd(), ctx->file().c_str());
+      }
+    }
 
     if (ctx->getFileReader()->remove()) {
       wds.push_back(ite->first);
@@ -172,6 +187,7 @@ void InotifyCtx::loop()
   bool rotate = false;
   long savedTime = cnf_->fasttime(true, TIMEUNIT_SECONDS);
   long rewatchTime = savedTime;
+  long remedyTime = savedTime;
 
   while (runStatus->get() == RunStatus::WAIT) {
     int nfd = poll(fds, 1, cnf_->getTailLimit() ? 1 : 500);
@@ -218,8 +234,10 @@ void InotifyCtx::loop()
       savedTime = cnf_->fasttime();
     }
 
-    if (cnf_->fasttime() > rewatchTime + 5 || rotate) {
-      tryReWatch();
+    if (cnf_->fasttime() > remedyTime + 60 ||
+        cnf_->fasttime() > rewatchTime + 5 || rotate) {
+      tryReWatch(cnf_->fasttime() > remedyTime + 60);
+      if (cnf_->fasttime() > remedyTime + 60) remedyTime = cnf_->fasttime();
       rewatchTime = cnf_->fasttime();
       rotate = false;
     }

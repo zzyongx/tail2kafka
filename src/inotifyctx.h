@@ -23,7 +23,7 @@ private:
   }
 
   bool addWatch(LuaCtx *ctx, bool strict);
-  void tryReWatch();
+  void tryReWatch(bool remedy);
   void tagRotate(LuaCtx *ctx, int wd);
   void globalCheck();
 

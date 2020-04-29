@@ -92,9 +92,8 @@ bool FileReader::init(char *errbuf)
   std::string timeFormatFile;
   if (ctx_->getTimeFormatFile(&timeFormatFile)) {
     ctx_->setTimeFormatFile(timeFormatFile);
+    ctx_->addHistoryFile(ctx_->datafile());
   }
-
-  ctx_->addHistoryFile(ctx_->datafile());
 
   struct stat st;
   if (openFile(&st, errbuf)) {

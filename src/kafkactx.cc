@@ -205,9 +205,27 @@ bool KafkaCtx::produce(FileRecord *record)
 bool KafkaCtx::produce(std::vector<FileRecord *> *datas)
 {
   cnf_->stats()->logRecvInc(datas->size());
-
   assert(!datas->empty());
-  rd_kafka_topic_t *rkt = rkts_[datas->at(0)->ctx->rktId()];
+
+  LuaCtx *ctx = datas->at(0)->ctx;
+  rd_kafka_topic_t *rkt = rkts_[ctx->rktId()];
+
+  int partition = RD_KAFKA_PARTITION_UA;
+  if (ctx->getPartitioner() == PARTITIONER_RANDOM) {
+    if (ctx->rktPatition() < 0 ) {
+      const struct rd_kafka_metadata *metadata = 0;
+      if (rd_kafka_metadata(rk_, 0, rkt, &metadata, 500) == RD_KAFKA_RESP_ERR_NO_ERROR) {
+        if (metadata->topic_cnt > 0) {
+          ctx->rktSetPatition(metadata->topics[0].partition_cnt);
+        }
+        rd_kafka_metadata_destroy(metadata);
+      }
+    }
+
+    if (ctx->rktPatition() >= 0) {
+      partition = rand() % ctx->rktPatition();
+    }
+  }
 
   std::vector<rd_kafka_message_t> rkmsgs;
   rkmsgs.resize(datas->size());
@@ -224,8 +242,10 @@ bool KafkaCtx::produce(std::vector<FileRecord *> *datas)
     rkmsgs[i]._private = record;
   }
 
-  int n = rd_kafka_produce_batch(rkt, RD_KAFKA_PARTITION_UA, 0, &rkmsgs[0], rkmsgs.size());
+  int n = rd_kafka_produce_batch(rkt, partition, 0, &rkmsgs[0], rkmsgs.size());
   if (n != (int) rkmsgs.size()) {
+    log_info(0, "rd_kafka_produce_batch %d != %d", n, (int) rkmsgs.size());
+
     for (std::vector<rd_kafka_message_t>::iterator ite = rkmsgs.begin(), end = rkmsgs.end();
          ite != end; ++ite) {
       if (ite->err) {

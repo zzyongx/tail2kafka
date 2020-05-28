@@ -351,6 +351,8 @@ LuaCtx::LuaCtx()
   partition_ = -1;
   timeidx_  = -1;
   next_ = 0;
+
+  rktPartition_ = -1;
 }
 
 LuaCtx::~LuaCtx() {

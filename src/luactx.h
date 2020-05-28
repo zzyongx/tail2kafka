@@ -75,6 +75,14 @@ public:
     }
   }
 
+  int rktPatition() const {
+    return rktPartition_;
+  }
+
+  void rktSetPatition(int pc) {
+    rktPartition_ = pc;
+  }
+
   bool withhost() const { return withhost_; }
   bool withtime() const { return withtime_; }
   int timeidx() const { return timeidx_; }
@@ -173,6 +181,7 @@ private:
   LuaHelper    *helper_;
 
   size_t rktId_;
+  int rktPartition_;
   int holdFd_;
 };
 

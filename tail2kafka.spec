@@ -1,10 +1,10 @@
 Name:      tail2kafka
-Version:   2.2.3
+Version:   2.3.1
 Release:   1
 Summary:   stream file data to kafka/stream kafka data to file
 Group:     tail2kafka
 License:   Apache2
-Source0:   tail2kafka-2.2.3.tar.gz
+Source0:   tail2kafka-2.3.1.tar.gz
 BuildRoot: /var/tmp/tail2kafka
 BuildRequires: libcurl-devel >= 7.19.7
 BuildRequires: openssl-devel >= 1.0.1e-30
@@ -72,6 +72,13 @@ rm -rf $RPM_BUILD_ROOT
 ln -sf ../init.d/tail2kafka /etc/rc.d/rc3.d/S88tail2kafka
 
 %changelog
+* Thu Jul  16 2020 zzyongx <iamzhengzhiyong@gmail.com> -2.3.1-1
+- Bugfix: truncate file
+
+* Thu May  28 2020 zzyongx <iamzhengzhiyong@gmail.com> -2.3.0-1
+- Changes: use hyperscan filter log
+- Changes: specify partiion parameter when calling rd_kafka_produce_batch
+
 * Wed Apr  1 2020 zzyongx <iamzhengzhiyong@gmail.com> -2.2.2-1
 - Bugfix: multi file tail to one kafka cause coredump
 

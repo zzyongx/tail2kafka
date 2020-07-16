@@ -262,9 +262,15 @@ bool FileReader::remove()
     return false;
   }
 
-  if (st.st_nlink == 0) bits_set(flags_, FILE_DELETED);
-  else if (st.st_size < size_) bits_set(flags_, FILE_TRUNCATED);
-  else if (st.st_ino != inode_) bits_set(flags_, FILE_ICHANGE);
+  if (st.st_nlink == 0) {
+    bits_set(flags_, FILE_DELETED);
+  } else if (st.st_size < size_) {
+    bits_set(flags_, FILE_TRUNCATED);
+    size_ = st.st_size;
+    lseek(fd_, 0, SEEK_SET);
+  } else if (st.st_ino != inode_) {
+    bits_set(flags_, FILE_ICHANGE);
+  }
 
   std::string timeFormatFile;
   if (ctx_->getTimeFormatFile(&timeFormatFile) && timeFormatFile != ctx_->file()) {
@@ -332,10 +338,8 @@ bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::st
     return false;
   }
 
-  if (off > stPtr->st_size) {
-    bits_set(flags_, FILE_TRUNCATED);
-    return true;
-  }
+  // file was truncated
+  if (off > stPtr->st_size) return true;
 
   bool fileStart = (pos == START || size_ == 0);
 
@@ -366,7 +370,6 @@ bool FileReader::tail2kafka(StartPosition pos, const struct stat *stPtr, std::st
       log_fatal(errno, "%d %s read error", fd_, ctx_->datafile().c_str());
       return false;
     } else if (nn == 0) { // file was truncated
-      bits_set(flags_, FILE_TRUNCATED);
       break;
     }
     off += nn;

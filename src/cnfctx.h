@@ -13,6 +13,8 @@
 #include "kafkactx.h"
 #include "common.h"
 
+#define VERSION "1.0.1"
+
 #define QUEUE_ERROR_TIMEOUT 60
 #define MAX_FILE_QUEUE_SIZE 50000
 

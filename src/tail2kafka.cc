@@ -30,6 +30,7 @@ int runForeGround(CnfCtx *ctx);
 int main(int argc, char *argv[])
 {
   if (argc != 2) {
+    fprintf(stderr, "version: %s\n", VERSION);
     fprintf(stderr, "%s confdir\n", argv[0]);
     return EXIT_FAILURE;
   }

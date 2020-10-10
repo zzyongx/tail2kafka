@@ -14,7 +14,7 @@ class RegexFun;
 class LuaFunction {
   template<class T> friend class UNITTEST_HELPER;
 public:
-  enum Type { FILTER, MATCH, GREP, TRANSFORM, AGGREGATE, INDEXDOC, KAFKAPLAIN, ESPLAIN, NIL };
+  enum Type { FILTER, GREP, TRANSFORM, AGGREGATE, INDEXDOC, KAFKAPLAIN, ESPLAIN, NIL };
 
   static LuaFunction *create(LuaCtx *ctx, LuaHelper *helper, Type defType);
   int process(off_t off, const char *line, size_t nline, std::vector<FileRecord *> *records);
@@ -34,7 +34,6 @@ private:
   }
 
   int filter(off_t off, const std::vector<std::string> &fields, std::vector<FileRecord *> *records);
-  int match(off_t off, const char *line, size_t nline, std::vector<FileRecord *> *records);
   int grep(off_t off, const std::vector<std::string> &fields, std::vector<FileRecord *> *records);
   int transform(off_t off, const char *line, size_t nline, std::vector<FileRecord *> *records);
   int aggregate(const std::vector<std::string> &fields, std::vector<FileRecord *> *records);

@@ -75,7 +75,6 @@ const char *LuaFunction::typeToString(Type type)
 {
   switch (type) {
   case FILTER: return "filter";
-  case MATCH: return "match";
   case GREP: return "grep";
   case TRANSFORM: return "transform";
   case AGGREGATE: return "aggregate";
@@ -97,14 +96,12 @@ LuaFunction *LuaFunction::create(LuaCtx *ctx, LuaHelper *helper, Type defType)
     return function.release();
   }
 
+  function->matchFun_ = 0;
   std::map<std::string, std::string> m;
   if (!helper->getTable("match", &m, false)) return 0;
   if (!m.empty()) {
     function->matchFun_ = RegexFun::create(m, errbuf);
     if (!function->matchFun_) return 0;
-
-    function->init(helper, "match", MATCH);
-    return function.release();
   }
 
   std::string value;
@@ -175,14 +172,6 @@ int LuaFunction::filter(off_t off, const std::vector<std::string> &fields, std::
 
   records->push_back(FileRecord::create(0, off, result));
   return 1;
-}
-
-int LuaFunction::match(off_t off, const char *line, size_t nline, std::vector<FileRecord *> *records)
-{
-  int cnt = matchFun_->match(line, nline);
-  if (cnt <= 0) return cnt;
-
-  return kafkaPlain(off, line, nline, records);
 }
 
 int LuaFunction::grep(off_t off, const std::vector<std::string> &fields, std::vector<FileRecord *> *records)
@@ -383,6 +372,11 @@ int LuaFunction::aggregate(const std::vector<std::string> &fields, std::vector<F
 
 int LuaFunction::process(off_t off, const char *line, size_t nline, std::vector<FileRecord *> *records)
 {
+  if (matchFun_) {
+    int cnt = matchFun_->match(line, nline);
+    if (cnt <= 0) return 0;
+  }
+
   if (type_ == TRANSFORM) {
     return transform(off, line, nline, records);
   } else if (type_ == INDEXDOC) {
@@ -408,8 +402,6 @@ int LuaFunction::process(off_t off, const char *line, size_t nline, std::vector<
     }
   } else if (type_ == KAFKAPLAIN) {
     return kafkaPlain(off, line, nline, records);
-  } else if (type_ == MATCH) {
-    return match(off, line, nline, records);
   } else if (type_ == ESPLAIN) {
     return esPlain(off, line, nline, records);
   } else {

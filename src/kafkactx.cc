@@ -212,18 +212,23 @@ bool KafkaCtx::produce(std::vector<FileRecord *> *datas)
 
   int partition = RD_KAFKA_PARTITION_UA;
   if (ctx->getPartitioner() == PARTITIONER_RANDOM) {
-    if (ctx->rktPatition() < 0 ) {
+    if (ctx->rktPartition() < 0 ) {
       const struct rd_kafka_metadata *metadata = 0;
-      if (rd_kafka_metadata(rk_, 0, rkt, &metadata, 500) == RD_KAFKA_RESP_ERR_NO_ERROR) {
+      rd_kafka_resp_err_t err = rd_kafka_metadata(rk_, 0, rkt, &metadata, 500);
+
+      if (err == RD_KAFKA_RESP_ERR_NO_ERROR) {
         if (metadata->topic_cnt > 0) {
-          ctx->rktSetPatition(metadata->topics[0].partition_cnt);
+          ctx->rktSetPartition(metadata->topics[0].partition_cnt);
         }
         rd_kafka_metadata_destroy(metadata);
+      } else {
+        log_fatal(0, "%s rd_kafka_metadata error %s",
+                  rd_kafka_topic_name(rkt), rd_kafka_err2str(err));
       }
     }
 
-    if (ctx->rktPatition() >= 0) {
-      partition = rand() % ctx->rktPatition();
+    if (ctx->rktPartition() >= 0) {
+      partition = rand() % ctx->rktPartition();
     }
   }
 

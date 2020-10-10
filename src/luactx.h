@@ -75,11 +75,11 @@ public:
     }
   }
 
-  int rktPatition() const {
+  int rktPartition() const {
     return rktPartition_;
   }
 
-  void rktSetPatition(int pc) {
+  void rktSetPartition(int pc) {
     rktPartition_ = pc;
   }
 

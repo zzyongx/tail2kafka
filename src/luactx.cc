@@ -220,7 +220,7 @@ LuaCtx *LuaCtx::loadFile(CnfCtx *cnf, const char *file)
     return 0;
   }
 
-  if (!helper->getInt("partition", &ctx->partition_, -1)) return 0;
+  if (!helper->getInt("partition", &ctx->partition_, cnf->partition())) return 0;
   if (!helper->getBool("autoparti", &ctx->autoparti_, false)) return 0;
   if (ctx->autoparti_) {
     if (!hostAddr(cnf->host(), &ctx->addr_, cnf->errbuf())) return 0;

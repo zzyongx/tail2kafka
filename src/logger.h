@@ -342,7 +342,7 @@ private:
   localtime_r(&now__, &ltm__);                           \
   char timestr[64];                                      \
   strftime(timestr, 64, "[%Y-%m-%d %H:%M:%S]", &ltm__);  \
-  printf("%s [%s] #%s@%d \"%d:%s\" "fmt"\n",             \
+  printf("%s [%s] #%s@%d \"%d:%s\" " fmt "\n",             \
          timestr, level, __FILE__, __LINE__,             \
          eno, eno ? strerror(eno) : "", ##args);         \
 } while (0)

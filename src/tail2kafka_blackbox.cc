@@ -20,7 +20,7 @@ static const char *BROKERS = "127.0.0.1:9092";
 typedef std::vector<std::string> StringList;
 static const char *hostname;
 
-#define LOG(f) "logs/"f
+#define LOG(f) "logs/" f
 
 void start_producer();
 void *start_consumer(void *);

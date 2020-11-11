@@ -20,7 +20,7 @@ static CnfCtx *cnf = 0;
 
 #define LUACNF_SIZE 2
 #define ETCDIR "blackboxtest/tail2es"
-#define LOG(f) "logs/"f
+#define LOG(f) "logs/" f
 
 static LuaCtx *getLuaCtx(const char *file)
 {

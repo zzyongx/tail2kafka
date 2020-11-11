@@ -6,7 +6,7 @@ DEPSDIR = ".deps"
 ARLIBS  = $(DEPSDIR)/librdkafka.a $(DEPSDIR)/libluajit-5.1.a $(DEPSDIR)/libjsoncpp.a $(DEPSDIR)/libhs.a
 CFLAGS  += -I/usr/local/include/luajit-2.0 $(PARAM_CFLAGS)
 PREDEF  += $(PARAM_PREDEF)
-WARN    = -Werror -Wall -Wshadow -Wextra -Wno-comment
+WARN    = -Werror -Wall -Wshadow -Wextra -Wno-comment -Wno-deprecated-declarations -Wno-format-truncation -Wno-format-overflow -Wno-literal-suffix
 
 ifeq ($(DEBUG), 1)
 	CFLAGS += -O0 -g
@@ -56,7 +56,7 @@ get-deps:
 	  (test -f 0.10.4.tar.gz || wget https://github.com/open-source-parsers/jsoncpp/archive/0.10.4.tar.gz) && \
 		rm -rf jsoncpp-0.10.4 && tar xzf 0.10.4.tar.gz &&   \
 	  mkdir -p jsoncpp-0.10.4/build && cd jsoncpp-0.10.4/build && \
-	  cmake -DCMAKE_BUILD_TYPE=debug -DBUILD_STATIC_LIBS=ON -DBUILD_SHARED_LIBS=OFF \
+	  cmake -DCMAKE_CXX_FLAGS="-Wno-deprecated-declarations -Wno-implicit-fallthrough -Wno-shift-negative-value" -DCMAKE_BUILD_TYPE=debug -DBUILD_STATIC_LIBS=ON -DBUILD_SHARED_LIBS=OFF \
 	    -DARCHIVE_INSTALL_DIR=../.. -G "Unix Makefiles" .. && make install
 
 	@echo "compile librdkafka" && \

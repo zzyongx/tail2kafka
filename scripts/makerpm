@@ -8,9 +8,11 @@ RPMVER=$(grep "Version:" $SPECFILE | awk '{print $2}')
 RPMREL=$(grep "Release:" $SPECFILE | awk '{print $2}')
 
 TMPDIR=/tmp/$RPMNAM-$RPMVER
-rm -rf $TMPDIR && mkdir $TMPDIR
+rm -rf $TMPDIR && mkdir $TMPDIR && mkdir $TMPDIR/.deps
 
-cp . $TMPDIR -a
+cp Makefile src $TMPDIR -a
+cp .deps/*.a $TMPDIR/.deps
+
 RPMROOT=/usr/src/redhat
 test -d $RPMROOT || RPMROOT="/root/rpmbuild"
 mkdir -p $RPMROOT/SOURCES/

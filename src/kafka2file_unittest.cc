@@ -13,10 +13,10 @@ UNITTEST_INIT();
 
 #define WDIR       "kafka2filedir"
 #define TOPIC      "nginx"
-#define TOPICDIR   WDIR"/"TOPIC
+#define TOPICDIR   WDIR "/" TOPIC
 #define PARTITION  "0"
-#define LUAFILE(f) "blackboxtest/kafka2file/"f
-#define LUALOGFILE(t, p, f) TOPICDIR"/"t"."p"_"f
+#define LUAFILE(f) "blackboxtest/kafka2file/" f
+#define LUALOGFILE(t, p, f) TOPICDIR "/" t "." p "_" f
 
 static char errbuf[1024];
 

@@ -24,7 +24,7 @@ static CnfCtx *cnf = 0;
 
 #define LUACNF_SIZE 6
 #define ETCDIR "blackboxtest/tail2kafka"
-#define LOG(f) "logs/"f
+#define LOG(f) "logs/" f
 
 DEFINE(split)
 {

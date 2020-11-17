@@ -14,7 +14,7 @@ cp Makefile src scripts blackboxtest $TMPDIR -a
 cp .deps/*.a $TMPDIR/.deps
 
 RPMROOT=/usr/src/redhat
-test -d $RPMROOT || RPMROOT="/root/rpmbuild"
+test -d $RPMROOT || RPMROOT="$HOME/rpmbuild"
 mkdir -p $RPMROOT/SOURCES/
 
 cd /tmp
